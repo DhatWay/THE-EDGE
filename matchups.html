@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Live Matchups</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Barlow', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* NAV */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      height: 60px;
+      background: rgba(8,8,8,0.97);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark {
+      width: 34px; height: 34px;
+      background: var(--gold); color: #000;
+      font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px;
+      display: flex; align-items: center; justify-content: center;
+      clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%);
+    }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+
+    .drawer {
+      position: fixed; top: 60px; right: 0;
+      width: 270px; height: calc(100vh - 60px);
+      background: var(--bg2); border-left: 1px solid var(--border);
+      z-index: 99; transform: translateX(100%);
+      transition: transform 0.32s cubic-bezier(0.4,0,0.2,1);
+      overflow-y: auto; padding-bottom: 30px;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    /* MAIN */
+    main { padding-top: 60px; }
+
+    /* PAGE HEADER */
+    .page-header {
+      padding: 32px 20px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .page-eye {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px; letter-spacing: 4px;
+      text-transform: uppercase; color: var(--gold);
+      margin-bottom: 6px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(42px, 12vw, 72px);
+      letter-spacing: 4px; line-height: 0.9; color: var(--text);
+    }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* SPORT FILTERS */
+    .filter-bar {
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--border);
+      scrollbar-width: none;
+    }
+    .filter-bar::-webkit-scrollbar { display: none; }
+
+    .filter-btn {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 14px 18px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .filter-btn:hover { color: var(--text-mid); }
+    .filter-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+    .filter-count {
+      display: inline-block;
+      background: var(--bg4);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 10px;
+      padding: 1px 5px;
+      margin-left: 4px;
+      font-family: 'Barlow Condensed', sans-serif;
+      letter-spacing: 1px;
+    }
+    .filter-btn.active .filter-count { color: var(--gold); border-color: var(--gold); }
+
+    /* REFRESH BAR */
+    .refresh-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .refresh-info {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .live-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 5px var(--red);
+      animation: blink 1.4s infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .refresh-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 6px 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+    /* GAMES LIST */
+    .games-section { padding: 16px 20px; }
+
+    .section-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* GAME CARD */
+    .game-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      margin-bottom: 10px;
+      transition: border-color 0.2s;
+      overflow: hidden;
+    }
+    .game-card:hover { border-color: var(--border-bright); }
+    .game-card.live-card { border-left: 2px solid var(--red); }
+    .game-card.final-card { opacity: 0.7; }
+
+    .game-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px 6px;
+      gap: 8px;
+    }
+
+    .game-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .game-sport {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      background: var(--bg4);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    .game-status {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .game-status.live   { color: var(--red); }
+    .game-status.sched  { color: var(--text-dim); }
+    .game-status.final  { color: var(--text-dim); }
+
+    .game-venue {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      text-align: right;
+      flex: 1;
+    }
+
+    /* TEAMS ROW */
+    .game-teams {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px 10px;
+      gap: 10px;
+    }
+
+    .team {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+    }
+
+    .team-abbr {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 30px;
+      letter-spacing: 3px;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .team-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .team-record {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-top: 1px;
+    }
+
+    .score-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      min-width: 60px;
+    }
+
+    .score {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 36px;
+      letter-spacing: 2px;
+      line-height: 1;
+      color: var(--text-dim);
+    }
+
+    .score.live-score { color: var(--text); }
+
+    .vs-text {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      letter-spacing: 2px;
+      color: var(--text-dim);
+    }
+
+    .game-time {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 15px;
+      letter-spacing: 1px;
+      color: var(--text-mid);
+    }
+
+    /* LINES ROW */
+    .game-lines {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .line-cell {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 6px;
+      border-right: 1px solid var(--border);
+      gap: 2px;
+    }
+    .line-cell:last-child { border-right: none; }
+
+    .line-lbl {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 9px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .line-val {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 17px;
+      letter-spacing: 1px;
+      color: var(--text-mid);
+    }
+
+    .line-val.pending {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif;
+      letter-spacing: 1.5px;
+    }
+
+    /* GAME ACTIONS */
+    .game-actions {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .game-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      border-right: 1px solid var(--border);
+      padding: 10px 8px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      cursor: pointer;
+      text-decoration: none;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transition: all 0.2s;
+    }
+    .game-btn:last-child { border-right: none; }
+    .game-btn:hover { color: var(--gold); background: var(--gold-glow); }
+    .game-btn.primary { color: var(--gold); }
+
+    /* EMPTY STATE */
+    .empty-state {
+      padding: 48px 20px;
+      text-align: center;
+    }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 26px;
+      letter-spacing: 3px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .empty-sub {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+    .connect-btn {
+      display: inline-block;
+      margin-top: 20px;
+      background: none;
+      border: 1px solid var(--gold-dim);
+      color: var(--gold);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      padding: 10px 24px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .connect-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    footer {
+      padding: 28px 20px;
+      text-align: center;
+      border-top: 1px solid var(--border);
+      margin-top: 10px;
+    }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html" class="active"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Live Data</div>
+      <div class="page-title">LIVE <em>MATCHUPS</em></div>
+    </div>
+
+    <!-- SPORT FILTER TABS -->
+    <div class="filter-bar" id="filterBar">
+      <button class="filter-btn active" data-sport="all">All <span class="filter-count" id="cnt-all">0</span></button>
+      <button class="filter-btn" data-sport="NFL">NFL <span class="filter-count" id="cnt-NFL">0</span></button>
+      <button class="filter-btn" data-sport="NBA">NBA <span class="filter-count" id="cnt-NBA">0</span></button>
+      <button class="filter-btn" data-sport="MLB">MLB <span class="filter-count" id="cnt-MLB">0</span></button>
+      <button class="filter-btn" data-sport="NHL">NHL <span class="filter-count" id="cnt-NHL">0</span></button>
+      <button class="filter-btn" data-sport="NCAAF">NCAAF <span class="filter-count" id="cnt-NCAAF">0</span></button>
+      <button class="filter-btn" data-sport="NCAAB">NCAAB <span class="filter-count" id="cnt-NCAAB">0</span></button>
+      <button class="filter-btn" data-sport="MLS">MLS <span class="filter-count" id="cnt-MLS">0</span></button>
+    </div>
+
+    <!-- REFRESH BAR -->
+    <div class="refresh-bar">
+      <div class="refresh-info">
+        <span class="live-dot"></span>
+        <span id="refreshStatus">Auto-refresh every 30s when live</span>
+      </div>
+      <button class="refresh-btn" id="refreshBtn" onclick="fetchMatchups()">↻ Refresh</button>
+    </div>
+
+    <!-- GAMES CONTAINER -->
+    <div class="games-section" id="gamesContainer">
+      <!-- Populated by JS -->
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">⚡</div>
+        <div class="empty-title">NO GAMES LOADED</div>
+        <div class="empty-sub">
+          Connect The Odds API in Admin<br>
+          to load live matchups, scores,<br>
+          spreads, and moneylines
+        </div>
+        <a href="admin.html" class="connect-btn">Go to Admin →</a>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Data via The Odds API · ESPN · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+
+    function toggleDrawer() {
+      ham.classList.toggle('open');
+      drawer.classList.toggle('open');
+      overlay.classList.toggle('open');
+    }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open');
+      drawer.classList.remove('open');
+      overlay.classList.remove('open');
+    }));
+
+    // ── SPORT FILTER ──
+    let currentSport = 'all';
+    let allGames = [];
+
+    document.getElementById('filterBar').querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentSport = btn.dataset.sport;
+        renderGames();
+      });
+    });
+
+    // ── FETCH MATCHUPS ──
+    // When Odds API key is set in admin (localStorage: edge_odds_api_key),
+    // this will call the real API. Until then shows empty state.
+    async function fetchMatchups() {
+      const apiKey = localStorage.getItem('edge_odds_api_key');
+      document.getElementById('refreshStatus').textContent = 'Refreshing...';
+
+      if (!apiKey) {
+        document.getElementById('refreshStatus').textContent = 'API key not set — go to Admin';
+        renderGames();
+        return;
+      }
+
+      // Sports to fetch from Odds API
+      const sports = [
+        { key: 'americanfootball_nfl',       label: 'NFL' },
+        { key: 'basketball_nba',              label: 'NBA' },
+        { key: 'baseball_mlb',               label: 'MLB' },
+        { key: 'icehockey_nhl',              label: 'NHL' },
+        { key: 'americanfootball_ncaaf',     label: 'NCAAF' },
+        { key: 'basketball_ncaab',           label: 'NCAAB' },
+        { key: 'soccer_usa_mls',             label: 'MLS' },
+      ];
+
+      allGames = [];
+
+      try {
+        for (const sport of sports) {
+          const res = await fetch(
+            `https://api.the-odds-api.com/v4/sports/${sport.key}/odds/?apiKey=${apiKey}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
+          );
+          if (!res.ok) continue;
+          const data = await res.json();
+          data.forEach(game => {
+            game._sport = sport.label;
+            allGames.push(game);
+          });
+        }
+
+        updateCounts();
+        renderGames();
+        document.getElementById('refreshStatus').textContent =
+          'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch (e) {
+        document.getElementById('refreshStatus').textContent = 'Fetch error — check API key';
+        renderGames();
+      }
+    }
+
+    function updateCounts() {
+      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+      document.getElementById('cnt-all').textContent = allGames.length;
+      sports.forEach(s => {
+        const el = document.getElementById('cnt-' + s);
+        if (el) el.textContent = allGames.filter(g => g._sport === s).length;
+      });
+    }
+
+    function getOddsValue(game, market, side) {
+      try {
+        const bk = game.bookmakers?.[0];
+        if (!bk) return null;
+        const mkt = bk.markets?.find(m => m.key === market);
+        if (!mkt) return null;
+        if (side === 'home') return mkt.outcomes?.find(o => o.name === game.home_team);
+        if (side === 'away') return mkt.outcomes?.find(o => o.name === game.away_team);
+        if (side === 'over')  return mkt.outcomes?.find(o => o.name === 'Over');
+        if (side === 'under') return mkt.outcomes?.find(o => o.name === 'Under');
+      } catch { return null; }
+    }
+
+    function fmtOdds(val) {
+      if (!val) return '—';
+      const price = val.price ?? val;
+      return (price > 0 ? '+' : '') + price;
+    }
+
+    function fmtSpread(val) {
+      if (!val) return '—';
+      const pt = val.point ?? '';
+      const pr = val.price ?? '';
+      return (pt > 0 ? '+' : '') + pt + ' (' + (pr > 0 ? '+' : '') + pr + ')';
+    }
+
+    function fmtTotal(val) {
+      if (!val) return '—';
+      return (val.name === 'Over' ? 'O ' : 'U ') + val.point;
+    }
+
+    function gameStatusLabel(game) {
+      const start = new Date(game.commence_time);
+      const now = new Date();
+      const diff = start - now;
+      if (diff > 0) {
+        return {
+          cls: 'sched',
+          text: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+                ' · ' + start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+      }
+      if (game.completed) return { cls: 'final', text: 'FINAL' };
+      return { cls: 'live', text: 'LIVE' };
+    }
+
+    function renderGames() {
+      const container = document.getElementById('gamesContainer');
+      const games = currentSport === 'all'
+        ? allGames
+        : allGames.filter(g => g._sport === currentSport);
+
+      if (games.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">⚡</div>
+            <div class="empty-title">NO GAMES LOADED</div>
+            <div class="empty-sub">
+              Connect The Odds API in Admin<br>
+              to load live matchups, scores,<br>
+              and betting lines
+            </div>
+            <a href="admin.html" class="connect-btn">Go to Admin →</a>
+          </div>`;
+        return;
+      }
+
+      // Group by status
+      const live      = games.filter(g => { const s = gameStatusLabel(g); return s.cls === 'live'; });
+      const scheduled = games.filter(g => { const s = gameStatusLabel(g); return s.cls === 'sched'; });
+      const final_    = games.filter(g => { const s = gameStatusLabel(g); return s.cls === 'final'; });
+
+      let html = '';
+
+      if (live.length) {
+        html += `<div class="section-label">🔴 Live Now (${live.length})</div>`;
+        live.forEach(g => html += buildCard(g, 'live'));
+      }
+
+      if (scheduled.length) {
+        html += `<div class="section-label" style="margin-top:${live.length?'20px':'0'}">Upcoming (${scheduled.length})</div>`;
+        scheduled.forEach(g => html += buildCard(g, 'sched'));
+      }
+
+      if (final_.length) {
+        html += `<div class="section-label" style="margin-top:20px">Final (${final_.length})</div>`;
+        final_.forEach(g => html += buildCard(g, 'final'));
+      }
+
+      container.innerHTML = html;
+    }
+
+    function abbr(name) {
+      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3);
+    }
+
+    function buildCard(game, statusCls) {
+      const status = gameStatusLabel(game);
+      const homeML    = getOddsValue(game, 'h2h', 'home');
+      const awayML    = getOddsValue(game, 'h2h', 'away');
+      const homeSprd  = getOddsValue(game, 'spreads', 'home');
+      const awaySprd  = getOddsValue(game, 'spreads', 'away');
+      const overTotal = getOddsValue(game, 'totals', 'over');
+
+      const venue = game.bookmakers?.[0]?.title || '';
+
+      // Store game id for analysis link
+      const enc = encodeURIComponent(JSON.stringify({
+        id: game.id,
+        home: game.home_team,
+        away: game.away_team,
+        sport: game._sport,
+        time: game.commence_time
+      }));
+
+      return `
+        <div class="game-card ${statusCls === 'live' ? 'live-card' : statusCls === 'final' ? 'final-card' : ''}">
+          <div class="game-top">
+            <div class="game-meta">
+              <span class="game-sport">${game._sport}</span>
+              <span class="game-status ${status.cls}">${status.cls === 'live' ? '🔴 ' : ''}${status.text}</span>
+            </div>
+            <div class="game-venue">${venue}</div>
+          </div>
+
+          <div class="game-teams">
+            <div class="team">
+              <div class="team-abbr">${abbr(game.away_team)}</div>
+              <div class="team-name">${game.away_team}</div>
+            </div>
+
+            <div class="score-block">
+              ${statusCls === 'live'
+                ? `<div class="score live-score">—</div>`
+                : statusCls === 'final'
+                ? `<div class="score">FINAL</div>`
+                : `<div class="vs-text">VS</div><div class="game-time">${status.text.split('·')[1]?.trim() || ''}</div>`
+              }
+            </div>
+
+            <div class="team">
+              <div class="team-abbr">${abbr(game.home_team)}</div>
+              <div class="team-name">${game.home_team}</div>
+            </div>
+          </div>
+
+          <div class="game-lines">
+            <div class="line-cell">
+              <div class="line-lbl">Away Spread</div>
+              <div class="line-val ${!awaySprd ? 'pending' : ''}">${awaySprd ? fmtSpread(awaySprd) : 'TBD'}</div>
+            </div>
+            <div class="line-cell">
+              <div class="line-lbl">Total</div>
+              <div class="line-val ${!overTotal ? 'pending' : ''}">${overTotal ? fmtTotal(overTotal) : 'TBD'}</div>
+            </div>
+            <div class="line-cell">
+              <div class="line-lbl">Home Spread</div>
+              <div class="line-val ${!homeSprd ? 'pending' : ''}">${homeSprd ? fmtSpread(homeSprd) : 'TBD'}</div>
+            </div>
+          </div>
+
+          <div class="game-lines" style="border-top:none;">
+            <div class="line-cell">
+              <div class="line-lbl">Away ML</div>
+              <div class="line-val ${!awayML ? 'pending' : ''}">${fmtOdds(awayML)}</div>
+            </div>
+            <div class="line-cell">
+              <div class="line-lbl">Bookmaker</div>
+              <div class="line-val pending" style="font-size:11px;">${game.bookmakers?.[0]?.title || '—'}</div>
+            </div>
+            <div class="line-cell">
+              <div class="line-lbl">Home ML</div>
+              <div class="line-val ${!homeML ? 'pending' : ''}">${fmtOdds(homeML)}</div>
+            </div>
+          </div>
+
+          <div class="game-actions">
+            <a href="analysis.html?game=${enc}" class="game-btn primary">◎ AI Analysis</a>
+            <a href="picks.html" class="game-btn">✓ Picks</a>
+            <a href="lines.html?game=${enc}" class="game-btn">→ Lines</a>
+          </div>
+        </div>`;
+    }
+
+    // ── AUTO REFRESH (30s when live games exist) ──
+    function scheduleRefresh() {
+      const hasLive = allGames.some(g => gameStatusLabel(g).cls === 'live');
+      if (hasLive) {
+        setTimeout(() => {
+          fetchMatchups();
+          scheduleRefresh();
+        }, 30000);
+      }
+    }
+
+    // ── INIT ──
+    fetchMatchups().then(scheduleRefresh);
+  </script>
+</body>
+</html>
