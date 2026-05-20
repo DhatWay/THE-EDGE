@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Performance & ROI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(38px,10vw,64px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* SECTION */
+    .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    /* KEY STATS */
+    .key-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .key-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; transition: border-color 0.2s; }
+    .key-card:hover { border-color: var(--border-bright); }
+    .key-card.span2 { grid-column: span 2; }
+    .key-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+    .key-val { font-family: 'Bebas Neue', sans-serif; font-size: 42px; letter-spacing: 2px; line-height: 1; color: var(--text); }
+    .key-val.green { color: var(--green); }
+    .key-val.gold  { color: var(--gold); }
+    .key-val.red   { color: var(--red); }
+    .key-val.muted { color: var(--text-dim); font-size: 28px; }
+    .key-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; font-weight: 300; }
+
+    /* P&L CHART */
+    .chart-box { background: var(--surface); border: 1px solid var(--border); padding: 16px; }
+    .chart-area { width: 100%; height: 120px; position: relative; overflow: hidden; }
+    .chart-area svg { width: 100%; height: 100%; }
+    .chart-labels { display: flex; justify-content: space-between; margin-top: 6px; }
+    .chart-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+
+    /* ROI BY SPORT */
+    .sport-roi-list { display: flex; flex-direction: column; gap: 8px; }
+    .sport-roi-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; }
+    .sport-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); width: 56px; flex-shrink: 0; }
+    .sport-rec  { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; color: var(--text-mid); width: 72px; flex-shrink: 0; }
+    .sport-bar-track { flex: 1; background: var(--bg4); height: 4px; }
+    .sport-bar-fill  { height: 100%; transition: width 0.8s ease; }
+    .sport-bar-fill.pos { background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); }
+    .sport-bar-fill.neg { background: linear-gradient(90deg, #7B241C, var(--red)); }
+    .sport-roi-val { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; width: 52px; text-align: right; flex-shrink: 0; }
+    .sport-roi-val.pos { color: var(--green); }
+    .sport-roi-val.neg { color: var(--red); }
+    .sport-roi-val.neu { color: var(--text-dim); }
+
+    /* ALGO PERFORMANCE */
+    .algo-perf-list { display: flex; flex-direction: column; gap: 6px; }
+    .algo-perf-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 11px 14px; }
+    .algo-rank-num { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: var(--text-dim); width: 22px; flex-shrink: 0; text-align: center; }
+    .algo-rank-num.top { color: var(--gold); }
+    .algo-perf-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); flex: 1; }
+    .algo-perf-rec  { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; color: var(--text-mid); }
+    .algo-perf-roi  { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; width: 52px; text-align: right; }
+    .algo-perf-roi.pos { color: var(--green); }
+    .algo-perf-roi.neg { color: var(--red); }
+    .algo-perf-roi.neu { color: var(--text-dim); }
+
+    /* STREAK */
+    .streak-list { display: flex; flex-direction: column; gap: 6px; }
+    .streak-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 11px 14px; }
+    .streak-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-mid); flex: 1; }
+    .streak-val { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; }
+    .streak-val.win  { color: var(--green); }
+    .streak-val.loss { color: var(--red); }
+    .streak-val.muted { color: var(--text-dim); font-size: 16px; }
+
+    /* CLV */
+    .clv-card { background: var(--surface); border: 1px solid var(--border-bright); padding: 18px 16px; }
+    .clv-val { font-family: 'Bebas Neue', sans-serif; font-size: 52px; letter-spacing: 2px; color: var(--gold); line-height: 1; margin: 8px 0 4px; }
+    .clv-desc { font-size: 13px; color: var(--text-dim); font-weight: 300; line-height: 1.55; }
+
+    /* UNIT TRACKER */
+    .unit-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .unit-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 12px; text-align: center; }
+    .unit-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .unit-val.pos { color: var(--green); }
+    .unit-val.neg { color: var(--red); }
+    .unit-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
+
+    .empty-note { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 16px 0; text-align: center; }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html" class="active"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Season Analytics</div>
+      <div class="page-title">PERFORMANCE <em>&amp; ROI</em></div>
+    </div>
+
+    <!-- KEY STATS -->
+    <div class="section">
+      <div class="sec-title">KEY <em>STATS</em></div>
+      <div class="key-grid">
+        <div class="key-card span2">
+          <div class="key-lbl">Overall ROI</div>
+          <div class="key-val muted" id="overallROI">—</div>
+          <div class="key-sub">All picks · all sports · this season</div>
+        </div>
+        <div class="key-card">
+          <div class="key-lbl">Win Rate</div>
+          <div class="key-val muted" id="winRate">—</div>
+          <div class="key-sub">SU win %</div>
+        </div>
+        <div class="key-card">
+          <div class="key-lbl">ATS Win Rate</div>
+          <div class="key-val muted" id="atsRate">—</div>
+          <div class="key-sub">Against spread</div>
+        </div>
+        <div class="key-card">
+          <div class="key-lbl">Total Units</div>
+          <div class="key-val muted" id="totalUnits">—</div>
+          <div class="key-sub">Season P&amp;L</div>
+        </div>
+        <div class="key-card">
+          <div class="key-lbl">Avg CLV</div>
+          <div class="key-val muted" id="avgCLV">—</div>
+          <div class="key-sub">Closing line value</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MONTHLY P&L CHART -->
+    <div class="section">
+      <div class="sec-title">MONTHLY <em>P&amp;L</em></div>
+      <div class="chart-box">
+        <div class="chart-area" id="chartArea">
+          <svg id="pnlChart" viewBox="0 0 320 120" preserveAspectRatio="none">
+            <line x1="0" y1="60" x2="320" y2="60" stroke="rgba(201,168,76,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
+            <text x="4" y="14" fill="#7A7060" font-family="'Barlow Condensed'" font-size="9" letter-spacing="1">NO DATA</text>
+            <text x="4" y="26" fill="#7A7060" font-family="'Barlow Condensed'" font-size="8">Loads from Supabase</text>
+          </svg>
+        </div>
+        <div class="chart-labels" id="chartLabels"></div>
+      </div>
+    </div>
+
+    <!-- ROI BY SPORT -->
+    <div class="section">
+      <div class="sec-title">ROI BY <em>SPORT</em></div>
+      <div class="sport-roi-list" id="sportROIList">
+        <div class="empty-note">No data yet · Loads from Supabase</div>
+      </div>
+    </div>
+
+    <!-- ALGO PERFORMANCE -->
+    <div class="section">
+      <div class="sec-title">ALGORITHM <em>PERFORMANCE</em></div>
+      <div class="algo-perf-list" id="algoPerfList">
+        <div class="empty-note">No data yet · Loads from Supabase</div>
+      </div>
+    </div>
+
+    <!-- STREAK HISTORY -->
+    <div class="section">
+      <div class="sec-title">STREAK <em>HISTORY</em></div>
+      <div class="streak-list" id="streakList">
+        <div class="streak-row">
+          <span class="streak-lbl">Current Streak</span>
+          <span class="streak-val muted" id="currentStreak">—</span>
+        </div>
+        <div class="streak-row">
+          <span class="streak-lbl">Best Win Streak</span>
+          <span class="streak-val win" id="bestWin">—</span>
+        </div>
+        <div class="streak-row">
+          <span class="streak-lbl">Worst Loss Streak</span>
+          <span class="streak-val loss" id="worstLoss">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLV -->
+    <div class="section">
+      <div class="sec-title">CLOSING LINE <em>VALUE</em></div>
+      <div class="clv-card">
+        <div class="key-lbl">Average CLV</div>
+        <div class="clv-val" id="clvDisplay">—</div>
+        <div class="clv-desc">
+          Closing Line Value measures pick quality by comparing the line at time of pick
+          to the closing number. Positive CLV means you consistently beat the closing line —
+          the strongest indicator of long-term edge. Loads when Odds API is connected.
+        </div>
+      </div>
+    </div>
+
+    <!-- UNIT TRACKER -->
+    <div class="section">
+      <div class="sec-title">UNIT <em>TRACKER</em></div>
+      <div class="unit-grid">
+        <div class="unit-card">
+          <div class="unit-val" id="unitSize">—</div>
+          <div class="unit-lbl">Unit Size</div>
+        </div>
+        <div class="unit-card">
+          <div class="unit-val pos" id="unitProfit">—</div>
+          <div class="unit-lbl">Season Profit</div>
+        </div>
+        <div class="unit-card">
+          <div class="unit-val" id="unitTotal">—</div>
+          <div class="unit-lbl">Total Wagered</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Performance data from Supabase · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── LOAD FROM SUPABASE ──
+    async function loadPerformance() {
+      const sbUrl = localStorage.getItem('edge_supabase_url');
+      const sbKey = localStorage.getItem('edge_supabase_key');
+
+      let picks = [];
+      let algoData = [];
+
+      if (sbUrl && sbKey) {
+        try {
+          const [picksRes, algoRes] = await Promise.all([
+            fetch(`${sbUrl}/rest/v1/picks?select=*&order=date.desc`, {
+              headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
+            }),
+            fetch(`${sbUrl}/rest/v1/algorithms?select=*`, {
+              headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
+            })
+          ]);
+          if (picksRes.ok) picks = await picksRes.json();
+          if (algoRes.ok)  algoData = await algoRes.json();
+        } catch {}
+      }
+
+      renderKeyStats(picks);
+      renderChart(picks);
+      renderSportROI(picks);
+      renderAlgoPerf(algoData);
+      renderStreaks(picks);
+      renderUnits(picks);
+    }
+
+    // ── KEY STATS ──
+    function renderKeyStats(picks) {
+      const settled = picks.filter(p => p.result && p.result !== 'pending');
+      const wins    = settled.filter(p => p.result === 'W').length;
+      const losses  = settled.filter(p => p.result === 'L').length;
+      const atsW    = settled.filter(p => p.result === 'W' && p.pick_type === 'ATS').length;
+      const atsL    = settled.filter(p => p.result === 'L' && p.pick_type === 'ATS').length;
+      const totalPnl = settled.reduce((s,p) => s + (p.pnl || 0), 0);
+      const roi = settled.length > 0 ? ((totalPnl / settled.length) * 100).toFixed(1) : null;
+      const winPct = settled.length > 0 ? ((wins / settled.length) * 100).toFixed(1) : null;
+      const atsPct = (atsW + atsL) > 0 ? ((atsW / (atsW + atsL)) * 100).toFixed(1) : null;
+      const clvAvg = picks.filter(p => p.clv != null).length > 0
+        ? (picks.filter(p => p.clv != null).reduce((s,p) => s + p.clv, 0) / picks.filter(p => p.clv != null).length).toFixed(2)
+        : null;
+
+      const set = (id, val, cls) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = val ?? '—';
+        el.className = 'key-val ' + (val != null ? cls : 'muted');
+      };
+
+      set('overallROI',  roi    != null ? (roi > 0 ? '+' : '') + roi + '%'       : null, roi > 0 ? 'green' : 'red');
+      set('winRate',     winPct != null ? winPct + '%'                            : null, parseFloat(winPct) >= 52.4 ? 'green' : 'gold');
+      set('atsRate',     atsPct != null ? atsPct + '%'                            : null, parseFloat(atsPct) >= 52.4 ? 'green' : 'gold');
+      set('totalUnits',  totalPnl !== 0 ? (totalPnl > 0 ? '+' : '') + totalPnl.toFixed(1) + 'u' : null, totalPnl > 0 ? 'green' : 'red');
+      set('avgCLV',      clvAvg  != null ? (clvAvg > 0 ? '+' : '') + clvAvg     : null, parseFloat(clvAvg) > 0 ? 'green' : 'red');
+
+      document.getElementById('clvDisplay').textContent = clvAvg != null ? (clvAvg > 0 ? '+' : '') + clvAvg : '—';
+    }
+
+    // ── CHART ──
+    function renderChart(picks) {
+      const months = {};
+      picks.forEach(p => {
+        if (!p.date || !p.result) return;
+        const d = new Date(p.date);
+        const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+        const lbl = d.toLocaleDateString('en-US',{month:'short'});
+        if (!months[key]) months[key] = { lbl, pnl: 0 };
+        months[key].pnl += p.pnl || 0;
+      });
+
+      const sorted = Object.values(months).sort((a,b) => a.lbl.localeCompare(b.lbl)).slice(-8);
+      const container = document.getElementById('chartLabels');
+
+      if (!sorted.length) {
+        container.innerHTML = '';
+        return;
+      }
+
+      const max = Math.max(...sorted.map(m => Math.abs(m.pnl)), 1);
+      const W = 320, H = 120, mid = 60;
+      const pts = sorted.map((m, i) => {
+        const x = (i / (sorted.length - 1 || 1)) * W;
+        const y = mid - (m.pnl / max) * (mid - 10);
+        return { x, y, pnl: m.pnl };
+      });
+
+      const path = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+      const area = path + ` L${pts[pts.length-1].x},${mid} L${pts[0].x},${mid} Z`;
+
+      const svg = document.getElementById('pnlChart');
+      svg.innerHTML = `
+        <defs>
+          <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#27AE60" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="#27AE60" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="rgba(201,168,76,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
+        <path d="${area}" fill="url(#chartGrad)"/>
+        <path d="${path}" fill="none" stroke="#27AE60" stroke-width="2"/>
+        ${pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${p.pnl >= 0 ? '#27AE60' : '#E74C3C'}"/>`).join('')}
+      `;
+
+      container.innerHTML = sorted.map(m =>
+        `<span class="chart-lbl">${m.lbl}</span>`
+      ).join('');
+    }
+
+    // ── ROI BY SPORT ──
+    function renderSportROI(picks) {
+      const container = document.getElementById('sportROIList');
+      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+      const data = sports.map(s => {
+        const sp = picks.filter(p => p.sport === s && p.result);
+        const wins = sp.filter(p => p.result === 'W').length;
+        const losses = sp.filter(p => p.result === 'L').length;
+        const pnl = sp.reduce((sum,p) => sum + (p.pnl || 0), 0);
+        const roi = sp.length > 0 ? (pnl / sp.length) * 100 : null;
+        return { s, wins, losses, pnl, roi, total: sp.length };
+      }).filter(d => d.total > 0);
+
+      if (!data.length) {
+        container.innerHTML = '<div class="empty-note">No data yet · Loads from Supabase</div>';
+        return;
+      }
+
+      const maxPnl = Math.max(...data.map(d => Math.abs(d.pnl)), 1);
+
+      container.innerHTML = data.map(d => {
+        const barW = Math.min((Math.abs(d.pnl) / maxPnl) * 100, 100);
+        const roiStr = d.roi != null ? (d.roi > 0 ? '+' : '') + d.roi.toFixed(1) + '%' : '—';
+        const cls = d.pnl > 0 ? 'pos' : d.pnl < 0 ? 'neg' : 'neu';
+        return `
+          <div class="sport-roi-row">
+            <span class="sport-name">${d.s}</span>
+            <span class="sport-rec">${d.wins}–${d.losses}</span>
+            <div class="sport-bar-track">
+              <div class="sport-bar-fill ${cls}" style="width:${barW}%"></div>
+            </div>
+            <span class="sport-roi-val ${cls}">${roiStr}</span>
+          </div>`;
+      }).join('');
+    }
+
+    // ── ALGO PERFORMANCE ──
+    function renderAlgoPerf(algoData) {
+      const container = document.getElementById('algoPerfList');
+      if (!algoData.length) {
+        container.innerHTML = '<div class="empty-note">No data yet · Loads from Supabase</div>';
+        return;
+      }
+
+      const sorted = [...algoData].sort((a,b) => (b.roi || 0) - (a.roi || 0));
+
+      container.innerHTML = sorted.map((a, i) => {
+        const roi = a.roi != null ? (a.roi > 0 ? '+' : '') + a.roi + '%' : '—';
+        const cls = a.roi > 0 ? 'pos' : a.roi < 0 ? 'neg' : 'neu';
+        return `
+          <div class="algo-perf-row">
+            <span class="algo-rank-num ${i < 3 ? 'top' : ''}">${i+1}</span>
+            <span class="algo-perf-name">${a.name}</span>
+            <span class="algo-perf-rec">${a.wins || 0}–${a.losses || 0}</span>
+            <span class="algo-perf-roi ${cls}">${roi}</span>
+          </div>`;
+      }).join('');
+    }
+
+    // ── STREAKS ──
+    function renderStreaks(picks) {
+      const settled = picks.filter(p => p.result === 'W' || p.result === 'L').sort((a,b) => new Date(b.date) - new Date(a.date));
+      if (!settled.length) return;
+
+      // Current streak
+      let cur = 1;
+      const curRes = settled[0].result;
+      for (let i = 1; i < settled.length; i++) {
+        if (settled[i].result === curRes) cur++;
+        else break;
+      }
+      document.getElementById('currentStreak').textContent = curRes + cur;
+      document.getElementById('currentStreak').className = 'streak-val ' + (curRes === 'W' ? 'win' : 'loss');
+
+      // Best win / worst loss
+      let bestW = 0, worstL = 0, runW = 0, runL = 0;
+      [...settled].reverse().forEach(p => {
+        if (p.result === 'W') { runW++; runL = 0; bestW = Math.max(bestW, runW); }
+        else { runL++; runW = 0; worstL = Math.max(worstL, runL); }
+      });
+      document.getElementById('bestWin').textContent  = bestW  > 0 ? 'W' + bestW  : '—';
+      document.getElementById('worstLoss').textContent = worstL > 0 ? 'L' + worstL : '—';
+    }
+
+    // ── UNITS ──
+    function renderUnits(picks) {
+      const unitSize = parseFloat(localStorage.getItem('edge_unit_size') || '0');
+      const settled  = picks.filter(p => p.result && p.pnl != null);
+      const profit   = settled.reduce((s,p) => s + p.pnl, 0);
+      const wagered  = settled.length;
+
+      document.getElementById('unitSize').textContent   = unitSize > 0 ? '$' + unitSize : '—';
+      document.getElementById('unitProfit').textContent = profit !== 0 ? (profit > 0 ? '+' : '') + profit.toFixed(1) + 'u' : '—';
+      document.getElementById('unitProfit').className   = 'unit-val ' + (profit > 0 ? 'pos' : profit < 0 ? 'neg' : '');
+      document.getElementById('unitTotal').textContent  = wagered > 0 ? wagered + 'u' : '—';
+    }
+
+    // ── INIT ──
+    loadPerformance();
+  </script>
+</body>
+</html>
