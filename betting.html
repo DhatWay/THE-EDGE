@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Betting Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px,10vw,62px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    /* MODE SELECTOR */
+    .mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mode-card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      padding: 20px 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .mode-card.active { border-color: var(--gold); background: var(--gold-glow); }
+    .mode-card:hover  { border-color: var(--border-bright); }
+    .mode-icon { font-size: 24px; margin-bottom: 10px; opacity: 0.7; }
+    .mode-name { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 6px; }
+    .mode-card.active .mode-name { color: var(--gold); }
+    .mode-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; font-weight: 300; }
+
+    /* STATUS BAR */
+    .status-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg4); border: 1px solid var(--border);
+      padding: 12px 16px; margin-top: 14px;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.active { background: var(--green); box-shadow: 0 0 6px var(--green); animation: blink 2s infinite; }
+    .status-dot.paused { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+    .status-dot.off    { background: var(--text-dim); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .status-text { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); flex: 1; margin-left: 10px; }
+    .status-action { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 14px; cursor: pointer; transition: all 0.2s; }
+    .status-action:hover { border-color: var(--gold); color: var(--gold); }
+    .status-action.danger:hover { border-color: var(--red); color: var(--red); }
+
+    /* CAP STATUS */
+    .cap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .cap-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 14px; }
+    .cap-lbl  { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+    .cap-vals { display: flex; align-items: baseline; gap: 4px; margin-bottom: 8px; }
+    .cap-used { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .cap-of   { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1px; color: var(--text-dim); }
+    .cap-max  { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text-dim); }
+    .cap-track { background: var(--bg4); height: 4px; overflow: hidden; }
+    .cap-fill  { height: 100%; transition: width 0.8s ease; }
+    .cap-fill.safe { background: linear-gradient(90deg, #1E8449, var(--green)); }
+    .cap-fill.warn { background: linear-gradient(90deg, #C0392B, var(--red)); }
+    .cap-card.span2 { grid-column: span 2; }
+
+    /* ANON TOGGLE */
+    .anon-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--surface); border: 1px solid var(--border); padding: 16px 16px;
+    }
+    .anon-info { flex: 1; }
+    .anon-name { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); margin-bottom: 3px; }
+    .anon-desc { font-size: 12px; color: var(--text-dim); font-weight: 300; }
+    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track { position: absolute; inset: 0; background: var(--bg4); border: 1px solid var(--border); transition: all 0.25s; }
+    .toggle input:checked + .toggle-track { background: var(--gold-glow); border-color: var(--gold); }
+    .toggle-thumb { position: absolute; top: 4px; left: 4px; width: 14px; height: 14px; background: var(--text-dim); transition: all 0.25s; }
+    .toggle input:checked ~ .toggle-thumb { left: 24px; background: var(--gold); }
+
+    /* AUTO THRESHOLD */
+    .threshold-row { background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; }
+    .threshold-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .threshold-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); }
+    .threshold-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 1px; color: var(--gold); }
+    .threshold-slider { width: 100%; -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg4); outline: none; border: none; }
+    .threshold-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: var(--gold); cursor: pointer; border: none; }
+    .threshold-desc { font-size: 12px; color: var(--text-dim); margin-top: 8px; font-weight: 300; }
+
+    /* LIMITS GRID */
+    .limits-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .limit-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; }
+    .limit-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+    .limit-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 1px; color: var(--text-mid); }
+    .limit-val.muted { color: var(--text-dim); font-size: 18px; }
+
+    /* BET LOG */
+    .bet-log-table { width: 100%; border-collapse: collapse; }
+    .bet-log-table thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 8px 10px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+    .bet-log-table tbody tr { border-bottom: 1px solid rgba(201,168,76,0.05); transition: background 0.15s; }
+    .bet-log-table tbody tr:hover { background: rgba(201,168,76,0.04); }
+    .bet-log-table tbody td { padding: 11px 10px; font-size: 13px; color: var(--text-mid); white-space: nowrap; }
+    .bet-type { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--border); color: var(--text-dim); }
+    .bet-pick { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: var(--gold); }
+    .bet-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; }
+    .bet-status.placed  { color: var(--green); }
+    .bet-status.pending { color: var(--gold); }
+    .bet-status.failed  { color: var(--red); }
+
+    /* SPORTSBOOK CONNECT */
+    .sb-card { background: var(--surface); border: 1px solid var(--border); padding: 20px 16px; }
+    .sb-status { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .sb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+    .sb-dot.connected { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    .sb-name { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--text); }
+    .sb-sub  { font-size: 12px; color: var(--text-dim); margin-top: 2px; font-weight: 300; }
+    .sb-btn { display: block; width: 100%; background: none; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 12px; cursor: pointer; text-align: center; text-decoration: none; transition: all 0.2s; margin-top: 14px; }
+    .sb-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    .empty-note { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 24px; text-align: center; }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html" class="active"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Bet Management</div>
+      <div class="page-title">BETTING <em>CONTROL</em></div>
+    </div>
+
+    <!-- MODE -->
+    <div class="section">
+      <div class="sec-title">BETTING <em>MODE</em></div>
+      <div class="mode-cards">
+        <div class="mode-card" id="modeManual" onclick="setMode('manual')">
+          <div class="mode-icon">☰</div>
+          <div class="mode-name">Manual</div>
+          <div class="mode-desc">Review and approve each pick individually before it is placed</div>
+        </div>
+        <div class="mode-card" id="modeAuto" onclick="setMode('auto')">
+          <div class="mode-icon">●</div>
+          <div class="mode-name">Auto</div>
+          <div class="mode-desc">Automatically queue picks above your confidence threshold</div>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div class="status-dot" id="statusDot"></div>
+        <div class="status-text" id="statusText">Manual mode active</div>
+        <button class="status-action danger" id="pauseBtn" onclick="togglePause()">Pause</button>
+      </div>
+    </div>
+
+    <!-- CAP STATUS -->
+    <div class="section">
+      <div class="sec-title">CAP <em>STATUS</em></div>
+      <div class="cap-grid">
+        <div class="cap-card">
+          <div class="cap-lbl">Daily Cap</div>
+          <div class="cap-vals">
+            <span class="cap-used" id="dailyUsed">$0</span>
+            <span class="cap-of">of</span>
+            <span class="cap-max" id="dailyMax">$0</span>
+          </div>
+          <div class="cap-track"><div class="cap-fill safe" id="dailyBar" style="width:0%"></div></div>
+        </div>
+        <div class="cap-card">
+          <div class="cap-lbl">Weekly Cap</div>
+          <div class="cap-vals">
+            <span class="cap-used" id="weeklyUsed">$0</span>
+            <span class="cap-of">of</span>
+            <span class="cap-max" id="weeklyMax">$0</span>
+          </div>
+          <div class="cap-track"><div class="cap-fill safe" id="weeklyBar" style="width:0%"></div></div>
+        </div>
+        <div class="cap-card span2">
+          <div class="cap-lbl">Max Bets Per Day</div>
+          <div class="cap-vals">
+            <span class="cap-used" id="betsUsed">0</span>
+            <span class="cap-of">of</span>
+            <span class="cap-max" id="betsMax">0</span>
+          </div>
+          <div class="cap-track"><div class="cap-fill safe" id="betsBar" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANONYMOUS MODE -->
+    <div class="section">
+      <div class="sec-title">PRIVACY <em>&amp; ANON</em></div>
+      <div class="anon-row">
+        <div class="anon-info">
+          <div class="anon-name">Anonymous Mode</div>
+          <div class="anon-desc">Caps enforced. No identity attached to bets. Sportsbook API still active.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="anonToggle" onchange="saveAnon(this.checked)" />
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <!-- AUTO THRESHOLD -->
+    <div class="section" id="autoSection">
+      <div class="sec-title">AUTO <em>THRESHOLD</em></div>
+      <div class="threshold-row">
+        <div class="threshold-head">
+          <span class="threshold-lbl">Min Confidence to Auto-Bet</span>
+          <span class="threshold-val" id="thresholdDisplay">60%</span>
+        </div>
+        <input type="range" class="threshold-slider" id="thresholdSlider" min="40" max="90" value="60"
+          oninput="updateThreshold(this.value)" />
+        <div class="threshold-desc">Only picks with confidence ≥ this % will be auto-queued when in Auto mode.</div>
+      </div>
+    </div>
+
+    <!-- LIMITS -->
+    <div class="section">
+      <div class="sec-title">BET <em>LIMITS</em></div>
+      <div class="limits-grid">
+        <div class="limit-card">
+          <div class="limit-lbl">Max Unit Size</div>
+          <div class="limit-val" id="limitUnit">—</div>
+        </div>
+        <div class="limit-card">
+          <div class="limit-lbl">Min Conf to Show</div>
+          <div class="limit-val" id="limitConf">—</div>
+        </div>
+        <div class="limit-card">
+          <div class="limit-lbl">Min Algo Consensus</div>
+          <div class="limit-val" id="limitCons">—</div>
+        </div>
+        <div class="limit-card">
+          <div class="limit-lbl">Unit Size</div>
+          <div class="limit-val" id="limitUnitSize">—</div>
+        </div>
+      </div>
+      <a href="settings.html" style="display:block;margin-top:10px;text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-dim);text-decoration:none;padding:10px;border:1px solid var(--border);">Edit Limits in Settings →</a>
+    </div>
+
+    <!-- BET LOG -->
+    <div class="section">
+      <div class="sec-title">SESSION <em>BET LOG</em></div>
+      <div style="overflow-x:auto;">
+        <table class="bet-log-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Matchup</th>
+              <th>Pick</th>
+              <th>Type</th>
+              <th>Units</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="betLogBody">
+            <tr>
+              <td colspan="6" class="empty-note">No bets placed this session</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <button onclick="clearBetLog()" style="display:block;width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:10px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">Clear Session Log</button>
+    </div>
+
+    <!-- SPORTSBOOK -->
+    <div class="section">
+      <div class="sec-title">SPORTSBOOK <em>API</em></div>
+      <div class="sb-card">
+        <div class="sb-status">
+          <div class="sb-dot" id="sbDot"></div>
+          <div>
+            <div class="sb-name" id="sbName">Not Connected</div>
+            <div class="sb-sub">Connect a sportsbook API to enable automated bet placement</div>
+          </div>
+        </div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1.5px;color:var(--text-dim);line-height:1.7;">
+          Supported: DraftKings · FanDuel · BetMGM · Caesars · PointsBet<br>
+          API keys are stored securely in Admin — never in code.
+        </div>
+        <a href="admin.html" class="sb-btn">Configure in Admin →</a>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Bet responsibly · Caps enforced · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── STATE ──
+    let isPaused = localStorage.getItem('edge_betting_paused') === 'true';
+
+    // ── MODE ──
+    function setMode(mode) {
+      localStorage.setItem('edge_betting_mode', mode);
+      document.getElementById('modeManual').classList.toggle('active', mode === 'manual');
+      document.getElementById('modeAuto').classList.toggle('active', mode === 'auto');
+      updateStatusBar();
+    }
+
+    function updateStatusBar() {
+      const mode = localStorage.getItem('edge_betting_mode') || 'manual';
+      const dot  = document.getElementById('statusDot');
+      const txt  = document.getElementById('statusText');
+      const btn  = document.getElementById('pauseBtn');
+
+      if (isPaused) {
+        dot.className = 'status-dot paused';
+        txt.textContent = 'Betting paused — no picks will be queued';
+        btn.textContent = 'Resume';
+        btn.classList.remove('danger');
+      } else if (mode === 'auto') {
+        dot.className = 'status-dot active';
+        txt.textContent = 'Auto mode active — picks auto-queued above threshold';
+        btn.textContent = 'Pause';
+        btn.classList.add('danger');
+      } else {
+        dot.className = 'status-dot off';
+        txt.textContent = 'Manual mode active — approve picks individually';
+        btn.textContent = 'Pause';
+        btn.classList.add('danger');
+      }
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      localStorage.setItem('edge_betting_paused', isPaused);
+      updateStatusBar();
+    }
+
+    // ── CAPS ──
+    function loadCaps() {
+      const dailyCap  = parseFloat(localStorage.getItem('edge_daily_cap')    || '0');
+      const weeklyCap = parseFloat(localStorage.getItem('edge_weekly_cap')   || '0');
+      const maxBets   = parseInt(localStorage.getItem('edge_max_bets')       || '0');
+      const dailyUsed  = parseFloat(localStorage.getItem('edge_daily_used')  || '0');
+      const weeklyUsed = parseFloat(localStorage.getItem('edge_weekly_used') || '0');
+      const betsUsed   = parseInt(localStorage.getItem('edge_bets_used')     || '0');
+
+      document.getElementById('dailyUsed').textContent  = '$' + dailyUsed.toFixed(0);
+      document.getElementById('dailyMax').textContent   = '$' + dailyCap.toFixed(0);
+      document.getElementById('weeklyUsed').textContent = '$' + weeklyUsed.toFixed(0);
+      document.getElementById('weeklyMax').textContent  = '$' + weeklyCap.toFixed(0);
+      document.getElementById('betsUsed').textContent   = betsUsed;
+      document.getElementById('betsMax').textContent    = maxBets;
+
+      const fillCap = (id, used, max) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const pct = max > 0 ? Math.min((used / max) * 100, 100) : 0;
+        el.style.width = pct + '%';
+        el.className = 'cap-fill ' + (pct >= 80 ? 'warn' : 'safe');
+      };
+
+      setTimeout(() => {
+        fillCap('dailyBar',  dailyUsed,  dailyCap);
+        fillCap('weeklyBar', weeklyUsed, weeklyCap);
+        fillCap('betsBar',   betsUsed,   maxBets);
+      }, 300);
+    }
+
+    // ── LIMITS ──
+    function loadLimits() {
+      const get = (k, d) => localStorage.getItem(k) || d;
+      document.getElementById('limitUnit').textContent     = get('edge_max_unit_size', '—') + (get('edge_max_unit_size','') ? 'u' : '');
+      document.getElementById('limitConf').textContent     = get('edge_min_conf', '—') + (get('edge_min_conf','') ? '%' : '');
+      document.getElementById('limitCons').textContent     = get('edge_min_cons', '—') + (get('edge_min_cons','') ? '/25' : '');
+      document.getElementById('limitUnitSize').textContent = get('edge_unit_size', '—') ? '$' + get('edge_unit_size','') : '—';
+
+      // Mark muted if not set
+      ['limitUnit','limitConf','limitCons','limitUnitSize'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el.textContent === '—' || el.textContent.startsWith('$') === false && el.textContent.includes('—')) {
+          el.className = 'limit-val muted';
+        }
+      });
+    }
+
+    // ── ANON ──
+    function saveAnon(val) {
+      localStorage.setItem('edge_anon_mode', val);
+    }
+
+    // ── THRESHOLD ──
+    function updateThreshold(val) {
+      document.getElementById('thresholdDisplay').textContent = val + '%';
+      localStorage.setItem('edge_auto_threshold', val);
+    }
+
+    // ── BET LOG ──
+    function loadBetLog() {
+      const body = document.getElementById('betLogBody');
+      try {
+        const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
+        if (!log.length) {
+          body.innerHTML = '<tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>';
+          return;
+        }
+        body.innerHTML = log.map(b => `
+          <tr>
+            <td>${b.time || '—'}</td>
+            <td>${b.matchup || '—'}</td>
+            <td><span class="bet-pick">${b.pick || '—'}</span></td>
+            <td><span class="bet-type">${b.type || '—'}</span></td>
+            <td>${b.units || '—'}u</td>
+            <td><span class="bet-status ${b.status || 'pending'}">${(b.status || 'pending').toUpperCase()}</span></td>
+          </tr>`).join('');
+      } catch {
+        body.innerHTML = '<tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>';
+      }
+    }
+
+    function clearBetLog() {
+      localStorage.removeItem('edge_session_bet_log');
+      loadBetLog();
+    }
+
+    // ── SPORTSBOOK STATUS ──
+    function checkSportsbook() {
+      const key = localStorage.getItem('edge_sportsbook_api_key');
+      const name = localStorage.getItem('edge_sportsbook_name') || 'Not Connected';
+      document.getElementById('sbDot').className = 'sb-dot' + (key ? ' connected' : '');
+      document.getElementById('sbName').textContent = key ? name : 'Not Connected';
+    }
+
+    // ── INIT ──
+    function init() {
+      const mode = localStorage.getItem('edge_betting_mode') || 'manual';
+      setMode(mode);
+      loadCaps();
+      loadLimits();
+      loadBetLog();
+      checkSportsbook();
+
+      const anonToggle = document.getElementById('anonToggle');
+      anonToggle.checked = localStorage.getItem('edge_anon_mode') === 'true';
+
+      const threshold = localStorage.getItem('edge_auto_threshold') || '60';
+      document.getElementById('thresholdSlider').value = threshold;
+      document.getElementById('thresholdDisplay').textContent = threshold + '%';
+    }
+
+    init();
+  </script>
+</body>
+</html>
