@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Algorithm Suite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    /* NAV */
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px, 11vw, 68px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* SUMMARY STRIP */
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-bottom: 1px solid var(--border);
+    }
+    .sum-cell {
+      padding: 14px 10px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .sum-cell:last-child { border-right: none; }
+    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; color: var(--text); }
+    .sum-val.gold { color: var(--gold); }
+    .sum-val.green { color: var(--green); }
+    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
+
+    /* CONTROLS BAR */
+    .controls-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+      gap: 10px;
+    }
+    .ctrl-label { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .ctrl-btns { display: flex; gap: 0; border: 1px solid var(--border); }
+    .ctrl-btn { background: none; border: none; border-right: 1px solid var(--border); padding: 7px 14px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .ctrl-btn:last-child { border-right: none; }
+    .ctrl-btn.active { color: var(--gold); background: var(--gold-glow); }
+
+    /* ALGO LIST */
+    .algo-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+
+    /* ALGO CARD */
+    .algo-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .algo-card:hover { border-color: var(--border-bright); }
+    .algo-card.disabled { opacity: 0.45; }
+
+    .algo-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+    }
+
+    .algo-num {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 13px;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      width: 24px;
+      flex-shrink: 0;
+      text-align: center;
+    }
+
+    .algo-info { flex: 1; min-width: 0; }
+
+    .algo-name {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 20px;
+      letter-spacing: 2px;
+      color: var(--text);
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+
+    .algo-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 300;
+      line-height: 1.4;
+    }
+
+    .algo-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    /* TOGGLE SWITCH */
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      cursor: pointer;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--bg4);
+      border: 1px solid var(--border);
+      transition: all 0.25s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--gold-glow); border-color: var(--gold); }
+    .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 14px; height: 14px;
+      background: var(--text-dim);
+      transition: all 0.25s;
+    }
+    .toggle input:checked ~ .toggle-thumb { left: 21px; background: var(--gold); }
+
+    /* STATS ROW */
+    .algo-stats {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid var(--border);
+    }
+    .algo-stat {
+      flex: 1;
+      padding: 10px 10px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .algo-stat:last-child { border-right: none; }
+    .algo-stat-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text-mid); }
+    .algo-stat-val.green { color: var(--green); }
+    .algo-stat-val.gold  { color: var(--gold); }
+    .algo-stat-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 1px; }
+
+    /* WEIGHT EDITOR */
+    .weight-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .weight-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .weight-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 3px;
+      background: var(--bg4);
+      outline: none;
+      border: none;
+    }
+    .weight-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      background: var(--gold);
+      cursor: pointer;
+      border: none;
+    }
+    .weight-val { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; width: 36px; text-align: right; }
+
+    /* VOTE BADGE */
+    .vote-pill {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px; font-weight: 900;
+      letter-spacing: 1.5px; text-transform: uppercase;
+      padding: 3px 9px; border: 1px solid;
+    }
+    .vote-pill.yes { border-color: rgba(201,168,76,0.4); color: var(--gold); background: rgba(201,168,76,0.08); }
+    .vote-pill.no  { border-color: rgba(231,76,60,0.35); color: var(--red); background: rgba(231,76,60,0.06); }
+    .vote-pill.neu { border-color: var(--border); color: var(--text-dim); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html" class="active"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Intelligence Engine</div>
+      <div class="page-title">ALGORITHM <em>SUITE</em></div>
+    </div>
+
+    <!-- SUMMARY -->
+    <div class="summary-strip">
+      <div class="sum-cell">
+        <div class="sum-val gold" id="sumActive">25</div>
+        <div class="sum-lbl">Active</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val" id="sumOff">0</div>
+        <div class="sum-lbl">Off</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val green">—</div>
+        <div class="sum-lbl">Best ROI</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val">—</div>
+        <div class="sum-lbl">Season W%</div>
+      </div>
+    </div>
+
+    <!-- CONTROLS -->
+    <div class="controls-bar">
+      <span class="ctrl-label">View</span>
+      <div class="ctrl-btns">
+        <button class="ctrl-btn active" id="viewAll" onclick="setView('all')">All</button>
+        <button class="ctrl-btn" id="viewOn" onclick="setView('on')">Active</button>
+        <button class="ctrl-btn" id="viewOff" onclick="setView('off')">Off</button>
+      </div>
+    </div>
+
+    <!-- ALGO LIST -->
+    <div class="algo-list" id="algoList"></div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">25 Algorithms · Weights stored in Supabase · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── ALGORITHM DEFINITIONS ──
+    const ALGORITHMS = [
+      { id: 1,  name: 'Elo Rating',                desc: 'Dynamic team strength ratings updated after every game based on win/loss margin.' },
+      { id: 2,  name: 'Pythagorean Expectation',   desc: 'Estimates true win % from points scored vs allowed — filters out luck.' },
+      { id: 3,  name: 'Simple Rating System',      desc: 'Adjusts margin of victory for strength of schedule to produce a composite rating.' },
+      { id: 4,  name: 'Sharp Money Indicator',     desc: 'Tracks where professional bettors are placing money based on line movement vs ticket %.' },
+      { id: 5,  name: 'Closing Line Value',        desc: 'Measures pick quality by comparing our line to the closing number — the gold standard metric.' },
+      { id: 6,  name: 'Steam Move Detector',       desc: 'Identifies rapid, coordinated line movements triggered by sharp syndicate action.' },
+      { id: 7,  name: 'Reverse Line Movement',     desc: 'Flags when lines move opposite to public betting % — a sharp money signal.' },
+      { id: 8,  name: 'Pace & Tempo Analysis',     desc: 'Evaluates team pace matchups to project scoring totals and over/under edges.' },
+      { id: 9,  name: 'Strength of Schedule',      desc: 'Contextualizes records by ranking difficulty of opponents faced this season.' },
+      { id: 10, name: 'Rest & Recovery Index',     desc: 'Scores teams on days of rest, practice time, and back-to-back game fatigue.' },
+      { id: 11, name: 'Travel Fatigue Model',      desc: 'Calculates distance traveled, time zones crossed, and road trip length impact.' },
+      { id: 12, name: 'Weather Impact Model',      desc: 'For outdoor sports — wind speed, temperature, and precipitation effect on scoring.' },
+      { id: 13, name: 'Home/Away Split Analysis',  desc: 'Isolates each team\'s performance splits at home vs on the road ATS.' },
+      { id: 14, name: 'ATS Trend Analysis',        desc: 'Identifies cover streaks, fade patterns, and historical spread performance trends.' },
+      { id: 15, name: 'Recent Form Index',         desc: 'Weights last 5 games performance — both SU and ATS — with recency bias.' },
+      { id: 16, name: 'Public Betting % Fade',     desc: 'Fades heavy public sides when ticket % and money % diverge from line movement.' },
+      { id: 17, name: 'Situational Spot Analysis', desc: 'Identifies letdown spots, look-ahead games, revenge games, and trap situations.' },
+      { id: 18, name: 'Coaching Tendencies',       desc: 'Models coach behavior in key situations: covering vs dogs, totals tendencies, clock management.' },
+      { id: 19, name: 'Injury Impact Score',       desc: 'Quantifies the betting value impact of key player injuries and lineup changes.' },
+      { id: 20, name: 'Primetime Performance',     desc: 'Tracks team ATS records in nationally televised, primetime, and playoff-style games.' },
+      { id: 21, name: 'Divisional Record',         desc: 'Separates conference and divisional records — familiarity breeds tighter games.' },
+      { id: 22, name: 'Revenge Game Detector',     desc: 'Flags teams facing opponents who beat them previously — especially in blowouts.' },
+      { id: 23, name: 'Line Open-to-Close',        desc: 'Tracks full line movement from open to close to identify sharp vs public pressure.' },
+      { id: 24, name: 'Totals Trend Model',        desc: 'Analyzes over/under trends by pace matchup, weather, and referee/umpire tendencies.' },
+      { id: 25, name: 'Regression to the Mean',    desc: 'Identifies teams due for performance correction after outlier results.' },
+    ];
+
+    // ── STATE (persisted to localStorage) ──
+    function loadState() {
+      try { return JSON.parse(localStorage.getItem('edge_algo_state') || '{}'); } catch { return {}; }
+    }
+
+    function saveState(state) {
+      localStorage.setItem('edge_algo_state', JSON.stringify(state));
+    }
+
+    function getAlgoState(id) {
+      const s = loadState();
+      return s[id] || { enabled: true, weight: 4 };
+    }
+
+    function setAlgoState(id, key, val) {
+      const s = loadState();
+      if (!s[id]) s[id] = { enabled: true, weight: 4 };
+      s[id][key] = val;
+      saveState(s);
+      updateSummary();
+    }
+
+    // ── SUMMARY ──
+    function updateSummary() {
+      const activeCount = ALGORITHMS.filter(a => getAlgoState(a.id).enabled).length;
+      document.getElementById('sumActive').textContent = activeCount;
+      document.getElementById('sumOff').textContent = 25 - activeCount;
+    }
+
+    // ── VIEW FILTER ──
+    let currentView = 'all';
+
+    function setView(v) {
+      currentView = v;
+      ['all','on','off'].forEach(k => document.getElementById('view' + k.charAt(0).toUpperCase() + k.slice(1)).classList.toggle('active', k === v));
+      renderAlgos();
+    }
+
+    // ── RENDER ──
+    function renderAlgos() {
+      const list = document.getElementById('algoList');
+
+      const filtered = ALGORITHMS.filter(a => {
+        const on = getAlgoState(a.id).enabled;
+        if (currentView === 'on')  return on;
+        if (currentView === 'off') return !on;
+        return true;
+      });
+
+      list.innerHTML = filtered.map(a => {
+        const state = getAlgoState(a.id);
+        const enabled = state.enabled;
+        const weight  = state.weight ?? 4;
+
+        return `
+          <div class="algo-card ${enabled ? '' : 'disabled'}" id="acard-${a.id}">
+            <div class="algo-top">
+              <div class="algo-num">${String(a.id).padStart(2,'0')}</div>
+              <div class="algo-info">
+                <div class="algo-name">${a.name}</div>
+                <div class="algo-desc">${a.desc}</div>
+              </div>
+              <div class="algo-right">
+                <label class="toggle">
+                  <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleAlgo(${a.id}, this.checked)" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+                <span class="vote-pill neu" id="vote-${a.id}">—</span>
+              </div>
+            </div>
+
+            <div class="algo-stats">
+              <div class="algo-stat">
+                <div class="algo-stat-val" id="rec-${a.id}">—</div>
+                <div class="algo-stat-lbl">Season W-L</div>
+              </div>
+              <div class="algo-stat">
+                <div class="algo-stat-val green" id="roi-${a.id}">—</div>
+                <div class="algo-stat-lbl">ROI</div>
+              </div>
+              <div class="algo-stat">
+                <div class="algo-stat-val gold" id="wrate-${a.id}">—</div>
+                <div class="algo-stat-lbl">Win %</div>
+              </div>
+            </div>
+
+            <div class="weight-row">
+              <span class="weight-lbl">Weight</span>
+              <input type="range" class="weight-slider" min="1" max="10" value="${weight}"
+                oninput="updateWeight(${a.id}, this.value, this)" />
+              <span class="weight-val" id="wval-${a.id}">${weight}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      // Load Supabase records if connected
+      loadSupabaseRecords();
+    }
+
+    function toggleAlgo(id, enabled) {
+      setAlgoState(id, 'enabled', enabled);
+      const card = document.getElementById('acard-' + id);
+      if (card) card.classList.toggle('disabled', !enabled);
+    }
+
+    function updateWeight(id, val, slider) {
+      setAlgoState(id, 'weight', parseInt(val));
+      document.getElementById('wval-' + id).textContent = val;
+    }
+
+    // ── LOAD RECORDS FROM SUPABASE ──
+    async function loadSupabaseRecords() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return;
+
+      try {
+        const res = await fetch(`${url}/rest/v1/algorithms?select=*`, {
+          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        data.forEach(row => {
+          const recEl   = document.getElementById('rec-' + row.id);
+          const roiEl   = document.getElementById('roi-' + row.id);
+          const wrateEl = document.getElementById('wrate-' + row.id);
+          const voteEl  = document.getElementById('vote-' + row.id);
+
+          if (recEl)   recEl.textContent   = `${row.wins || 0}–${row.losses || 0}`;
+          if (roiEl)   roiEl.textContent   = row.roi != null ? (row.roi > 0 ? '+' : '') + row.roi + '%' : '—';
+          if (wrateEl) wrateEl.textContent = row.win_rate != null ? row.win_rate + '%' : '—';
+          if (voteEl && row.current_vote) {
+            voteEl.textContent = row.current_vote.toUpperCase();
+            voteEl.className   = 'vote-pill ' + row.current_vote;
+          }
+        });
+      } catch (e) { /* Supabase not connected */ }
+    }
+
+    // ── INIT ──
+    updateSummary();
+    renderAlgos();
+  </script>
+</body>
+</html>
