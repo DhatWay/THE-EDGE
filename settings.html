@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px,12vw,72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* SAVE BAR */
+    .save-bar {
+      position: sticky; top: 60px; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 20px;
+      background: rgba(8,8,8,0.97);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .save-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+    .save-status.saved  { color: var(--green); }
+    .save-status.unsaved { color: var(--gold); }
+    .save-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; padding: 8px 22px; cursor: pointer; transition: opacity 0.2s; }
+    .save-btn:hover { opacity: 0.85; }
+
+    /* SECTION */
+    .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    /* FIELD */
+    .field { margin-bottom: 14px; }
+    .field:last-child { margin-bottom: 0; }
+    .field-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+    .field-hint { font-size: 10px; color: var(--text-dim); font-weight: 300; letter-spacing: 0; text-transform: none; }
+
+    .field-input {
+      width: 100%; background: var(--bg4); border: 1px solid var(--border);
+      color: var(--text); font-family: 'Bebas Neue', sans-serif;
+      font-size: 24px; letter-spacing: 2px; padding: 12px 14px;
+      transition: border-color 0.2s;
+    }
+    .field-input:focus { outline: none; border-color: var(--gold); }
+    .field-input::placeholder { color: var(--text-dim); }
+
+    .field-input.sm { font-family: 'Barlow', sans-serif; font-size: 15px; letter-spacing: 0; }
+
+    /* UNIT TYPE TOGGLE */
+    .unit-toggle { display: flex; border: 1px solid var(--border); margin-bottom: 14px; }
+    .unit-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; transition: all 0.2s; text-align: center; }
+    .unit-btn:last-child { border-right: none; }
+    .unit-btn.active { color: var(--gold); background: var(--gold-glow); }
+
+    /* SLIDER FIELD */
+    .slider-field { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; margin-bottom: 10px; }
+    .slider-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .slider-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); }
+    .slider-val { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; color: var(--gold); }
+    .slider { width: 100%; -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg4); outline: none; border: none; }
+    .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: var(--gold); cursor: pointer; }
+    .slider-hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; font-weight: 300; }
+
+    /* SPORT TOGGLES */
+    .sport-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sport-toggle-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; }
+    .sport-toggle-name { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); }
+    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track { position: absolute; inset: 0; background: var(--bg4); border: 1px solid var(--border); transition: all 0.25s; }
+    .toggle input:checked + .toggle-track { background: var(--gold-glow); border-color: var(--gold); }
+    .toggle-thumb { position: absolute; top: 4px; left: 4px; width: 14px; height: 14px; background: var(--text-dim); transition: all 0.25s; }
+    .toggle input:checked ~ .toggle-thumb { left: 24px; background: var(--gold); }
+
+    /* NOTIFICATION ROWS */
+    .notif-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-top: none; padding: 12px 14px; }
+    .notif-row:first-of-type { border-top: 1px solid var(--border); }
+    .notif-info { flex: 1; }
+    .notif-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); }
+    .notif-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 300; }
+
+    /* THEME SELECTOR */
+    .theme-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+    .theme-card { background: var(--surface); border: 2px solid var(--border); padding: 14px 10px; text-align: center; cursor: pointer; transition: all 0.2s; }
+    .theme-card.active { border-color: var(--gold); }
+    .theme-swatch { width: 32px; height: 32px; border-radius: 50%; margin: 0 auto 8px; }
+    .theme-name { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+    .theme-card.active .theme-name { color: var(--gold); }
+
+    /* DANGER ZONE */
+    .danger-btn { display: block; width: 100%; background: none; border: 1px solid rgba(231,76,60,0.3); color: var(--red); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px; cursor: pointer; text-align: center; transition: all 0.2s; margin-bottom: 8px; }
+    .danger-btn:hover { background: rgba(231,76,60,0.08); border-color: var(--red); }
+
+    /* TOAST */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html" class="active"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <div class="toast" id="toast">Settings Saved</div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Preferences</div>
+      <div class="page-title">SETTINGS</div>
+    </div>
+
+    <!-- SAVE BAR -->
+    <div class="save-bar">
+      <span class="save-status" id="saveStatus">All changes saved</span>
+      <button class="save-btn" onclick="saveAll()">SAVE</button>
+    </div>
+
+    <!-- BANKROLL -->
+    <div class="section">
+      <div class="sec-title">BANK<em>ROLL</em></div>
+
+      <div class="field">
+        <div class="field-lbl">Starting Bankroll <span class="field-hint">USD</span></div>
+        <input type="number" class="field-input" id="bankroll" placeholder="2000" min="0" oninput="markUnsaved()" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Unit Type</div>
+        <div class="unit-toggle">
+          <button class="unit-btn active" id="unitFlat" onclick="setUnitType('flat')">Flat $</button>
+          <button class="unit-btn" id="unitPct" onclick="setUnitType('pct')">% of Bankroll</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-lbl" id="unitSizeLbl">Unit Size (flat $) <span class="field-hint">per bet</span></div>
+        <input type="number" class="field-input" id="unitSize" placeholder="50" min="1" oninput="markUnsaved()" />
+      </div>
+    </div>
+
+    <!-- CAPS -->
+    <div class="section">
+      <div class="sec-title">LOSS <em>CAPS</em></div>
+
+      <div class="field">
+        <div class="field-lbl">Daily Loss Cap <span class="field-hint">USD</span></div>
+        <input type="number" class="field-input" id="dailyCap" placeholder="200" min="0" oninput="markUnsaved()" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Weekly Loss Cap <span class="field-hint">USD</span></div>
+        <input type="number" class="field-input" id="weeklyCap" placeholder="500" min="0" oninput="markUnsaved()" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Max Bets Per Day</div>
+        <input type="number" class="field-input" id="maxBets" placeholder="5" min="1" oninput="markUnsaved()" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Max Unit Size Per Bet <span class="field-hint">units</span></div>
+        <input type="number" class="field-input" id="maxUnitSize" placeholder="2" min="1" oninput="markUnsaved()" />
+      </div>
+    </div>
+
+    <!-- PICK FILTERS -->
+    <div class="section">
+      <div class="sec-title">PICK <em>FILTERS</em></div>
+
+      <div class="slider-field">
+        <div class="slider-head">
+          <span class="slider-lbl">Min Confidence to Show</span>
+          <span class="slider-val" id="confDisplay">50%</span>
+        </div>
+        <input type="range" class="slider" id="minConf" min="0" max="90" value="50"
+          oninput="updateSlider('minConf','confDisplay', this.value+'%'); markUnsaved();" />
+        <div class="slider-hint">Picks below this confidence % are hidden from Today's Picks</div>
+      </div>
+
+      <div class="slider-field">
+        <div class="slider-head">
+          <span class="slider-lbl">Min Algorithm Consensus</span>
+          <span class="slider-val" id="consDisplay">13 / 25</span>
+        </div>
+        <input type="range" class="slider" id="minCons" min="1" max="25" value="13"
+          oninput="updateSlider('minCons','consDisplay', this.value+' / 25'); markUnsaved();" />
+        <div class="slider-hint">Picks with fewer than this many algo votes are hidden</div>
+      </div>
+
+      <div class="slider-field">
+        <div class="slider-head">
+          <span class="slider-lbl">Auto-Bet Threshold</span>
+          <span class="slider-val" id="autoDisplay">65%</span>
+        </div>
+        <input type="range" class="slider" id="autoThreshold" min="40" max="90" value="65"
+          oninput="updateSlider('autoThreshold','autoDisplay', this.value+'%'); markUnsaved();" />
+        <div class="slider-hint">Auto mode only queues picks at or above this confidence</div>
+      </div>
+    </div>
+
+    <!-- SPORTS -->
+    <div class="section">
+      <div class="sec-title">SPORTS <em>TRACKING</em></div>
+      <div class="sport-grid" id="sportGrid">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- NOTIFICATIONS -->
+    <div class="section">
+      <div class="sec-title">NOTIFI<em>CATIONS</em></div>
+
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Steam Move Alert</div>
+          <div class="notif-desc">Notify when a steam move is detected on any active game</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifSteam" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">New Pick Generated</div>
+          <div class="notif-desc">Alert when algorithms produce a new high-confidence pick</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifPick" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Cap Warning</div>
+          <div class="notif-desc">Alert when daily or weekly cap is 80% used</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifCap" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Result Posted</div>
+          <div class="notif-desc">Notify when a game result is logged and pick is scored</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifResult" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Line Movement Alert</div>
+          <div class="notif-desc">Alert on significant line moves on picks you've approved</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifLine" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <!-- THEME -->
+    <div class="section">
+      <div class="sec-title">THEME</div>
+      <div class="theme-grid" id="themeGrid">
+        <div class="theme-card active" data-theme="dark-gold" onclick="setTheme('dark-gold', this)">
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#080808,#C9A84C)"></div>
+          <div class="theme-name">Dark Gold</div>
+        </div>
+        <div class="theme-card" data-theme="dark-green" onclick="setTheme('dark-green', this)">
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#080808,#27AE60)"></div>
+          <div class="theme-name">Dark Green</div>
+        </div>
+        <div class="theme-card" data-theme="dark-red" onclick="setTheme('dark-red', this)">
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#080808,#E74C3C)"></div>
+          <div class="theme-name">Dark Red</div>
+        </div>
+        <div class="theme-card" data-theme="midnight" onclick="setTheme('midnight', this)">
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#05050F,#4A4AFF)"></div>
+          <div class="theme-name">Midnight</div>
+        </div>
+        <div class="theme-card" data-theme="slate" onclick="setTheme('slate', this)">
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#0A0A12,#8888AA)"></div>
+          <div class="theme-name">Slate</div>
+        </div>
+        <div class="theme-card" data-theme="pure-black" onclick="setTheme('pure-black', this)">
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#000,#222)"></div>
+          <div class="theme-name">Pure Black</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DANGER ZONE -->
+    <div class="section">
+      <div class="sec-title">DANGER <em>ZONE</em></div>
+      <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
+      <button class="danger-btn" onclick="clearSession()">Clear Session Bet Log</button>
+      <button class="danger-btn" onclick="resetAll()">Reset All Settings to Default</button>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Settings stored locally · Syncs to Supabase when connected · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── SPORTS ──
+    const SPORTS = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+
+    function buildSportToggles() {
+      const grid = document.getElementById('sportGrid');
+      grid.innerHTML = SPORTS.map(s => {
+        const on = localStorage.getItem('edge_sport_' + s) !== 'false';
+        return `
+          <div class="sport-toggle-row">
+            <span class="sport-toggle-name">${s}</span>
+            <label class="toggle">
+              <input type="checkbox" id="sport_${s}" ${on ? 'checked' : ''} onchange="markUnsaved()" />
+              <div class="toggle-track"></div><div class="toggle-thumb"></div>
+            </label>
+          </div>`;
+      }).join('');
+    }
+
+    // ── UNIT TYPE ──
+    let unitType = localStorage.getItem('edge_unit_type') || 'flat';
+
+    function setUnitType(type) {
+      unitType = type;
+      document.getElementById('unitFlat').classList.toggle('active', type === 'flat');
+      document.getElementById('unitPct').classList.toggle('active', type === 'pct');
+      document.getElementById('unitSizeLbl').innerHTML = type === 'flat'
+        ? 'Unit Size (flat $) <span class="field-hint">per bet</span>'
+        : 'Unit Size (% of bankroll) <span class="field-hint">per bet</span>';
+      markUnsaved();
+    }
+
+    // ── SLIDERS ──
+    function updateSlider(inputId, displayId, displayVal) {
+      document.getElementById(displayId).textContent = displayVal;
+    }
+
+    // ── THEME ──
+    function setTheme(theme, el) {
+      document.querySelectorAll('.theme-card').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      localStorage.setItem('edge_theme', theme);
+      markUnsaved();
+    }
+
+    // ── SAVE STATUS ──
+    function markUnsaved() {
+      const el = document.getElementById('saveStatus');
+      el.textContent = 'Unsaved changes';
+      el.className = 'save-status unsaved';
+    }
+
+    function markSaved() {
+      const el = document.getElementById('saveStatus');
+      el.textContent = 'All changes saved';
+      el.className = 'save-status saved';
+    }
+
+    // ── SAVE ALL ──
+    function saveAll() {
+      const set = (k, v) => { if (v !== '' && v !== null) localStorage.setItem(k, v); };
+
+      set('edge_bankroll',      document.getElementById('bankroll').value);
+      set('edge_unit_type',     unitType);
+      set('edge_unit_size',     document.getElementById('unitSize').value);
+      set('edge_daily_cap',     document.getElementById('dailyCap').value);
+      set('edge_weekly_cap',    document.getElementById('weeklyCap').value);
+      set('edge_max_bets',      document.getElementById('maxBets').value);
+      set('edge_max_unit_size', document.getElementById('maxUnitSize').value);
+      set('edge_min_conf',      document.getElementById('minConf').value);
+      set('edge_min_cons',      document.getElementById('minCons').value);
+      set('edge_auto_threshold',document.getElementById('autoThreshold').value);
+
+      // Sports
+      SPORTS.forEach(s => {
+        const el = document.getElementById('sport_' + s);
+        if (el) localStorage.setItem('edge_sport_' + s, el.checked);
+      });
+
+      // Notifications
+      ['notifSteam','notifPick','notifCap','notifResult','notifLine'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) localStorage.setItem('edge_' + id, el.checked);
+      });
+
+      // Sync to Supabase settings table if connected
+      syncToSupabase();
+
+      markSaved();
+      showToast('Settings Saved');
+    }
+
+    // ── SUPABASE SYNC ──
+    async function syncToSupabase() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return;
+
+      const payload = {
+        bankroll:       localStorage.getItem('edge_bankroll'),
+        unit_type:      localStorage.getItem('edge_unit_type'),
+        unit_size:      localStorage.getItem('edge_unit_size'),
+        daily_cap:      localStorage.getItem('edge_daily_cap'),
+        weekly_cap:     localStorage.getItem('edge_weekly_cap'),
+        max_bets:       localStorage.getItem('edge_max_bets'),
+        max_unit_size:  localStorage.getItem('edge_max_unit_size'),
+        min_conf:       localStorage.getItem('edge_min_conf'),
+        min_cons:       localStorage.getItem('edge_min_cons'),
+        auto_threshold: localStorage.getItem('edge_auto_threshold'),
+        theme:          localStorage.getItem('edge_theme'),
+        updated_at:     new Date().toISOString()
+      };
+
+      try {
+        await fetch(`${url}/rest/v1/settings?id=eq.1`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates'
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch {}
+    }
+
+    // ── LOAD ──
+    function loadAll() {
+      const get = (k, d) => localStorage.getItem(k) || d;
+
+      document.getElementById('bankroll').value     = get('edge_bankroll', '');
+      document.getElementById('unitSize').value     = get('edge_unit_size', '');
+      document.getElementById('dailyCap').value     = get('edge_daily_cap', '');
+      document.getElementById('weeklyCap').value    = get('edge_weekly_cap', '');
+      document.getElementById('maxBets').value      = get('edge_max_bets', '');
+      document.getElementById('maxUnitSize').value  = get('edge_max_unit_size', '');
+
+      const minConf = get('edge_min_conf', '50');
+      document.getElementById('minConf').value = minConf;
+      document.getElementById('confDisplay').textContent = minConf + '%';
+
+      const minCons = get('edge_min_cons', '13');
+      document.getElementById('minCons').value = minCons;
+      document.getElementById('consDisplay').textContent = minCons + ' / 25';
+
+      const autoT = get('edge_auto_threshold', '65');
+      document.getElementById('autoThreshold').value = autoT;
+      document.getElementById('autoDisplay').textContent = autoT + '%';
+
+      setUnitType(get('edge_unit_type', 'flat'));
+
+      // Notifications
+      ['notifSteam','notifPick','notifCap','notifResult','notifLine'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = localStorage.getItem('edge_' + id) === 'true';
+      });
+
+      // Theme
+      const theme = get('edge_theme', 'dark-gold');
+      document.querySelectorAll('.theme-card').forEach(c => {
+        c.classList.toggle('active', c.dataset.theme === theme);
+      });
+    }
+
+    // ── TOAST ──
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2200);
+    }
+
+    // ── DANGER ZONE ──
+    function resetCaps() {
+      localStorage.setItem('edge_daily_used', '0');
+      localStorage.setItem('edge_weekly_used', '0');
+      localStorage.setItem('edge_bets_used', '0');
+      showToast('Cap usage reset');
+    }
+
+    function clearSession() {
+      localStorage.removeItem('edge_session_bet_log');
+      showToast('Session log cleared');
+    }
+
+    function resetAll() {
+      const keys = ['edge_bankroll','edge_unit_type','edge_unit_size','edge_daily_cap','edge_weekly_cap',
+        'edge_max_bets','edge_max_unit_size','edge_min_conf','edge_min_cons','edge_auto_threshold',
+        'edge_theme','edge_daily_used','edge_weekly_used','edge_bets_used'];
+      keys.forEach(k => localStorage.removeItem(k));
+      loadAll();
+      showToast('Settings reset');
+    }
+
+    // ── INIT ──
+    buildSportToggles();
+    loadAll();
+    markSaved();
+  </script>
+</body>
+</html>
