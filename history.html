@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>THE EDGE — Pick History</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px,11vw,68px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* RECORD SUMMARY */
+    .record-grid {
+      display: grid;
+      grid-template-columns: repeat(2,1fr);
+      border-bottom: 1px solid var(--border);
+    }
+    .rec-cell {
+      padding: 16px 16px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .rec-cell:nth-child(even) { border-right: none; }
+    .rec-cell:nth-last-child(-n+2) { border-bottom: none; }
+    .rec-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+    .rec-val { font-family: 'Bebas Neue', sans-serif; font-size: 36px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .rec-val.green { color: var(--green); }
+    .rec-val.gold  { color: var(--gold); }
+    .rec-val.muted { color: var(--text-dim); font-size: 26px; }
+    .rec-sub { font-size: 11px; color: var(--text-dim); margin-top: 3px; font-weight: 300; }
+
+    /* MONTH BREAKDOWN */
+    .month-section { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text); margin-bottom: 12px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    .month-list { display: flex; flex-direction: column; gap: 6px; }
+    .month-row {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 10px 14px;
+    }
+    .month-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); width: 52px; flex-shrink: 0; }
+    .month-rec  { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text); width: 80px; flex-shrink: 0; }
+    .month-bar-track { flex: 1; background: var(--bg4); height: 4px; }
+    .month-bar-fill  { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); transition: width 0.8s ease; }
+    .month-roi { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; width: 52px; text-align: right; flex-shrink: 0; }
+    .month-roi.pos { color: var(--green); }
+    .month-roi.neg { color: var(--red); }
+    .month-roi.neu { color: var(--text-dim); }
+
+    /* FILTERS */
+    .filter-bar {
+      display: flex; gap: 8px; padding: 12px 20px;
+      overflow-x: auto; border-bottom: 1px solid var(--border);
+      scrollbar-width: none; background: var(--bg2);
+    }
+    .filter-bar::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+
+    /* DATE RANGE */
+    .date-row {
+      display: flex; gap: 8px; padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      align-items: center; background: var(--bg2);
+    }
+    .date-input { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; padding: 8px 10px; }
+    .date-input:focus { outline: none; border-color: var(--gold); }
+    .date-sep { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; flex-shrink: 0; }
+    .date-apply { background: none; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 8px 14px; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+    .date-apply:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    /* TABLE */
+    .table-section { padding: 16px 20px; }
+    .table-head-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+    .table-count { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 500px; }
+    thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 8px 10px 10px; border-bottom: 1px solid var(--border); text-align: left; cursor: pointer; white-space: nowrap; user-select: none; }
+    thead th:hover { color: var(--text-mid); }
+    thead th.sorted { color: var(--gold); }
+    tbody tr { border-bottom: 1px solid rgba(201,168,76,0.05); transition: background 0.15s; }
+    tbody tr:hover { background: rgba(201,168,76,0.04); }
+    tbody td { padding: 12px 10px; font-size: 13px; color: var(--text-mid); vertical-align: middle; white-space: nowrap; }
+
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 6px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .matchup-bold { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .pick-bold { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: var(--gold); }
+    .type-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--border); color: var(--text-dim); }
+    .conf-high { color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+    .conf-med  { color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+    .conf-low  { color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+    .res { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; }
+    .res.w { color: var(--green); }
+    .res.l { color: var(--red); }
+    .res.p { color: var(--text-dim); }
+    .res.pending { color: var(--text-dim); font-size: 14px; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1px; }
+    .pnl { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; }
+    .pnl.pos { color: var(--green); }
+    .pnl.neg { color: var(--red); }
+    .pnl.neu { color: var(--text-dim); }
+
+    /* EMPTY */
+    .empty-state { padding: 48px 20px; text-align: center; }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
+    .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
+    .go-btn { display: inline-block; margin-top: 18px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 22px; text-decoration: none; transition: all 0.2s; }
+    .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">THE EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html" class="active"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Full Season Log</div>
+      <div class="page-title">PICK <em>HISTORY</em></div>
+    </div>
+
+    <!-- RECORD SUMMARY -->
+    <div class="record-grid">
+      <div class="rec-cell">
+        <div class="rec-lbl">All-Time Record</div>
+        <div class="rec-val" id="sumAllTime">—</div>
+        <div class="rec-sub">Win – Loss – Push</div>
+      </div>
+      <div class="rec-cell">
+        <div class="rec-lbl">Season Record</div>
+        <div class="rec-val green" id="sumSeason">—</div>
+        <div class="rec-sub">This season</div>
+      </div>
+      <div class="rec-cell">
+        <div class="rec-lbl">ATS Record</div>
+        <div class="rec-val gold" id="sumATS">—</div>
+        <div class="rec-sub">Against the spread</div>
+      </div>
+      <div class="rec-cell">
+        <div class="rec-lbl">Total ROI</div>
+        <div class="rec-val muted" id="sumROI">—</div>
+        <div class="rec-sub">All picks</div>
+      </div>
+    </div>
+
+    <!-- MONTH BREAKDOWN -->
+    <div class="month-section">
+      <div class="sec-title">MONTH <em>BREAKDOWN</em></div>
+      <div class="month-list" id="monthList">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);padding:10px 0;">
+          No data yet — picks load from Supabase
+        </div>
+      </div>
+    </div>
+
+    <!-- FILTERS -->
+    <div class="filter-bar">
+      <button class="fchip active" data-filter="all">All</button>
+      <button class="fchip" data-filter="W">Wins</button>
+      <button class="fchip" data-filter="L">Losses</button>
+      <button class="fchip" data-filter="P">Pushes</button>
+      <button class="fchip" data-filter="ATS">ATS</button>
+      <button class="fchip" data-filter="ML">Moneyline</button>
+      <button class="fchip" data-filter="Total">Total</button>
+      <button class="fchip" data-filter="high">High Conf</button>
+      <button class="fchip" data-filter="med">Med Conf</button>
+      <button class="fchip" data-filter="NFL">NFL</button>
+      <button class="fchip" data-filter="NBA">NBA</button>
+      <button class="fchip" data-filter="MLB">MLB</button>
+      <button class="fchip" data-filter="NHL">NHL</button>
+    </div>
+
+    <!-- DATE RANGE -->
+    <div class="date-row">
+      <input type="date" class="date-input" id="dateFrom" />
+      <span class="date-sep">to</span>
+      <input type="date" class="date-input" id="dateTo" />
+      <button class="date-apply" onclick="applyFilters()">Apply</button>
+    </div>
+
+    <!-- TABLE -->
+    <div class="table-section">
+      <div class="table-head-row">
+        <div class="sec-title" style="font-size:20px;">ALL <em>PICKS</em></div>
+        <div class="table-count" id="tableCount">0 picks</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="sortBy('date')">Date</th>
+              <th onclick="sortBy('sport')">Sport</th>
+              <th>Matchup</th>
+              <th onclick="sortBy('pick_type')">Type</th>
+              <th>Pick</th>
+              <th onclick="sortBy('conf_tier')">Conf</th>
+              <th onclick="sortBy('result')">Result</th>
+              <th onclick="sortBy('pnl')">P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr>
+              <td colspan="8" style="text-align:center;padding:32px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">
+                No picks logged yet · Data loads from Supabase
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">THE </div>
+      <div class="foot-txt">Pick history stored in Supabase · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── FILTERS ──
+    let currentFilter = 'all';
+    let sortKey = 'date';
+    let sortDir = -1;
+    let allPicks = [];
+
+    document.querySelectorAll('.fchip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('.fchip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        currentFilter = chip.dataset.filter;
+        renderTable();
+      });
+    });
+
+    function sortBy(key) {
+      if (sortKey === key) sortDir *= -1;
+      else { sortKey = key; sortDir = -1; }
+      document.querySelectorAll('thead th').forEach(th => th.classList.remove('sorted'));
+      renderTable();
+    }
+
+    function applyFilters() { renderTable(); }
+
+    // ── LOAD FROM SUPABASE ──
+    async function loadPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      if (!url || !key) {
+        allPicks = [];
+        renderSummary();
+        renderMonths();
+        renderTable();
+        return;
+      }
+
+      try {
+        const res = await fetch(`${url}/rest/v1/picks?select=*&order=date.desc`, {
+          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        });
+        if (!res.ok) throw new Error();
+        allPicks = await res.json();
+      } catch {
+        allPicks = [];
+      }
+
+      renderSummary();
+      renderMonths();
+      renderTable();
+    }
+
+    // ── SUMMARY ──
+    function renderSummary() {
+      const wins   = allPicks.filter(p => p.result === 'W').length;
+      const losses = allPicks.filter(p => p.result === 'L').length;
+      const pushes = allPicks.filter(p => p.result === 'P').length;
+      const atsW   = allPicks.filter(p => p.result === 'W' && p.pick_type === 'ATS').length;
+      const atsL   = allPicks.filter(p => p.result === 'L' && p.pick_type === 'ATS').length;
+      const totalPnl = allPicks.reduce((s, p) => s + (p.pnl || 0), 0);
+      const totalPicks = allPicks.filter(p => p.result).length;
+      const roi = totalPicks > 0 ? ((totalPnl / totalPicks) * 100).toFixed(1) : null;
+
+      document.getElementById('sumAllTime').textContent = allPicks.length ? `${wins}–${losses}–${pushes}` : '—';
+      document.getElementById('sumSeason').textContent  = allPicks.length ? `${wins}–${losses}` : '—';
+      document.getElementById('sumATS').textContent     = allPicks.length ? `${atsW}–${atsL}` : '—';
+      document.getElementById('sumROI').textContent     = roi !== null ? (roi > 0 ? '+' : '') + roi + '%' : '—';
+    }
+
+    // ── MONTH BREAKDOWN ──
+    function renderMonths() {
+      const container = document.getElementById('monthList');
+      if (!allPicks.length) {
+        container.innerHTML = `<div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);padding:10px 0;">No data yet — picks load from Supabase</div>`;
+        return;
+      }
+
+      const months = {};
+      allPicks.forEach(p => {
+        if (!p.date) return;
+        const d = new Date(p.date);
+        const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2,'0');
+        const lbl = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        if (!months[key]) months[key] = { lbl, wins: 0, losses: 0, pnl: 0 };
+        if (p.result === 'W') months[key].wins++;
+        if (p.result === 'L') months[key].losses++;
+        months[key].pnl += p.pnl || 0;
+      });
+
+      const sorted = Object.values(months).sort((a,b) => b.lbl.localeCompare(a.lbl));
+
+      container.innerHTML = sorted.map(m => {
+        const total = m.wins + m.losses;
+        const wpct  = total > 0 ? Math.round((m.wins / total) * 100) : 0;
+        const roiCls = m.pnl > 0 ? 'pos' : m.pnl < 0 ? 'neg' : 'neu';
+        const roiStr = m.pnl > 0 ? '+' + m.pnl.toFixed(1) + 'u' : m.pnl < 0 ? m.pnl.toFixed(1) + 'u' : '—';
+        return `
+          <div class="month-row">
+            <span class="month-name">${m.lbl}</span>
+            <span class="month-rec">${m.wins}–${m.losses}</span>
+            <div class="month-bar-track">
+              <div class="month-bar-fill" style="width:${wpct}%"></div>
+            </div>
+            <span class="month-roi ${roiCls}">${roiStr}</span>
+          </div>`;
+      }).join('');
+    }
+
+    // ── TABLE ──
+    function renderTable() {
+      const body = document.getElementById('historyBody');
+      const dateFrom = document.getElementById('dateFrom').value;
+      const dateTo   = document.getElementById('dateTo').value;
+
+      let picks = [...allPicks];
+
+      // Date filter
+      if (dateFrom) picks = picks.filter(p => p.date >= dateFrom);
+      if (dateTo)   picks = picks.filter(p => p.date <= dateTo);
+
+      // Category filter
+      picks = picks.filter(p => {
+        if (currentFilter === 'all') return true;
+        if (['W','L','P'].includes(currentFilter)) return p.result === currentFilter;
+        if (['ATS','ML','Total'].includes(currentFilter)) return p.pick_type === currentFilter;
+        if (currentFilter === 'high') return p.conf_tier === 'high';
+        if (currentFilter === 'med')  return p.conf_tier === 'med';
+        return p.sport === currentFilter;
+      });
+
+      // Sort
+      picks.sort((a,b) => {
+        const av = a[sortKey] ?? '';
+        const bv = b[sortKey] ?? '';
+        return av < bv ? -sortDir : av > bv ? sortDir : 0;
+      });
+
+      document.getElementById('tableCount').textContent = picks.length + ' pick' + (picks.length !== 1 ? 's' : '');
+
+      if (!picks.length) {
+        body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">${allPicks.length ? 'No picks match filters' : 'No picks logged yet · Data loads from Supabase'}</td></tr>`;
+        return;
+      }
+
+      body.innerHTML = picks.map(p => {
+        const resCls = p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : p.result === 'P' ? 'p' : 'pending';
+        const resStr = p.result || 'PENDING';
+        const pnlVal = p.pnl != null ? p.pnl : null;
+        const pnlCls = pnlVal > 0 ? 'pos' : pnlVal < 0 ? 'neg' : 'neu';
+        const pnlStr = pnlVal != null ? (pnlVal > 0 ? '+' : '') + pnlVal.toFixed(1) + 'u' : '—';
+        const confCls = p.conf_tier === 'high' ? 'conf-high' : p.conf_tier === 'med' ? 'conf-med' : 'conf-low';
+        const date = p.date ? new Date(p.date).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '—';
+
+        return `
+          <tr>
+            <td>${date}</td>
+            <td><span class="sport-tag">${p.sport || '—'}</span></td>
+            <td><div class="matchup-bold">${p.matchup || '—'}</div></td>
+            <td><span class="type-tag">${p.pick_type || '—'}</span></td>
+            <td><span class="pick-bold">${p.pick_label || '—'}</span></td>
+            <td><span class="${confCls}">${(p.conf_tier || '—').toUpperCase()}</span></td>
+            <td><span class="res ${resCls}">${resStr}</span></td>
+            <td><span class="pnl ${pnlCls}">${pnlStr}</span></td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── INIT ──
+    loadPicks();
+  </script>
+</body>
+</html>
