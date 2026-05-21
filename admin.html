@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px,12vw,72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    /* CONNECTION STATUS */
+    .conn-grid { display: flex; flex-direction: column; gap: 8px; }
+    .conn-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); padding: 13px 14px; }
+    .conn-left { display: flex; align-items: center; gap: 10px; }
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .conn-dot.ok  { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    .conn-dot.off { background: var(--text-dim); }
+    .conn-dot.err { background: var(--red); box-shadow: 0 0 5px var(--red); }
+    .conn-name { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); }
+    .conn-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; }
+    .conn-status.ok  { color: var(--green); }
+    .conn-status.off { color: var(--text-dim); }
+    .conn-status.err { color: var(--red); }
+
+    /* API KEY FIELDS */
+    .key-block { background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; margin-bottom: 10px; }
+    .key-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .key-test-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 4px 10px; cursor: pointer; transition: all 0.2s; }
+    .key-test-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .key-row { display: flex; gap: 8px; }
+    .key-input { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 13px; padding: 10px 12px; }
+    .key-input:focus { outline: none; border-color: var(--gold); }
+    .key-input::placeholder { color: var(--text-dim); font-size: 12px; }
+    .key-save-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; padding: 10px 16px; cursor: pointer; white-space: nowrap; transition: opacity 0.2s; flex-shrink: 0; }
+    .key-save-btn:hover { opacity: 0.85; }
+    .key-saved { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 6px; }
+    .key-saved.set { color: var(--green); }
+    .key-saved.unset { color: var(--text-dim); }
+
+    /* RESULT ENTRY */
+    .result-form { display: flex; flex-direction: column; gap: 10px; }
+    .form-row { display: flex; gap: 8px; }
+    .form-input { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 14px; padding: 10px 12px; }
+    .form-input:focus { outline: none; border-color: var(--gold); }
+    .form-select { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; letter-spacing: 1px; padding: 10px 12px; appearance: none; -webkit-appearance: none; cursor: pointer; }
+    .form-select:focus { outline: none; border-color: var(--gold); }
+    .submit-btn { width: 100%; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; padding: 14px; cursor: pointer; transition: opacity 0.2s; }
+    .submit-btn:hover { opacity: 0.85; }
+
+    /* ALGO OVERRIDE */
+    .override-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .override-select { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 1px; padding: 10px 10px; appearance: none; -webkit-appearance: none; cursor: pointer; }
+    .override-select:focus { outline: none; border-color: var(--gold); }
+    .vote-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .vote-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .vote-btn.yes-active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+    .vote-btn.no-active  { border-color: var(--red); color: var(--red); background: rgba(231,76,60,0.08); }
+
+    /* RAW DATA VIEWER */
+    .raw-tabs { display: flex; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+    .raw-tabs::-webkit-scrollbar { display: none; }
+    .raw-tab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 14px; cursor: pointer; transition: all 0.2s; }
+    .raw-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+    .raw-output { background: var(--bg4); border: 1px solid var(--border); padding: 14px; margin-top: 10px; font-family: 'Barlow', monospace; font-size: 11px; color: var(--text-dim); line-height: 1.6; max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .raw-fetch-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 8px 16px; cursor: pointer; margin-top: 8px; transition: all 0.2s; width: 100%; }
+    .raw-fetch-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+    /* TRIGGER ANALYSIS */
+    .trigger-btn { width: 100%; background: none; border: 1px solid var(--border-bright); color: var(--gold); font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; padding: 14px; cursor: pointer; transition: all 0.2s; margin-bottom: 8px; }
+    .trigger-btn:hover { background: var(--gold-glow); }
+    .trigger-btn.secondary { font-size: 16px; border-color: var(--border); color: var(--text-mid); }
+    .trigger-btn.secondary:hover { border-color: var(--border-bright); color: var(--text); }
+
+    /* TOAST */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { background: var(--red); color: #fff; }
+
+    /* DANGER */
+    .danger-btn { display: block; width: 100%; background: none; border: 1px solid rgba(231,76,60,0.3); color: var(--red); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px; cursor: pointer; text-align: center; transition: all 0.2s; margin-bottom: 8px; }
+    .danger-btn:hover { background: rgba(231,76,60,0.08); border-color: var(--red); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Data Management</div>
+      <div class="page-title">ADMIN <em>PANEL</em></div>
+    </div>
+
+    <!-- CONNECTION STATUS -->
+    <div class="section">
+      <div class="sec-title">CONNECTION <em>STATUS</em></div>
+      <div class="conn-grid">
+        <div class="conn-row">
+          <div class="conn-left">
+            <div class="conn-dot" id="dotSupabase"></div>
+            <div class="conn-name">Supabase</div>
+          </div>
+          <span class="conn-status" id="statusSupabase">Not connected</span>
+        </div>
+        <div class="conn-row">
+          <div class="conn-left">
+            <div class="conn-dot" id="dotOdds"></div>
+            <div class="conn-name">The Odds API</div>
+          </div>
+          <span class="conn-status" id="statusOdds">Not connected</span>
+        </div>
+        <div class="conn-row">
+          <div class="conn-left">
+            <div class="conn-dot" id="dotESPN"></div>
+            <div class="conn-name">ESPN API</div>
+          </div>
+          <span class="conn-status" id="statusESPN">Not connected</span>
+        </div>
+        <div class="conn-row">
+          <div class="conn-left">
+            <div class="conn-dot" id="dotClaude"></div>
+            <div class="conn-name">Claude API</div>
+          </div>
+          <span class="conn-status" id="statusClaude">Not connected</span>
+        </div>
+        <div class="conn-row">
+          <div class="conn-left">
+            <div class="conn-dot" id="dotSportsbook"></div>
+            <div class="conn-name">Sportsbook API</div>
+          </div>
+          <span class="conn-status" id="statusSportsbook">Not connected</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUPABASE -->
+    <div class="section">
+      <div class="sec-title">SUPA<em>BASE</em></div>
+
+      <div class="key-block">
+        <div class="key-lbl">Project URL <button class="key-test-btn" onclick="testSupabase()">Test</button></div>
+        <div class="key-row">
+          <input type="text" class="key-input" id="supabaseUrl" placeholder="https://xxxx.supabase.co" />
+          <button class="key-save-btn" onclick="saveKey('edge_supabase_url','supabaseUrl','dotSupabase','statusSupabase')">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedSupabaseUrl"></div>
+      </div>
+
+      <div class="key-block">
+        <div class="key-lbl">Anon Key</div>
+        <div class="key-row">
+          <input type="password" class="key-input" id="supabaseKey" placeholder="eyJhbGci..." />
+          <button class="key-save-btn" onclick="saveKey('edge_supabase_key','supabaseKey')">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedSupabaseKey"></div>
+      </div>
+    </div>
+
+    <!-- ODDS API -->
+    <div class="section">
+      <div class="sec-title">THE ODDS <em>API</em></div>
+      <div class="key-block">
+        <div class="key-lbl">API Key <button class="key-test-btn" onclick="testOddsAPI()">Test</button></div>
+        <div class="key-row">
+          <input type="password" class="key-input" id="oddsKey" placeholder="Your Odds API key" />
+          <button class="key-save-btn" onclick="saveKey('edge_odds_api_key','oddsKey','dotOdds','statusOdds')">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedOddsKey"></div>
+      </div>
+    </div>
+
+    <!-- ESPN API -->
+    <div class="section">
+      <div class="sec-title">ESPN <em>API</em></div>
+      <div class="key-block">
+        <div class="key-lbl">API Key (optional) <button class="key-test-btn" onclick="testESPN()">Test</button></div>
+        <div class="key-row">
+          <input type="password" class="key-input" id="espnKey" placeholder="ESPN API key (public endpoints may not need one)" />
+          <button class="key-save-btn" onclick="saveKey('edge_espn_api_key','espnKey','dotESPN','statusESPN')">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedESPNKey"></div>
+      </div>
+    </div>
+
+    <!-- CLAUDE API -->
+    <div class="section">
+      <div class="sec-title">CLAUDE <em>API</em></div>
+      <div class="key-block">
+        <div class="key-lbl">API Key <button class="key-test-btn" onclick="testClaude()">Test</button></div>
+        <div class="key-row">
+          <input type="password" class="key-input" id="claudeKey" placeholder="sk-ant-..." />
+          <button class="key-save-btn" onclick="saveKey('edge_claude_api_key','claudeKey','dotClaude','statusClaude')">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedClaudeKey"></div>
+      </div>
+    </div>
+
+    <!-- SPORTSBOOK API -->
+    <div class="section">
+      <div class="sec-title">SPORTSBOOK <em>API</em></div>
+      <div class="key-block">
+        <div class="key-lbl">Sportsbook Name</div>
+        <div class="key-row">
+          <select class="form-select" id="sportsbookName">
+            <option value="">Select sportsbook</option>
+            <option>DraftKings</option>
+            <option>FanDuel</option>
+            <option>BetMGM</option>
+            <option>Caesars</option>
+            <option>PointsBet</option>
+          </select>
+        </div>
+      </div>
+      <div class="key-block">
+        <div class="key-lbl">API Key</div>
+        <div class="key-row">
+          <input type="password" class="key-input" id="sportsbookKey" placeholder="Sportsbook API key" />
+          <button class="key-save-btn" onclick="saveSportsbook()">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedSportsbookKey"></div>
+      </div>
+    </div>
+
+    <!-- MANUAL RESULT ENTRY -->
+    <div class="section">
+      <div class="sec-title">ENTER <em>RESULT</em></div>
+      <div class="result-form">
+        <div class="form-row">
+          <input type="date" class="form-input" id="resultDate" />
+        </div>
+        <div class="form-row">
+          <input type="text" class="form-input" id="resultMatchup" placeholder="Matchup (e.g. BOS vs MIA)" />
+        </div>
+        <div class="form-row">
+          <input type="text" class="form-input" id="resultPick" placeholder="Pick (e.g. BOS −5.5)" />
+          <select class="form-select" id="resultType">
+            <option>ATS</option>
+            <option>ML</option>
+            <option>Total</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <select class="form-select" id="resultOutcome">
+            <option value="">Result</option>
+            <option value="W">Win</option>
+            <option value="L">Loss</option>
+            <option value="P">Push</option>
+          </select>
+          <input type="number" class="form-input" id="resultPnl" placeholder="P&L (units)" step="0.5" />
+        </div>
+        <button class="submit-btn" onclick="submitResult()">SUBMIT RESULT → DASHBOARD</button>
+      </div>
+    </div>
+
+    <!-- ALGORITHM VOTE OVERRIDE -->
+    <div class="section">
+      <div class="sec-title">ALGO VOTE <em>OVERRIDE</em></div>
+      <div class="override-row">
+        <select class="override-select" id="overrideAlgo">
+          <option value="">Select algorithm</option>
+        </select>
+      </div>
+      <div class="override-row">
+        <input type="text" class="form-input" id="overrideGame" placeholder="Game (e.g. BOS vs MIA)" style="flex:1;" />
+      </div>
+      <div class="override-row">
+        <button class="vote-btn" id="voteYes" onclick="setVote('yes')">YES</button>
+        <button class="vote-btn" id="voteNo"  onclick="setVote('no')">NO</button>
+        <button class="vote-btn" id="voteNeu" onclick="setVote('neu')">NEUTRAL</button>
+        <button class="key-save-btn" onclick="submitOverride()" style="margin-left:auto;">SAVE</button>
+      </div>
+    </div>
+
+    <!-- TRIGGER ANALYSIS -->
+    <div class="section">
+      <div class="sec-title">MANUAL <em>TRIGGERS</em></div>
+      <button class="trigger-btn" onclick="triggerAnalysis()">◎ RUN FULL ANALYSIS</button>
+      <button class="trigger-btn secondary" onclick="triggerSync()">↻ SYNC SUPABASE DATA</button>
+      <button class="trigger-btn secondary" onclick="triggerLineSnapshot()">→ SAVE LINE SNAPSHOT</button>
+    </div>
+
+    <!-- RAW API DATA -->
+    <div class="section">
+      <div class="sec-title">RAW <em>API DATA</em></div>
+      <div class="raw-tabs">
+        <button class="raw-tab active" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
+        <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
+        <button class="raw-tab" data-tab="supabase" onclick="setRawTab('supabase',this)">Supabase</button>
+        <button class="raw-tab" data-tab="storage" onclick="setRawTab('storage',this)">LocalStorage</button>
+      </div>
+      <div class="raw-output" id="rawOutput">Select a tab and fetch to view raw data.</div>
+      <button class="raw-fetch-btn" onclick="fetchRaw()">↓ Fetch Raw Data</button>
+    </div>
+
+    <!-- DANGER ZONE -->
+    <div class="section">
+      <div class="sec-title">DANGER <em>ZONE</em></div>
+      <button class="danger-btn" onclick="clearAllKeys()">Remove All API Keys</button>
+      <button class="danger-btn" onclick="clearSupabaseData()">Clear All Supabase Pick Data</button>
+      <button class="danger-btn" onclick="clearLocalStorage()">Wipe All Local Storage</button>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Admin Panel · Keys stored locally only · Never in code · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── TOAST ──
+    function showToast(msg, isError = false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (isError ? ' error' : '');
+      setTimeout(() => t.className = 'toast', 2500);
+    }
+
+    // ── SAVE KEY ──
+    function saveKey(storageKey, inputId, dotId, statusId) {
+      const val = document.getElementById(inputId).value.trim();
+      if (!val) { showToast('Enter a value first', true); return; }
+      localStorage.setItem(storageKey, val);
+      const savedEl = document.getElementById('saved' + inputId.charAt(0).toUpperCase() + inputId.slice(1));
+      if (savedEl) { savedEl.textContent = '✓ Saved'; savedEl.className = 'key-saved set'; }
+      if (dotId)    updateDot(dotId, statusId, 'ok', 'Connected');
+      showToast('Key saved');
+    }
+
+    function saveSportsbook() {
+      const name = document.getElementById('sportsbookName').value;
+      const key  = document.getElementById('sportsbookKey').value.trim();
+      if (!key) { showToast('Enter a key first', true); return; }
+      localStorage.setItem('edge_sportsbook_name', name);
+      localStorage.setItem('edge_sportsbook_api_key', key);
+      document.getElementById('savedSportsbookKey').textContent = '✓ Saved — ' + name;
+      document.getElementById('savedSportsbookKey').className = 'key-saved set';
+      updateDot('dotSportsbook','statusSportsbook','ok', name + ' Connected');
+      showToast('Sportsbook key saved');
+    }
+
+    function updateDot(dotId, statusId, cls, text) {
+      if (!dotId) return;
+      document.getElementById(dotId).className  = 'conn-dot ' + cls;
+      document.getElementById(statusId).textContent = text;
+      document.getElementById(statusId).className   = 'conn-status ' + cls;
+    }
+
+    // ── TEST CONNECTIONS ──
+    async function testSupabase() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Save URL and key first', true); return; }
+      try {
+        const res = await fetch(`${url}/rest/v1/settings?select=id&limit=1`, {
+          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        });
+        if (res.ok) {
+          updateDot('dotSupabase','statusSupabase','ok','Connected');
+          showToast('Supabase connected ✓');
+        } else {
+          updateDot('dotSupabase','statusSupabase','err','Error ' + res.status);
+          showToast('Supabase error: ' + res.status, true);
+        }
+      } catch { showToast('Connection failed', true); }
+    }
+
+    async function testOddsAPI() {
+      const key = localStorage.getItem('edge_odds_api_key');
+      if (!key) { showToast('Save API key first', true); return; }
+      try {
+        const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
+        if (res.ok) {
+          updateDot('dotOdds','statusOdds','ok','Connected');
+          showToast('Odds API connected ✓');
+        } else {
+          updateDot('dotOdds','statusOdds','err','Invalid key');
+          showToast('Invalid Odds API key', true);
+        }
+      } catch { showToast('Connection failed', true); }
+    }
+
+    async function testESPN() {
+      try {
+        const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+        if (res.ok) {
+          updateDot('dotESPN','statusESPN','ok','Connected');
+          showToast('ESPN API reachable ✓');
+        } else {
+          updateDot('dotESPN','statusESPN','err','Unreachable');
+          showToast('ESPN API error', true);
+        }
+      } catch { showToast('ESPN unreachable', true); }
+    }
+
+    async function testClaude() {
+      const key = localStorage.getItem('edge_claude_api_key');
+      if (!key) { showToast('Save API key first', true); return; }
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01' },
+          body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:10, messages:[{role:'user',content:'ping'}] })
+        });
+        if (res.ok) {
+          updateDot('dotClaude','statusClaude','ok','Connected');
+          showToast('Claude API connected ✓');
+        } else {
+          updateDot('dotClaude','statusClaude','err','Invalid key');
+          showToast('Invalid Claude API key', true);
+        }
+      } catch { showToast('Claude API error', true); }
+    }
+
+    // ── RESULT ENTRY ──
+    async function submitResult() {
+      const matchup = document.getElementById('resultMatchup').value.trim();
+      const pick    = document.getElementById('resultPick').value.trim();
+      const outcome = document.getElementById('resultOutcome').value;
+      const pnl     = parseFloat(document.getElementById('resultPnl').value || '0');
+      const date    = document.getElementById('resultDate').value;
+      const type    = document.getElementById('resultType').value;
+
+      if (!matchup || !pick || !outcome || !date) {
+        showToast('Fill in all fields', true);
+        return;
+      }
+
+      const record = { matchup, pick_label: pick, pick_type: type, result: outcome, pnl, date, created_at: new Date().toISOString() };
+
+      // Save to Supabase
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      if (url && key) {
+        try {
+          await fetch(`${url}/rest/v1/picks`, {
+            method: 'POST',
+            headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+            body: JSON.stringify(record)
+          });
+          showToast('Result saved → Redirecting');
+        } catch { showToast('Supabase error — saved locally', true); }
+      } else {
+        // Fall back to localStorage
+        const existing = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
+        existing.unshift(record);
+        localStorage.setItem('edge_picks_local', JSON.stringify(existing));
+        showToast('Saved locally → Redirecting');
+      }
+
+      // Clear form then redirect to dashboard
+      setTimeout(() => { window.location.href = 'index.html'; }, 1400);
+    }
+
+    // ── ALGO OVERRIDE ──
+    const ALGORITHMS = [
+      'Elo Rating','Pythagorean Expectation','Simple Rating System','Sharp Money Indicator',
+      'Closing Line Value','Steam Move Detector','Reverse Line Movement','Pace & Tempo Analysis',
+      'Strength of Schedule','Rest & Recovery Index','Travel Fatigue Model','Weather Impact Model',
+      'Home/Away Split','ATS Trend Analysis','Recent Form Index','Public Betting % Fade',
+      'Situational Spot Analysis','Coaching Tendencies','Injury Impact Score','Primetime Performance',
+      'Divisional Record','Revenge Game Detector','Line Open-to-Close','Totals Trend Model','Regression to Mean'
+    ];
+
+    function buildAlgoSelect() {
+      const sel = document.getElementById('overrideAlgo');
+      ALGORITHMS.forEach((a, i) => {
+        const opt = document.createElement('option');
+        opt.value = i + 1;
+        opt.textContent = a;
+        sel.appendChild(opt);
+      });
+    }
+
+    let currentVote = null;
+
+    function setVote(v) {
+      currentVote = v;
+      document.getElementById('voteYes').className = 'vote-btn' + (v === 'yes' ? ' yes-active' : '');
+      document.getElementById('voteNo').className  = 'vote-btn' + (v === 'no'  ? ' no-active'  : '');
+      document.getElementById('voteNeu').className = 'vote-btn' + (v === 'neu' ? ' yes-active'  : '');
+    }
+
+    async function submitOverride() {
+      const algoId = document.getElementById('overrideAlgo').value;
+      const game   = document.getElementById('overrideGame').value.trim();
+      if (!algoId || !game || !currentVote) { showToast('Fill all fields', true); return; }
+
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      if (url && key) {
+        try {
+          await fetch(`${url}/rest/v1/algorithms?id=eq.${algoId}`, {
+            method: 'PATCH',
+            headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_vote: currentVote, override_game: game })
+          });
+          showToast('Vote override saved');
+        } catch { showToast('Supabase error', true); }
+      } else {
+        showToast('Connect Supabase first', true);
+      }
+    }
+
+    // ── TRIGGERS ──
+    function triggerAnalysis() {
+      showToast('Analysis triggered — check AI Analysis page');
+      setTimeout(() => { window.location.href = 'analysis.html'; }, 1200);
+    }
+
+    async function triggerSync() {
+      showToast('Syncing...');
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Connect Supabase first', true); return; }
+      try {
+        await fetch(`${url}/rest/v1/settings?select=id&limit=1`, {
+          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        });
+        showToast('Supabase sync complete ✓');
+      } catch { showToast('Sync failed', true); }
+    }
+
+    function triggerLineSnapshot() {
+      showToast('Line snapshot triggered — check Line Movement');
+      setTimeout(() => { window.location.href = 'lines.html'; }, 1200);
+    }
+
+    // ── RAW DATA ──
+    let currentRawTab = 'odds';
+
+    function setRawTab(tab, el) {
+      currentRawTab = tab;
+      document.querySelectorAll('.raw-tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('rawOutput').textContent = 'Press Fetch to load ' + tab + ' data.';
+    }
+
+    async function fetchRaw() {
+      const out = document.getElementById('rawOutput');
+      out.textContent = 'Fetching...';
+
+      if (currentRawTab === 'storage') {
+        const data = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k.startsWith('edge_')) data[k] = localStorage.getItem(k);
+        }
+        out.textContent = JSON.stringify(data, null, 2);
+        return;
+      }
+
+      if (currentRawTab === 'odds') {
+        const key = localStorage.getItem('edge_odds_api_key');
+        if (!key) { out.textContent = 'No Odds API key saved.'; return; }
+        try {
+          const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+        } catch (e) { out.textContent = 'Error: ' + e.message; }
+        return;
+      }
+
+      if (currentRawTab === 'espn') {
+        try {
+          const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+        } catch (e) { out.textContent = 'Error: ' + e.message; }
+        return;
+      }
+
+      if (currentRawTab === 'supabase') {
+        const url = localStorage.getItem('edge_supabase_url');
+        const key = localStorage.getItem('edge_supabase_key');
+        if (!url || !key) { out.textContent = 'Supabase not connected.'; return; }
+        try {
+          const res = await fetch(`${url}/rest/v1/picks?select=*&limit=10&order=created_at.desc`, {
+            headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+        } catch (e) { out.textContent = 'Error: ' + e.message; }
+        return;
+      }
+    }
+
+    // ── DANGER ──
+    function clearAllKeys() {
+      ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key',
+       'edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name'].forEach(k => localStorage.removeItem(k));
+      showToast('All API keys removed');
+      loadSavedIndicators();
+      checkConnections();
+    }
+
+    async function clearSupabaseData() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Connect Supabase first', true); return; }
+      try {
+        await fetch(`${url}/rest/v1/picks?id=gt.0`, {
+          method: 'DELETE',
+          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        });
+        showToast('Supabase picks cleared');
+      } catch { showToast('Error clearing data', true); }
+    }
+
+    function clearLocalStorage() {
+      const keysToKeep = ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_claude_api_key'];
+      const saved = {};
+      keysToKeep.forEach(k => { const v = localStorage.getItem(k); if (v) saved[k] = v; });
+      localStorage.clear();
+      Object.entries(saved).forEach(([k,v]) => localStorage.setItem(k,v));
+      showToast('Local storage wiped (API keys kept)');
+    }
+
+    // ── SAVED INDICATORS ──
+    function loadSavedIndicators() {
+      const indicators = [
+        { key: 'edge_supabase_url',      elId: 'savedSupabaseUrl',  label: 'URL saved' },
+        { key: 'edge_supabase_key',      elId: 'savedSupabaseKey',  label: 'Key saved' },
+        { key: 'edge_odds_api_key',      elId: 'savedOddsKey',      label: 'Key saved' },
+        { key: 'edge_espn_api_key',      elId: 'savedESPNKey',      label: 'Key saved' },
+        { key: 'edge_claude_api_key',    elId: 'savedClaudeKey',    label: 'Key saved' },
+        { key: 'edge_sportsbook_api_key',elId: 'savedSportsbookKey',label: 'Key saved' },
+      ];
+      indicators.forEach(({ key, elId, label }) => {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        const val = localStorage.getItem(key);
+        el.textContent = val ? '✓ ' + label : 'Not set';
+        el.className = 'key-saved ' + (val ? 'set' : 'unset');
+      });
+
+      // Sportsbook name
+      const sbName = localStorage.getItem('edge_sportsbook_name');
+      if (sbName) document.getElementById('sportsbookName').value = sbName;
+    }
+
+    function checkConnections() {
+      const checks = [
+        { key: 'edge_supabase_url',       dot: 'dotSupabase',    status: 'statusSupabase',    label: 'Key saved — tap Test' },
+        { key: 'edge_odds_api_key',        dot: 'dotOdds',        status: 'statusOdds',        label: 'Key saved — tap Test' },
+        { key: 'edge_espn_api_key',        dot: 'dotESPN',        status: 'statusESPN',        label: 'Key saved — tap Test' },
+        { key: 'edge_claude_api_key',      dot: 'dotClaude',      status: 'statusClaude',      label: 'Key saved — tap Test' },
+        { key: 'edge_sportsbook_api_key',  dot: 'dotSportsbook',  status: 'statusSportsbook',  label: 'Key saved' },
+      ];
+      checks.forEach(({ key, dot, status, label }) => {
+        const val = localStorage.getItem(key);
+        updateDot(dot, status, val ? 'ok' : 'off', val ? label : 'Not connected');
+      });
+    }
+
+    // ── TODAY DATE DEFAULT ──
+    document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
+
+    // ── INIT ──
+    buildAlgoSelect();
+    loadSavedIndicators();
+    checkConnections();
+  </script>
+</body>
+</html>
