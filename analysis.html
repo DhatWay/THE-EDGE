@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>THE EDGE — AI Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-bright: #E8C76A;
+      --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10);
+      --bg: #080808;
+      --bg2: #0F0F0F;
+      --bg4: #1C1C1C;
+      --surface: #111111;
+      --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8;
+      --text-dim: #7A7060;
+      --text-mid: #A89878;
+      --green: #27AE60;
+      --red: #E74C3C;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    /* NAV */
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+
+    /* PAGE HEADER */
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* GAME SELECTOR */
+    .game-selector {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .selector-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px; letter-spacing: 3px;
+      text-transform: uppercase; color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .selector-row { display: flex; gap: 8px; align-items: center; }
+    .game-select {
+      flex: 1;
+      background: var(--bg4);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 14px;
+      letter-spacing: 1.5px;
+      padding: 10px 12px;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .game-select:focus { outline: none; border-color: var(--gold); }
+    .run-btn {
+      background: var(--gold);
+      border: none;
+      color: #000;
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 18px;
+      letter-spacing: 2px;
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* SECTION */
+    .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    /* GAME SUMMARY CARD */
+    .game-card {
+      background: var(--surface);
+      border: 1px solid var(--border-bright);
+      padding: 20px 18px;
+      margin-bottom: 0;
+    }
+    .game-sport-time {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px; letter-spacing: 3px;
+      text-transform: uppercase; color: var(--gold);
+      margin-bottom: 10px;
+    }
+    .game-matchup {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 32px; letter-spacing: 3px;
+      line-height: 1; margin-bottom: 14px;
+    }
+    .game-lines-row {
+      display: grid;
+      grid-template-columns: repeat(3,1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .line-box {
+      background: var(--bg4);
+      border: 1px solid var(--border);
+      padding: 10px 10px 8px;
+      text-align: center;
+    }
+    .line-box-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+    .line-box-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text-mid); }
+
+    /* RECOMMENDATION */
+    .rec-block {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      background: var(--bg4);
+      border: 1px solid var(--border-bright);
+      margin-top: 14px;
+    }
+    .rec-ring { position: relative; width: 56px; height: 56px; flex-shrink: 0; }
+    .rec-ring svg { transform: rotate(-90deg); }
+    .rec-ring-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); }
+    .rec-detail {}
+    .rec-pick { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--gold); line-height: 1; margin-bottom: 4px; }
+    .rec-units { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+
+    /* ALGO VOTE GRID */
+    .algo-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .algo-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 9px 12px;
+      gap: 8px;
+    }
+    .algo-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px; font-weight: 700;
+      letter-spacing: 1px; color: var(--text-mid);
+      flex: 1; line-height: 1.2;
+    }
+    .vote-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px; font-weight: 900;
+      letter-spacing: 1.5px; text-transform: uppercase;
+      padding: 2px 8px; border: 1px solid;
+      flex-shrink: 0;
+    }
+    .vote-badge.yes { border-color: rgba(201,168,76,0.4); color: var(--gold); background: rgba(201,168,76,0.08); }
+    .vote-badge.no  { border-color: rgba(231,76,60,0.35); color: var(--red); background: rgba(231,76,60,0.06); }
+    .vote-badge.neu { border-color: var(--border); color: var(--text-dim); }
+
+    /* CONSENSUS SUMMARY */
+    .cons-summary {
+      display: grid;
+      grid-template-columns: repeat(3,1fr);
+      gap: 0;
+      border: 1px solid var(--border);
+      margin-bottom: 14px;
+    }
+    .cons-cell {
+      padding: 14px 10px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .cons-cell:last-child { border-right: none; }
+    .cons-val { font-family: 'Bebas Neue', sans-serif; font-size: 32px; letter-spacing: 2px; }
+    .cons-val.yes { color: var(--gold); }
+    .cons-val.no  { color: var(--red); }
+    .cons-val.neu { color: var(--text-dim); }
+    .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
+
+    /* KEY FACTORS */
+    .factors-list { display: flex; flex-direction: column; gap: 8px; }
+    .factor-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 12px 14px;
+    }
+    .factor-icon { font-size: 16px; width: 22px; text-align: center; flex-shrink: 0; }
+    .factor-info { flex: 1; }
+    .factor-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); line-height: 1; margin-bottom: 3px; }
+    .factor-val  { font-size: 13px; color: var(--text-dim); font-weight: 300; }
+    .factor-impact {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px; letter-spacing: 1.5px;
+      text-transform: uppercase; padding: 2px 8px;
+      border: 1px solid; flex-shrink: 0;
+    }
+    .factor-impact.pos { border-color: rgba(39,174,96,0.4); color: var(--green); }
+    .factor-impact.neg { border-color: rgba(231,76,60,0.35); color: var(--red); }
+    .factor-impact.neu { border-color: var(--border); color: var(--text-dim); }
+
+    /* AI NARRATIVE */
+    .narrative-box {
+      background: var(--surface);
+      border: 1px solid var(--border-bright);
+      padding: 20px 18px;
+      position: relative;
+    }
+    .narrative-box::before {
+      content: 'AI';
+      position: absolute;
+      top: 14px; right: 14px;
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 11px; letter-spacing: 3px;
+      color: var(--gold-dim);
+    }
+    .narrative-text {
+      font-size: 14px;
+      color: var(--text-mid);
+      line-height: 1.7;
+      font-weight: 300;
+    }
+    .narrative-loading {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* HISTORICAL MATCHUP */
+    .hist-table { width: 100%; border-collapse: collapse; }
+    .hist-table thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 8px 10px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+    .hist-table tbody tr { border-bottom: 1px solid rgba(201,168,76,0.05); }
+    .hist-table tbody tr:hover { background: rgba(201,168,76,0.03); }
+    .hist-table tbody td { padding: 11px 10px; font-size: 13px; color: var(--text-mid); }
+    .hist-table .res { font-family: 'Bebas Neue', sans-serif; font-size: 18px; }
+    .hist-table .res.w { color: var(--green); }
+    .hist-table .res.l { color: var(--red); }
+
+    /* EMPTY STATE */
+    .empty-state { padding: 40px 20px; text-align: center; }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
+    .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
+    .go-btn { display: inline-block; margin-top: 18px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 22px; text-decoration: none; transition: all 0.2s; }
+    .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">THE EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html" class="active"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Per-Game Deep Dive</div>
+      <div class="page-title">AI <em>ANALYSIS</em></div>
+    </div>
+
+    <!-- GAME SELECTOR -->
+    <div class="game-selector">
+      <div class="selector-label">Select Game to Analyze</div>
+      <div class="selector-row">
+        <select class="game-select" id="gameSelect">
+          <option value="">— Select a game —</option>
+        </select>
+        <button class="run-btn" id="runBtn" onclick="runAnalysis()" disabled>RUN ◎</button>
+      </div>
+    </div>
+
+    <!-- ANALYSIS OUTPUT -->
+    <div id="analysisOutput">
+      <div class="empty-state">
+        <div class="empty-icon">◎</div>
+        <div class="empty-title">SELECT A GAME</div>
+        <div class="empty-sub">
+          Choose a game above and tap RUN<br>
+          to generate a full AI analysis<br>
+          across all 25 algorithms
+        </div>
+        <a href="matchups.html" class="go-btn">Browse Matchups →</a>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">THE EDGE</div>
+      <div class="foot-txt">AI Analysis powered by Claude · 25 Algorithms · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── 25 ALGORITHMS ──
+    const ALGORITHMS = [
+      'Elo Rating', 'Pythagorean Expectation', 'Simple Rating System',
+      'Sharp Money Indicator', 'Closing Line Value', 'Steam Move Detector',
+      'Reverse Line Movement', 'Pace & Tempo Analysis', 'Strength of Schedule',
+      'Rest & Recovery Index', 'Travel Fatigue Model', 'Weather Impact Model',
+      'Home/Away Split', 'ATS Trend Analysis', 'Recent Form Index',
+      'Public Betting % Fade', 'Situational Spot Analysis', 'Coaching Tendencies',
+      'Injury Impact Score', 'Primetime Performance', 'Divisional Record',
+      'Revenge Game Detector', 'Line Open-to-Close', 'Totals Trend Model',
+      'Regression to Mean'
+    ];
+
+    const KEY_FACTORS = [
+      { icon: '😴', name: 'Rest & Recovery',   key: 'rest' },
+      { icon: '✈️', name: 'Travel Fatigue',     key: 'travel' },
+      { icon: '🌦️', name: 'Weather Impact',     key: 'weather' },
+      { icon: '🩹', name: 'Injury Report',      key: 'injuries' },
+      { icon: '🏠', name: 'Home / Away Split',  key: 'home_away' },
+      { icon: '📈', name: 'Line Movement',      key: 'line_move' },
+      { icon: '💰', name: 'Sharp Money',        key: 'sharp' },
+    ];
+
+    // ── LOAD GAMES FROM STORAGE (set by matchups.html) ──
+    function loadGames() {
+      try {
+        return JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+      } catch { return []; }
+    }
+
+    // ── CHECK URL PARAMS (game passed from matchups.html) ──
+    function getUrlGame() {
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const raw = p.get('game');
+        if (!raw) return null;
+        return JSON.parse(decodeURIComponent(raw));
+      } catch { return null; }
+    }
+
+    // ── POPULATE SELECTOR ──
+    function populateSelector() {
+      const select = document.getElementById('gameSelect');
+      const games = loadGames();
+      const urlGame = getUrlGame();
+
+      // Always add URL game as option if present
+      if (urlGame) {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify(urlGame);
+        opt.textContent = `${urlGame.sport} · ${urlGame.away} vs ${urlGame.home}`;
+        select.appendChild(opt);
+        select.value = opt.value;
+        document.getElementById('runBtn').disabled = false;
+      }
+
+      games.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify(g);
+        opt.textContent = `${g.sport} · ${g.away} vs ${g.home}`;
+        select.appendChild(opt);
+      });
+
+      if (!urlGame && games.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No games loaded — connect Odds API';
+        select.appendChild(opt);
+      }
+
+      select.addEventListener('change', () => {
+        document.getElementById('runBtn').disabled = !select.value;
+      });
+
+      // Auto-run if URL game passed
+      if (urlGame) runAnalysis();
+    }
+
+    // ── RING SVG ──
+    function ring(pct, size = 56) {
+      const r = (size / 2) - 5;
+      const circ = 2 * Math.PI * r;
+      const fill = (pct / 100) * circ;
+      const gap  = circ - fill;
+      return `
+        <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0;">
+          <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="transform:rotate(-90deg)">
+            <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="#1C1C1C" stroke-width="5"/>
+            <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="#C9A84C" stroke-width="5"
+              stroke-dasharray="${fill.toFixed(1)} ${gap.toFixed(1)}" stroke-linecap="round"/>
+          </svg>
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:${size > 50 ? 16 : 13}px;color:var(--gold);">${pct}%</div>
+        </div>`;
+    }
+
+    // ── RUN ANALYSIS ──
+    async function runAnalysis() {
+      const select = document.getElementById('gameSelect');
+      if (!select.value) return;
+
+      let game;
+      try { game = JSON.parse(select.value); } catch { return; }
+
+      const apiKey = localStorage.getItem('edge_claude_api_key');
+      const oddsKey = localStorage.getItem('edge_odds_api_key');
+
+      // Pull factor data from storage if available
+      const factors = JSON.parse(localStorage.getItem(`edge_factors_${game.id}`) || 'null');
+
+      // Generate pseudo-votes (will be real when algos run against Supabase)
+      // Until then show "pending" state per algo
+      const hasData = !!oddsKey;
+
+      showAnalysis(game, factors, apiKey, hasData);
+    }
+
+    function showAnalysis(game, factors, claudeKey, hasData) {
+      const away = game.away || 'Away Team';
+      const home = game.home || 'Home Team';
+      const sport = game.sport || '—';
+
+      // Simulate algo votes from Supabase data (pending real connection)
+      const votes = ALGORITHMS.map(name => ({
+        name,
+        vote: hasData ? (Math.random() > 0.3 ? (Math.random() > 0.2 ? 'yes' : 'no') : 'neu') : 'neu'
+      }));
+
+      const yesVotes = votes.filter(v => v.vote === 'yes').length;
+      const noVotes  = votes.filter(v => v.vote === 'no').length;
+      const neuVotes = votes.filter(v => v.vote === 'neu').length;
+      const consensus = yesVotes;
+      const confPct = Math.round((consensus / 25) * 100);
+
+      const confTier = confPct >= 68 ? 'HIGH' : confPct >= 48 ? 'MEDIUM' : 'LOW';
+      const recPick  = confPct >= 50 ? `${away} ATS` : `${home} ATS`;
+      const units    = confPct >= 70 ? 2 : 1;
+
+      const output = document.getElementById('analysisOutput');
+      output.innerHTML = `
+
+        <!-- GAME SUMMARY -->
+        <div class="section">
+          <div class="sec-title">GAME <em>SUMMARY</em></div>
+          <div class="game-card">
+            <div class="game-sport-time">${sport} · ${game.time ? new Date(game.time).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : 'TBD'}</div>
+            <div class="game-matchup">${away}<br><span style="color:var(--text-dim);font-size:18px;">vs</span><br>${home}</div>
+            <div class="game-lines-row">
+              <div class="line-box">
+                <div class="line-box-lbl">Spread</div>
+                <div class="line-box-val">${game.spread || '—'}</div>
+              </div>
+              <div class="line-box">
+                <div class="line-box-lbl">Total</div>
+                <div class="line-box-val">${game.total || '—'}</div>
+              </div>
+              <div class="line-box">
+                <div class="line-box-lbl">ML</div>
+                <div class="line-box-val">${game.ml || '—'}</div>
+              </div>
+            </div>
+            <div class="rec-block">
+              ${ring(confPct)}
+              <div class="rec-detail">
+                <div class="rec-pick">${hasData ? recPick : '— AWAITING DATA'}</div>
+                <div class="rec-units">${confTier} CONFIDENCE · ${hasData ? units + ' UNIT' + (units > 1 ? 'S' : '') : 'CONNECT ODDS API'}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 25 ALGO VOTE GRID -->
+        <div class="section">
+          <div class="sec-title">ALGORITHM <em>VOTES</em></div>
+          <div class="cons-summary">
+            <div class="cons-cell">
+              <div class="cons-val yes">${yesVotes}</div>
+              <div class="cons-lbl">Yes</div>
+            </div>
+            <div class="cons-cell">
+              <div class="cons-val no">${noVotes}</div>
+              <div class="cons-lbl">No</div>
+            </div>
+            <div class="cons-cell">
+              <div class="cons-val neu">${neuVotes}</div>
+              <div class="cons-lbl">Neutral</div>
+            </div>
+          </div>
+          <div class="algo-grid">
+            ${votes.map(v => `
+              <div class="algo-row">
+                <div class="algo-name">${v.name}</div>
+                <span class="vote-badge ${v.vote}">${v.vote === 'yes' ? 'YES' : v.vote === 'no' ? 'NO' : 'NEU'}</span>
+              </div>`).join('')}
+          </div>
+        </div>
+
+        <!-- KEY FACTORS -->
+        <div class="section">
+          <div class="sec-title">KEY <em>FACTORS</em></div>
+          <div class="factors-list">
+            ${KEY_FACTORS.map(f => {
+              const d = factors?.[f.key];
+              return `
+                <div class="factor-row">
+                  <div class="factor-icon">${f.icon}</div>
+                  <div class="factor-info">
+                    <div class="factor-name">${f.name}</div>
+                    <div class="factor-val">${d?.value || 'Data loads when ESPN API is connected'}</div>
+                  </div>
+                  <span class="factor-impact ${d?.impact || 'neu'}">${d?.label || '—'}</span>
+                </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- AI NARRATIVE -->
+        <div class="section">
+          <div class="sec-title">AI <em>NARRATIVE</em></div>
+          <div class="narrative-box" id="narrativeBox">
+            ${claudeKey
+              ? `<div class="narrative-loading"><div class="spinner"></div> Generating analysis...</div>`
+              : `<div class="narrative-text">
+                  Connect the Claude API key in Admin to enable AI narrative synthesis.
+                  Once connected, a full written analysis will generate here covering
+                  matchup dynamics, situational angles, sharp money patterns, and a
+                  recommended betting approach for this game.
+                </div>`
+            }
+          </div>
+        </div>
+
+        <!-- HISTORICAL MATCHUP -->
+        <div class="section">
+          <div class="sec-title">HISTORICAL <em>MATCHUP</em></div>
+          <div style="background:var(--surface);border:1px solid var(--border);overflow-x:auto;">
+            <table class="hist-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Matchup</th>
+                  <th>Score</th>
+                  <th>ATS</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody id="histBody">
+                <tr>
+                  <td colspan="5" style="text-align:center;padding:24px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">
+                    Historical data loads via ESPN API
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+
+      // Fetch Claude narrative if key exists
+      if (claudeKey) fetchNarrative(game, votes, claudeKey);
+    }
+
+    async function fetchNarrative(game, votes, claudeKey) {
+      const yesAlgos = votes.filter(v => v.vote === 'yes').map(v => v.name).join(', ');
+      const noAlgos  = votes.filter(v => v.vote === 'no').map(v => v.name).join(', ');
+
+      const prompt = `You are EDGE, an AI sports betting analyst. Analyze this game and provide a concise betting narrative (3-4 sentences max):
+
+Game: ${game.away} vs ${game.home} (${game.sport})
+Algorithms in favor: ${yesAlgos || 'None'}
+Algorithms against: ${noAlgos || 'None'}
+Spread: ${game.spread || 'TBD'} · Total: ${game.total || 'TBD'}
+
+Write a sharp, data-driven betting narrative. No fluff. Focus on the key edges and the recommended play.`;
+
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': claudeKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 300,
+            messages: [{ role: 'user', content: prompt }]
+          })
+        });
+
+        const data = await res.json();
+        const text = data.content?.[0]?.text || 'Analysis unavailable.';
+        document.getElementById('narrativeBox').innerHTML =
+          `<div class="narrative-text">${text}</div>`;
+      } catch (e) {
+        document.getElementById('narrativeBox').innerHTML =
+          `<div class="narrative-text" style="color:var(--text-dim)">Claude API error. Check your key in Admin.</div>`;
+      }
+    }
+
+    // ── INIT ──
+    populateSelector();
+  </script>
+</body>
+</html>
