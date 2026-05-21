@@ -763,7 +763,10 @@
     document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
 
     // ── SET DEFAULT KEYS IF NOT ALREADY SET ──
-  if (!localStorage.getItem('edge_supabase_key'))
+  // ── SET DEFAULT KEYS IF NOT ALREADY SET ──
+    if (!localStorage.getItem('edge_supabase_url'))
+      localStorage.setItem('edge_supabase_url', 'https://cxugimmabnlfkghypiex.supabase.co');
+    if (!localStorage.getItem('edge_supabase_key'))
       localStorage.setItem('edge_supabase_key', 'sb_publishable_4jYRAXzEV74u1IEdJnhTdQ_Ls9z9B7l');
     if (!localStorage.getItem('edge_odds_api_key'))
       localStorage.setItem('edge_odds_api_key', 'd7917ce937da1ade2eed49848494841c');
