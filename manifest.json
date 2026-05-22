@@ -1,8 +1,8 @@
 {
   "name": "EDGE — AI Sports Betting Intelligence",
-  "short_name": "EDGE",
+  "short_name": "THE EDGE",
   "description": "25-algorithm AI sports betting intelligence platform",
-  "start_url": "/index.html",
+ "start_url": "/THE-EDGE/index.html"
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#080808",
