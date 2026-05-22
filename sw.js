@@ -1,19 +1,21 @@
-const CACHE = 'edge-v2';
+const CACHE = 'edge-v3';
 
 const STATIC = [
   '/',
-  '/index.html',
-  '/matchups.html',
-  '/picks.html',
-  '/analysis.html',
-  '/algorithms.html',
-  '/power.html',
-  '/lines.html',
-  '/history.html',
-  '/performance.html',
-  '/betting.html',
-  '/settings.html',
-  '/admin.html',
-  '/manifest.json',
-  '/engine.js'
+  '/THE-EDGE/',
+  '/THE-EDGE/index.html',
+  '/THE-EDGE/matchups.html',
+  '/THE-EDGE/picks.html',
+  '/THE-EDGE/analysis.html',
+  '/THE-EDGE/algorithms.html',
+  '/THE-EDGE/power.html',
+  '/THE-EDGE/lines.html',
+  '/THE-EDGE/history.html',
+  '/THE-EDGE/performance.html',
+  '/THE-EDGE/betting.html',
+  '/THE-EDGE/settings.html',
+  '/THE-EDGE/admin.html',
+  '/THE-EDGE/manifest.json',
+  '/THE-EDGE/engine.js',
+  '/THE-EDGE/sw.js'
 ];
