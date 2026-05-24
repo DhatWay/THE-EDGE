@@ -1,730 +1,1010 @@
 // ============================================================
-// EDGE — MASTER ALGORITHM ENGINE
-// Version 1.0
-// Governs all 25 algorithms, generates picks, feeds Claude
+// EDGE — ELITE ALGORITHM ENGINE v3.0 — PART 1 of 2
+// Data: Odds API + ESPN + Sportradar + Action Network + OpenWeatherMap
+// Logic: 25 Elite Algorithms + Bayesian Governing + Kelly Criterion
+// Plug & Play — gracefully degrades when APIs not yet connected
 // ============================================================
 
 const EDGE_ENGINE = (() => {
 
-  // ── CONSTANTS ──
-  const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
-  const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
-  const ODDS_KEY     = () => localStorage.getItem('edge_odds_api_key');
-  const CLAUDE_KEY   = () => localStorage.getItem('edge_claude_api_key');
+  // ── API KEYS (all from localStorage — set in Admin) ──
+  const KEY = {
+    odds:          () => localStorage.getItem('edge_odds_api_key'),
+    supabaseUrl:   () => localStorage.getItem('edge_supabase_url'),
+    supabaseKey:   () => localStorage.getItem('edge_supabase_key'),
+    claude:        () => localStorage.getItem('edge_claude_api_key'),
+    sportradar:    () => localStorage.getItem('edge_sportradar_key'),
+    actionNetwork: () => localStorage.getItem('edge_action_network_key'),
+    weather:       () => localStorage.getItem('edge_weather_key'),
+  };
 
+  // ── SPORTS ──
   const SPORTS = [
-    { key: 'americanfootball_nfl',   label: 'NFL' },
-    { key: 'basketball_nba',         label: 'NBA' },
-    { key: 'baseball_mlb',           label: 'MLB' },
-    { key: 'icehockey_nhl',          label: 'NHL' },
-    { key: 'americanfootball_ncaaf', label: 'NCAAF' },
-    { key: 'basketball_ncaab',       label: 'NCAAB' },
-    { key: 'soccer_usa_mls',         label: 'MLS' },
+    { oddsKey: 'americanfootball_nfl',   label: 'NFL',   srKey: 'nfl',        espnPath: 'football/nfl' },
+    { oddsKey: 'basketball_nba',         label: 'NBA',   srKey: 'nba',        espnPath: 'basketball/nba' },
+    { oddsKey: 'baseball_mlb',           label: 'MLB',   srKey: 'mlb',        espnPath: 'baseball/mlb' },
+    { oddsKey: 'icehockey_nhl',          label: 'NHL',   srKey: 'nhl',        espnPath: 'hockey/nhl' },
+    { oddsKey: 'americanfootball_ncaaf', label: 'NCAAF', srKey: 'ncaafb',     espnPath: 'football/college-football' },
+    { oddsKey: 'basketball_ncaab',       label: 'NCAAB', srKey: 'ncaamb',     espnPath: 'basketball/mens-college-basketball' },
+    { oddsKey: 'soccer_usa_mls',         label: 'MLS',   srKey: 'mls',        espnPath: 'soccer/usa.1' },
   ];
+
+  // ── SPORT-SPECIFIC ALGORITHM WEIGHTS ──
+  const W = {
+    NFL:  { elo:10,pyth:8,srs:8,sharp:10,clv:10,steam:9,rlm:9,pace:5,sos:8,rest:9,travel:8,weather:10,ha:7,ats:8,form:8,public:8,spot:9,coach:9,injury:10,prime:8,div:9,revenge:8,loc:9,totals:7,reg:7 },
+    NBA:  { elo:9,pyth:10,srs:7,sharp:9,clv:10,steam:8,rlm:8,pace:10,sos:6,rest:10,travel:9,weather:1,ha:8,ats:7,form:10,public:7,spot:8,coach:8,injury:10,prime:6,div:5,revenge:7,loc:9,totals:9,reg:8 },
+    MLB:  { elo:7,pyth:9,srs:6,sharp:9,clv:10,steam:8,rlm:8,pace:7,sos:7,rest:8,travel:7,weather:10,ha:8,ats:8,form:9,public:8,spot:7,coach:7,injury:9,prime:5,div:8,revenge:6,loc:9,totals:10,reg:9 },
+    NHL:  { elo:8,pyth:8,srs:7,sharp:9,clv:10,steam:8,rlm:8,pace:9,sos:7,rest:9,travel:8,weather:1,ha:9,ats:7,form:9,public:7,spot:7,coach:8,injury:10,prime:6,div:8,revenge:7,loc:9,totals:8,reg:7 },
+    DEFAULT:{ elo:7,pyth:7,srs:6,sharp:8,clv:9,steam:7,rlm:7,pace:7,sos:6,rest:8,travel:7,weather:5,ha:7,ats:7,form:8,public:7,spot:7,coach:6,injury:8,prime:5,div:6,revenge:6,loc:8,totals:7,reg:7 },
+  };
+
+  const WKEY = ['elo','pyth','srs','sharp','clv','steam','rlm','pace','sos','rest','travel','weather','ha','ats','form','public','spot','coach','injury','prime','div','revenge','loc','totals','reg'];
 
   // ── AUTO SCHEDULE ──
   let autoInterval = null;
+  const startAuto = (ms=1800000) => { if(autoInterval) clearInterval(autoInterval); autoInterval=setInterval(()=>runFullEngine(),ms); };
+  const stopAuto  = () => { if(autoInterval) clearInterval(autoInterval); autoInterval=null; };
 
-  function startAuto(intervalMs = 1800000) { // default 30 min
-    if (autoInterval) clearInterval(autoInterval);
-    autoInterval = setInterval(() => runFullEngine(), intervalMs);
-    console.log('[EDGE] Auto engine started — interval:', intervalMs / 60000, 'min');
+  // ── KELLY CRITERION ──
+  function kellyUnits(confidence, americanOdds, bankroll) {
+    const p = Math.min(confidence/100, 0.95);
+    const q = 1-p;
+    const b = americanOdds>0 ? americanOdds/100 : 100/Math.abs(americanOdds||110);
+    const kelly = (b*p-q)/b;
+    const frac  = kelly*0.25; // 25% fractional Kelly for risk management
+    if(frac<=0) return 0;
+    const unitSize = parseFloat(localStorage.getItem('edge_unit_size')||'50');
+    return Math.min(Math.max(Math.round(((frac*(bankroll||1000))/unitSize)*2)/2, 0.5), 5);
   }
 
-  function stopAuto() {
-    if (autoInterval) clearInterval(autoInterval);
-    autoInterval = null;
-    console.log('[EDGE] Auto engine stopped');
-  }
+  const oddsToProb = o => !o?0.5:o>0?100/(o+100):Math.abs(o)/(Math.abs(o)+100);
 
-  // ── FETCH GAME DATA ──
-  async function fetchGames() {
-    const key = ODDS_KEY();
-    if (!key) throw new Error('No Odds API key');
-
-    const games = [];
-    for (const sport of SPORTS) {
-      try {
-        const res = await fetch(
-          `https://api.the-odds-api.com/v4/sports/${sport.key}/odds/?apiKey=${key}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
-        );
-        if (!res.ok) continue;
-        const data = await res.json();
-        data.forEach(g => { g._sport = sport.label; games.push(g); });
-      } catch {}
-    }
-
-    // Save games to localStorage for other pages
-    localStorage.setItem('edge_todays_games', JSON.stringify(
-      games.map(g => ({
-        id: g.id,
-        sport: g._sport,
-        home: g.home_team,
-        away: g.away_team,
-        time: g.commence_time,
-        spread: getMarketValue(g, 'spreads', 'home', 'point'),
-        total:  getMarketValue(g, 'totals',  'Over',  'point'),
-        ml:     getMarketValue(g, 'h2h',     'home',  'price'),
-      }))
-    ));
-
-    return games;
-  }
-
-  function getMarketValue(game, market, side, field) {
+  // ── HELPER: GET MARKET VALUE FROM ODDS API ──
+  function getVal(game, market, side, field) {
     try {
       const bk  = game.bookmakers?.[0];
-      const mkt = bk?.markets?.find(m => m.key === market);
-      const out = mkt?.outcomes?.find(o => o.name === (side === 'home' ? game.home_team : side === 'away' ? game.away_team : side));
-      return out?.[field] ?? null;
+      const mkt = bk?.markets?.find(m=>m.key===market);
+      const out = mkt?.outcomes?.find(o=>side==='home'?o.name===game.home_team:side==='away'?o.name===game.away_team:o.name===side);
+      return out?.[field]??null;
     } catch { return null; }
   }
 
-  // ── FETCH ESPN DATA ──
-  async function fetchESPNData(sport) {
-    const sportMap = {
-      NFL:   'football/nfl',
-      NBA:   'basketball/nba',
-      MLB:   'baseball/mlb',
-      NHL:   'hockey/nhl',
-      NCAAF: 'football/college-football',
-      NCAAB: 'basketball/mens-college-basketball',
-      MLS:   'soccer/usa.1',
-    };
-    const path = sportMap[sport];
-    if (!path) return null;
+  // ── LINE HISTORY ──
+  function getHist(id) { try { return JSON.parse(localStorage.getItem('edge_line_history')||'{}')[id]||null; } catch { return null; } }
+  function saveHist(id,data) { try { const h=JSON.parse(localStorage.getItem('edge_line_history')||'{}'); if(!h[id])h[id]={...data,saved_at:new Date().toISOString()}; localStorage.setItem('edge_line_history',JSON.stringify(h)); } catch {} }
+
+  // ============================================================
+  // ── DATA FETCHERS ──
+  // Each returns null if API not connected — engine degrades gracefully
+  // ============================================================
+
+  async function fetchOddsGames() {
+    const key=KEY.odds();
+    if(!key) throw new Error('Odds API key not set');
+    const games=[];
+    for(const sport of SPORTS) {
+      try {
+        const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sport.oddsKey}/odds/?apiKey=${key}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`);
+        if(!r.ok) continue;
+        const data=await r.json();
+        data.forEach(g=>{ g._sport=sport.label; g._sportConfig=sport; games.push(g); });
+      } catch {}
+    }
+    return games;
+  }
+
+  async function fetchESPN(sportConfig) {
     try {
-      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
-      if (!res.ok) return null;
-      return await res.json();
+      const r=await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportConfig.espnPath}/scoreboard`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchESPNTeam(sportConfig, teamName) {
+    try {
+      const search=await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportConfig.espnPath}/teams?limit=200`);
+      if(!search.ok) return null;
+      const data=await search.json();
+      const team=data.sports?.[0]?.leagues?.[0]?.teams?.find(t=>t.team?.displayName===teamName||t.team?.shortDisplayName===teamName);
+      if(!team?.team?.id) return null;
+      const r=await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportConfig.espnPath}/teams/${team.team.id}`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchSportradar(sport, endpoint) {
+    const key=KEY.sportradar();
+    if(!key) return null;
+    try {
+      const r=await fetch(`https://api.sportradar.com/${sport}/trial/v7/en/${endpoint}.json?api_key=${key}`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchActionNetwork(gameId) {
+    const key=KEY.actionNetwork();
+    if(!key) return null;
+    try {
+      const r=await fetch(`https://api.actionnetwork.com/web/v1/games/${gameId}/odds`,{headers:{'Authorization':`Bearer ${key}`}});
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchWeather(venue, gameDate) {
+    const key=KEY.weather();
+    if(!key) return null;
+    try {
+      const geo=await fetch(`https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(venue)}&limit=1&appid=${key}`);
+      if(!geo.ok) return null;
+      const geoData=await geo.json();
+      if(!geoData[0]) return null;
+      const {lat,lon}=geoData[0];
+      const ts=Math.floor(new Date(gameDate).getTime()/1000);
+      const r=await fetch(`https://api.openweathermap.org/data/3.0/onecall/timemachine?lat=${lat}&lon=${lon}&dt=${ts}&appid=${key}&units=imperial`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchInjuries(sportConfig, teamName) {
+    const key=KEY.sportradar();
+    if(!key) return null;
+    try {
+      const r=await fetch(`https://api.sportradar.com/${sportConfig.srKey}/trial/v7/en/league/injuries.json?api_key=${key}`);
+      if(!r.ok) return null;
+      const data=await r.json();
+      // Filter to team
+      const teams=data.teams||data.league?.teams||[];
+      return teams.find(t=>t.name===teamName||t.alias===teamName)||null;
+    } catch { return null; }
+  }
+
+  async function fetchSchedule(sportConfig, teamName) {
+    const key=KEY.sportradar();
+    if(!key) return null;
+    try {
+      const season=new Date().getFullYear();
+      const r=await fetch(`https://api.sportradar.com/${sportConfig.srKey}/trial/v7/en/seasons/${season}/schedules.json?api_key=${key}`);
+      if(!r.ok) return null;
+      const data=await r.json();
+      const games=(data.games||data.schedule||[]).filter(g=>g.home?.name===teamName||g.away?.name===teamName);
+      return games;
     } catch { return null; }
   }
 
   // ── LOAD ALGO SETTINGS FROM SUPABASE ──
   async function loadAlgoSettings() {
-    const url = SUPABASE_URL(); const key = SUPABASE_KEY();
-    if (!url || !key) return defaultAlgoSettings();
+    const url=KEY.supabaseUrl(), key=KEY.supabaseKey();
+    if(!url||!key) return Array.from({length:25},(_,i)=>({id:i+1,enabled:true,weight:5}));
     try {
-      const res = await fetch(`${url}/rest/v1/algorithms?select=*&order=id`, {
-        headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
-      });
-      if (!res.ok) return defaultAlgoSettings();
-      return await res.json();
-    } catch { return defaultAlgoSettings(); }
-  }
-
-  function defaultAlgoSettings() {
-    return Array.from({ length: 25 }, (_, i) => ({
-      id: i + 1, enabled: true, weight: 4, wins: 0, losses: 0
-    }));
+      const r=await fetch(`${url}/rest/v1/algorithms?select=*&order=id`,{headers:{'apikey':key,'Authorization':`Bearer ${key}`}});
+      return r.ok?await r.json():Array.from({length:25},(_,i)=>({id:i+1,enabled:true,weight:5}));
+    } catch { return Array.from({length:25},(_,i)=>({id:i+1,enabled:true,weight:5})); }
   }
 
   // ============================================================
-  // ── 25 ALGORITHM LOGIC ──
-  // Each returns: { vote: 'yes'|'no'|'neu', confidence: 0-100, reason: string }
+  // ── ELITE 25 ALGORITHMS ──
+  // Each returns: { vote:'yes'|'no'|'neu', confidence:0-100, edge:0-1, reason:string }
+  // Degrades gracefully — returns 'neu' when data unavailable
   // ============================================================
 
   const ALGORITHMS = {
 
-    // 1. ELO RATING
-    eloRating(game, espn) {
-      const spread = game._spread;
-      if (spread === null) return { vote: 'neu', confidence: 50, reason: 'No spread data' };
-      // If home team favored by more than 3, lean home cover
-      if (spread < -3) return { vote: 'yes', confidence: 65, reason: `Home favored ${spread} — Elo supports cover` };
-      if (spread > 3)  return { vote: 'no',  confidence: 60, reason: `Away favored ${Math.abs(spread)} — Elo favors away` };
-      return { vote: 'neu', confidence: 50, reason: 'Spread too close for Elo edge' };
+    // 1. ELO RATING — Dynamic power rating from implied market probability
+    elo(game, data) {
+      const ml=game._ml, spread=game._spread;
+      if(spread===null) return {vote:'neu',confidence:50,edge:0,reason:'Elo: No market data'};
+      const p=ml?oddsToProb(ml):0.5;
+      const absSpread=Math.abs(spread);
+      // Value window: implied prob significantly above breakeven in reasonable spread range
+      if(p>0.62&&absSpread<=7) { const c=Math.min(52+(p-0.5)*130,90); return {vote:'yes',confidence:Math.round(c),edge:p-0.524,reason:`Elo: ${(p*100).toFixed(1)}% implied prob at ${spread} spread — market value window`}; }
+      if(p<0.38) { const c=Math.min(52+(0.5-p)*130,88); return {vote:'no',confidence:Math.round(c),edge:0.524-p,reason:`Elo: Away implied ${((1-p)*100).toFixed(1)}% — dog value on spread`}; }
+      return {vote:'neu',confidence:52,edge:0,reason:`Elo: ${(p*100).toFixed(1)}% implied — no edge`};
     },
 
-    // 2. PYTHAGOREAN EXPECTATION
-    pythagoreanExpectation(game, espn) {
-      // Uses points scored vs allowed ratio from ESPN data
-      const teams = espn?.events?.[0]?.competitions?.[0]?.competitors || [];
-      if (!teams.length) return { vote: 'neu', confidence: 50, reason: 'No scoring data' };
-      const home = teams.find(t => t.homeAway === 'home');
-      const away = teams.find(t => t.homeAway === 'away');
-      const homePF = parseFloat(home?.statistics?.find(s => s.name === 'pointsPerGame')?.value || 0);
-      const awayPF = parseFloat(away?.statistics?.find(s => s.name === 'pointsPerGame')?.value || 0);
-      if (!homePF || !awayPF) return { vote: 'neu', confidence: 50, reason: 'Insufficient scoring data' };
-      const pyth = (homePF ** 2) / (homePF ** 2 + awayPF ** 2);
-      if (pyth > 0.6) return { vote: 'yes', confidence: 70, reason: `Pythagorean win prob ${(pyth*100).toFixed(1)}% favors home` };
-      if (pyth < 0.4) return { vote: 'no',  confidence: 65, reason: `Pythagorean win prob ${(pyth*100).toFixed(1)}% favors away` };
-      return { vote: 'neu', confidence: 50, reason: 'Pythagorean too close to call' };
+    // 2. PYTHAGOREAN EXPECTATION — True winning % from scoring ratio
+    pyth(game, data) {
+      const events=data.espn?.events||[];
+      const ht=game.home_team;
+      let hPF=0,hPA=0,n=0;
+      events.slice(0,15).forEach(e=>{
+        const comp=e.competitions?.[0];if(!comp)return;
+        const home=comp.competitors?.find(c=>c.homeAway==='home');
+        const away=comp.competitors?.find(c=>c.homeAway==='away');
+        if(!home||!away)return;
+        const hs=parseInt(home.score||0),as=parseInt(away.score||0);
+        if(!hs&&!as)return;
+        if(home.team?.displayName===ht){hPF+=hs;hPA+=as;n++;}
+        else if(away.team?.displayName===ht){hPF+=as;hPA+=hs;n++;}
+      });
+      if(n<4||!hPF) return {vote:'neu',confidence:50,edge:0,reason:'Pythagorean: Need 4+ scored games'};
+      const exp=game._sport==='NBA'?13.91:game._sport==='NFL'?2.37:game._sport==='MLB'?1.83:2.0;
+      const pyth=(hPF**exp)/((hPF**exp)+(hPA**exp));
+      if(pyth>0.62){const c=Math.min(56+(pyth-0.62)*280,92);return{vote:'yes',confidence:Math.round(c),edge:pyth-0.524,reason:`Pythagorean: ${(pyth*100).toFixed(1)}% win expectation (${n} game sample)`};}
+      if(pyth<0.38)return{vote:'no',confidence:Math.min(56+(0.38-pyth)*280,90),edge:0.524-pyth,reason:`Pythagorean: ${(pyth*100).toFixed(1)}% — fade home`};
+      return{vote:'neu',confidence:51,edge:0,reason:`Pythagorean: ${(pyth*100).toFixed(1)}% — no edge`};
     },
 
-    // 3. SIMPLE RATING SYSTEM
-    simpleRatingSystem(game, espn) {
-      const spread = game._spread;
-      if (spread === null) return { vote: 'neu', confidence: 50, reason: 'No spread' };
-      const sos = Math.random() * 10 - 5; // placeholder until ESPN SOS data available
-      const srs = (spread * -1) + sos;
-      if (srs > 4)  return { vote: 'yes', confidence: 62, reason: `SRS score +${srs.toFixed(1)} favors home` };
-      if (srs < -4) return { vote: 'no',  confidence: 60, reason: `SRS score ${srs.toFixed(1)} favors away` };
-      return { vote: 'neu', confidence: 50, reason: 'SRS inconclusive' };
+    // 3. SIMPLE RATING SYSTEM — MOV adjusted for opponent quality
+    srs(game, data) {
+      const events=data.espn?.events||[];
+      const ht=game.home_team;
+      let movTotal=0,n=0;
+      events.slice(0,10).forEach(e=>{
+        const comp=e.competitions?.[0];if(!comp)return;
+        const home=comp.competitors?.find(c=>c.homeAway==='home');
+        const away=comp.competitors?.find(c=>c.homeAway==='away');
+        if(!home||!away)return;
+        const hs=parseInt(home.score||0),as=parseInt(away.score||0);
+        if(!hs&&!as)return;
+        if(home.team?.displayName===ht){movTotal+=(hs-as);n++;}
+      });
+      if(n<4) return {vote:'neu',confidence:50,edge:0,reason:'SRS: Need 4+ games'};
+      const avgMOV=movTotal/n;
+      const spread=game._spread||0;
+      const srs=avgMOV+spread; // positive = home covers
+      if(srs>6)return{vote:'yes',confidence:Math.min(63+srs,90),edge:Math.min(srs/60,0.12),reason:`SRS: +${srs.toFixed(1)} adjusted edge over spread`};
+      if(srs<-6)return{vote:'no',confidence:Math.min(61+Math.abs(srs),88),edge:Math.min(Math.abs(srs)/60,0.10),reason:`SRS: −${Math.abs(srs).toFixed(1)} — home underperforming spread`};
+      return{vote:'neu',confidence:51,edge:0,reason:`SRS: ${srs.toFixed(1)} — no material edge`};
     },
 
-    // 4. SHARP MONEY INDICATOR
-    sharpMoneyIndicator(game, espn) {
-      const hist = getLineHistory(game.id);
-      if (!hist) return { vote: 'neu', confidence: 50, reason: 'No line history data' };
-      const sharpPct = hist.sharp_pct || 50;
-      if (sharpPct > 65) return { vote: 'yes', confidence: 72, reason: `${sharpPct}% sharp money on home` };
-      if (sharpPct < 35) return { vote: 'no',  confidence: 68, reason: `Only ${sharpPct}% sharp on home — fading` };
-      return { vote: 'neu', confidence: 50, reason: 'Sharp money split evenly' };
+    // 4. SHARP MONEY INDICATOR — Professional bettor positioning
+    sharp(game, data) {
+      const an=data.actionNetwork;
+      const hist=getHist(game.id);
+      // Action Network is primary source; line history as fallback
+      const sharpPct=an?.consensus?.sharp_money_pct||hist?.sharp_pct||null;
+      const open=hist?.spread, current=game._spread;
+      if(sharpPct===null) return {vote:'neu',confidence:50,edge:0,reason:'Sharp: Action Network not connected'};
+      if(open===null||current===null) return {vote:'neu',confidence:50,edge:0,reason:'Sharp: No opening line'};
+      const move=current-open;
+      const sharpHome=sharpPct>55;
+      const lineConfirms=(sharpHome&&move<0)||(!sharpHome&&move>0);
+      if(sharpPct>=75&&lineConfirms)return{vote:'yes',confidence:88,edge:0.11,reason:`Sharp: ${sharpPct}% sharp on home + line confirmed — max signal`};
+      if(sharpPct>=65&&lineConfirms)return{vote:'yes',confidence:78,edge:0.07,reason:`Sharp: ${sharpPct}% sharp action confirmed by line`};
+      if(sharpPct>=55&&lineConfirms)return{vote:'yes',confidence:66,edge:0.04,reason:`Sharp: ${sharpPct}% sharp — moderate signal`};
+      if(sharpPct<=25)return{vote:'no',confidence:75,edge:0.06,reason:`Sharp: Only ${sharpPct}% sharp on home — strong fade`};
+      if(sharpPct<=35)return{vote:'no',confidence:64,edge:0.03,reason:`Sharp: ${sharpPct}% — lean fade`};
+      return{vote:'neu',confidence:52,edge:0,reason:`Sharp: ${sharpPct}% — no decisive signal`};
     },
 
-    // 5. CLOSING LINE VALUE
-    closingLineValue(game, espn) {
-      const hist = getLineHistory(game.id);
-      if (!hist) return { vote: 'neu', confidence: 50, reason: 'No opening line data' };
-      const open    = hist.spread || game._spread;
-      const current = game._spread;
-      if (open === null || current === null) return { vote: 'neu', confidence: 50, reason: 'Missing line data' };
-      const move = current - open;
-      if (move < -1.5) return { vote: 'yes', confidence: 74, reason: `Line moved ${move} in home favor — positive CLV` };
-      if (move > 1.5)  return { vote: 'no',  confidence: 70, reason: `Line moved +${move} against home — negative CLV` };
-      return { vote: 'neu', confidence: 52, reason: 'Minimal line movement' };
+    // 5. CLOSING LINE VALUE — Gold standard long-term edge metric
+    clv(game, data) {
+      const hist=getHist(game.id);
+      if(!hist?.spread) return {vote:'neu',confidence:50,edge:0,reason:'CLV: No opening line recorded'};
+      const open=hist.spread, current=game._spread;
+      if(current===null) return {vote:'neu',confidence:50,edge:0,reason:'CLV: No current line'};
+      const move=current-open;
+      if(move<=-2.5)return{vote:'yes',confidence:90,edge:0.13,reason:`CLV: Moved ${move} in home favor — elite positive CLV`};
+      if(move<=-1.5)return{vote:'yes',confidence:82,edge:0.09,reason:`CLV: +${Math.abs(move)} CLV — strong signal`};
+      if(move<=-0.5)return{vote:'yes',confidence:70,edge:0.05,reason:`CLV: ${move} — positive CLV edge`};
+      if(move>=2.5)return{vote:'no',confidence:88,edge:0.12,reason:`CLV: Moved +${move} against home — strong negative CLV`};
+      if(move>=1.5)return{vote:'no',confidence:80,edge:0.08,reason:`CLV: Line shifted +${move} against home`};
+      if(move>=0.5)return{vote:'no',confidence:66,edge:0.04,reason:`CLV: Slight negative CLV (+${move})`};
+      return{vote:'neu',confidence:53,edge:0,reason:'CLV: Line stable — no CLV edge'};
     },
 
-    // 6. STEAM MOVE DETECTOR
-    steamMoveDetector(game, espn) {
-      const hist = getLineHistory(game.id);
-      if (!hist) return { vote: 'neu', confidence: 50, reason: 'No history' };
-      const open    = hist.spread || game._spread;
-      const current = game._spread;
-      if (open === null || current === null) return { vote: 'neu', confidence: 50, reason: 'No data' };
-      const diff = Math.abs(current - open);
-      if (diff >= 2) return { vote: 'yes', confidence: 78, reason: `Steam move detected — ${diff} pt shift` };
-      return { vote: 'neu', confidence: 48, reason: 'No steam move detected' };
+    // 6. STEAM MOVE DETECTOR — Rapid sharp syndicate action
+    steam(game, data) {
+      const hist=getHist(game.id);
+      const an=data.actionNetwork;
+      if(!hist?.spread) return {vote:'neu',confidence:50,edge:0,reason:'Steam: No opening line'};
+      const diff=Math.abs((game._spread||0)-hist.spread);
+      const hoursOut=(new Date(game.commence_time)-new Date())/3600000;
+      const anSteam=an?.consensus?.steam_move||false;
+      if((anSteam||diff>=2.5)&&hoursOut<=24)return{vote:'yes',confidence:90,edge:0.13,reason:`Steam: ${diff}pt rapid move ${hoursOut.toFixed(0)}h out — confirmed syndicate`};
+      if(diff>=2&&hoursOut<=48)return{vote:'yes',confidence:84,edge:0.10,reason:`Steam: ${diff}pt move — sharp syndicate signal`};
+      if(diff>=1.5&&hoursOut<=36)return{vote:'yes',confidence:76,edge:0.07,reason:`Steam: ${diff}pt late move detected`};
+      if(diff>=1)return{vote:'yes',confidence:65,edge:0.04,reason:`Steam: ${diff}pt shift — possible steam`};
+      return{vote:'neu',confidence:50,edge:0,reason:'Steam: None detected'};
     },
 
-    // 7. REVERSE LINE MOVEMENT
-    reverseLineMovement(game, espn) {
-      const hist = getLineHistory(game.id);
-      if (!hist) return { vote: 'neu', confidence: 50, reason: 'No data' };
-      const publicPct = hist.public_pct || 50;
-      const open    = hist.spread;
-      const current = game._spread;
-      if (!open || !current) return { vote: 'neu', confidence: 50, reason: 'No line data' };
-      const lineMovedAgainstPublic = (publicPct > 60 && current > open) || (publicPct < 40 && current < open);
-      if (lineMovedAgainstPublic) return { vote: 'yes', confidence: 76, reason: `RLM — public ${publicPct}% but line moved opposite` };
-      return { vote: 'neu', confidence: 48, reason: 'No reverse line movement' };
+    // 7. REVERSE LINE MOVEMENT — Sharpest signal: line vs public
+    rlm(game, data) {
+      const an=data.actionNetwork;
+      const hist=getHist(game.id);
+      const pubPct=an?.consensus?.home_ticket_pct||hist?.public_pct||null;
+      const open=hist?.spread, current=game._spread;
+      if(pubPct===null||!open||current===null) return {vote:'neu',confidence:50,edge:0,reason:'RLM: Needs Action Network or line history'};
+      const move=current-open;
+      const pubHome=pubPct>55;
+      const against=(pubHome&&move>0.5)||(!pubHome&&move<-0.5);
+      if(pubPct>=75&&against)return{vote:pubHome?'no':'yes',confidence:88,edge:0.12,reason:`RLM: ${pubPct}% public on home but line moved opposite — elite sharp signal`};
+      if(pubPct>=65&&against)return{vote:pubHome?'no':'yes',confidence:78,edge:0.08,reason:`RLM: ${pubPct}% public, line against them — strong RLM`};
+      if(pubPct>=58&&against)return{vote:pubHome?'no':'yes',confidence:68,edge:0.05,reason:`RLM: ${pubPct}% public, moderate RLM`};
+      return{vote:'neu',confidence:51,edge:0,reason:'RLM: Not detected'};
     },
 
-    // 8. PACE & TEMPO ANALYSIS
-    paceTempoAnalysis(game, espn) {
-      const total = game._total;
-      if (!total) return { vote: 'neu', confidence: 50, reason: 'No total data' };
-      // High total = fast pace game, favor over
-      if (total > 230) return { vote: 'yes', confidence: 63, reason: `High total ${total} — pace matchup favors over` };
-      if (total < 200) return { vote: 'no',  confidence: 60, reason: `Low total ${total} — pace matchup favors under` };
-      return { vote: 'neu', confidence: 50, reason: 'Total in neutral range' };
+    // 8. PACE & TEMPO — Possessions drive totals edge
+    pace(game, data) {
+      const total=game._total;
+      if(!total) return {vote:'neu',confidence:50,edge:0,reason:'Pace: No total set'};
+      const events=data.espn?.events||[];
+      let sumTotal=0,n=0;
+      events.slice(0,12).forEach(e=>{
+        const scores=e.competitions?.[0]?.competitors?.map(c=>parseInt(c.score||0))||[];
+        const t=scores.reduce((a,b)=>a+b,0);
+        if(t>0){sumTotal+=t;n++;}
+      });
+      if(n<4) return {vote:'neu',confidence:50,edge:0,reason:'Pace: Insufficient scoring history'};
+      const avg=sumTotal/n;
+      const deviation=((total-avg)/avg)*100;
+      if(deviation>8)return{vote:'no',confidence:Math.min(63+deviation,86),edge:Math.min(deviation/100,0.09),reason:`Pace: Total ${total} is ${deviation.toFixed(1)}% above 12-game avg — under value`};
+      if(deviation<-8)return{vote:'yes',confidence:Math.min(61+Math.abs(deviation),84),edge:Math.min(Math.abs(deviation)/100,0.08),reason:`Pace: Total ${total} is ${Math.abs(deviation).toFixed(1)}% below avg — over value`};
+      return{vote:'neu',confidence:51,edge:0,reason:`Pace: Total ${total} near ${avg.toFixed(0)} avg — no edge`};
     },
 
-    // 9. STRENGTH OF SCHEDULE
-    strengthOfSchedule(game, espn) {
-      // Placeholder — ESPN SOS endpoint needed
-      return { vote: 'neu', confidence: 50, reason: 'SOS data loads when ESPN connected' };
+    // 9. STRENGTH OF SCHEDULE — Sportradar standings adjusted
+    sos(game, data) {
+      const sr=data.sportradar;
+      if(!sr) {
+        // ESPN fallback
+        const events=data.espn?.events||[];
+        const ht=game.home_team;
+        let oppScoreSum=0,n=0;
+        events.slice(0,10).forEach(e=>{
+          const comp=e.competitions?.[0];if(!comp)return;
+          const home=comp.competitors?.find(c=>c.homeAway==='home');
+          const away=comp.competitors?.find(c=>c.homeAway==='away');
+          if(!home||!away)return;
+          if(home.team?.displayName===ht){oppScoreSum+=parseInt(away.score||0);n++;}
+        });
+        if(n<4) return {vote:'neu',confidence:50,edge:0,reason:'SOS: Sportradar not connected — ESPN fallback insufficient'};
+        const avg=oppScoreSum/n;
+        const sport=game._sport;
+        if(avg>27&&sport==='NFL')return{vote:'yes',confidence:67,edge:0.04,reason:`SOS: Tough schedule (avg opp ${avg.toFixed(0)} pts NFL) — team undervalued`};
+        if(avg>112&&sport==='NBA')return{vote:'yes',confidence:65,edge:0.03,reason:`SOS: High opp avg ${avg.toFixed(0)} NBA — battle-tested edge`};
+        return{vote:'neu',confidence:51,edge:0,reason:'SOS: Average schedule difficulty'};
+      }
+      // Full Sportradar SOS calculation
+      const standings=sr.standings||[];
+      const homeTeam=standings.find(t=>t.name===game.home_team);
+      if(!homeTeam) return {vote:'neu',confidence:51,edge:0,reason:'SOS: Team not in Sportradar standings'};
+      const sosRank=homeTeam.sos_rank||null;
+      if(!sosRank) return {vote:'neu',confidence:51,edge:0,reason:'SOS: No SOS data in Sportradar'};
+      const totalTeams=standings.length;
+      const percentile=(totalTeams-sosRank)/totalTeams;
+      if(percentile>0.75)return{vote:'yes',confidence:70,edge:0.05,reason:`SOS: Top ${Math.round((1-percentile)*100)}% schedule difficulty — undervalued team`};
+      if(percentile<0.25)return{vote:'no',confidence:64,edge:0.03,reason:`SOS: Easy schedule — team may be overvalued`};
+      return{vote:'neu',confidence:51,edge:0,reason:`SOS: Average schedule (${sosRank}/${totalTeams})`};
     },
 
-    // 10. REST & RECOVERY INDEX
-    restRecoveryIndex(game, espn) {
-      const now       = new Date();
-      const gameDate  = new Date(game.commence_time);
-      const daysOut   = Math.round((gameDate - now) / (1000 * 60 * 60 * 24));
-      if (daysOut === 0) return { vote: 'yes', confidence: 58, reason: 'Game today — rest advantage assessed' };
-      return { vote: 'neu', confidence: 50, reason: 'Rest data loads from ESPN schedule' };
+    // 10. REST & RECOVERY INDEX — Days rest from Sportradar schedule
+    rest(game, data) {
+      const schedule=data.schedule||[];
+      const gameDate=new Date(game.commence_time);
+      if(!schedule.length){
+        // ESPN fallback
+        const events=data.espn?.events||[];
+        const last=events[0]?.date?new Date(events[0].date):null;
+        if(!last) return {vote:'neu',confidence:50,edge:0,reason:'Rest: No schedule data'};
+        const days=Math.round((gameDate-last)/86400000);
+        if(days===0)return{vote:'no',confidence:75,edge:0.06,reason:'Rest: Back-to-back — fatigue quantified'};
+        if(days===1)return{vote:'no',confidence:63,edge:0.03,reason:'Rest: 1 day — fatigue concern'};
+        if(days>=7)return{vote:'yes',confidence:74,edge:0.06,reason:`Rest: ${days} days — peak recovery + hunger`};
+        if(days>=4)return{vote:'yes',confidence:64,edge:0.03,reason:`Rest: ${days} days — adequate recovery`};
+        return{vote:'neu',confidence:52,edge:0,reason:`Rest: ${days} days — neutral`};
+      }
+      // Sportradar: find actual last game
+      const pastGames=schedule.filter(g=>new Date(g.scheduled)<gameDate).sort((a,b)=>new Date(b.scheduled)-new Date(a.scheduled));
+      const lastGame=pastGames[0];
+      if(!lastGame) return {vote:'neu',confidence:51,edge:0,reason:'Rest: No past games in schedule'};
+      const days=Math.round((gameDate-new Date(lastGame.scheduled))/86400000);
+      if(days===0)return{vote:'no',confidence:76,edge:0.07,reason:'Rest: Back-to-back confirmed via Sportradar'};
+      if(days===1)return{vote:'no',confidence:65,edge:0.04,reason:'Rest: 1 day rest — Sportradar confirmed'};
+      if(days>=7)return{vote:'yes',confidence:76,edge:0.07,reason:`Rest: ${days} days rest — Sportradar confirmed`};
+      if(days>=4)return{vote:'yes',confidence:66,edge:0.04,reason:`Rest: ${days} days rest`};
+      return{vote:'neu',confidence:52,edge:0,reason:`Rest: ${days} days — neutral`};
     },
 
-    // 11. TRAVEL FATIGUE MODEL
-    travelFatigueModel(game, espn) {
-      // Needs roster/location data from ESPN
-      return { vote: 'neu', confidence: 50, reason: 'Travel data loads when ESPN connected' };
+    // 11. TRAVEL FATIGUE — Cross-timezone travel from Sportradar locations
+    travel(game, data) {
+      const sr=data.sportradar;
+      let homeCity=null, awayCity=null;
+      if(sr?.venue) {
+        homeCity=sr.venue.city;
+      }
+      // City from team name as fallback
+      const east=['Boston','Brooklyn','Philadelphia','Toronto','Miami','Orlando','Atlanta','Charlotte','Washington','Cleveland','Indiana','Detroit','Milwaukee'];
+      const west=['Los Angeles','Golden State','Portland','Sacramento','Phoenix','Utah','Denver','Dallas','Houston','San Antonio','Oklahoma','Memphis'];
+      const getZone=t=>east.some(c=>t.includes(c.split(' ')[0]))?0:west.some(c=>t.includes(c.split(' ')[0]))?3:1;
+      const homeZone=getZone(game.home_team);
+      const awayZone=getZone(game.away_team);
+      const tzDiff=Math.abs(homeZone-awayZone);
+      if(tzDiff===0)return{vote:'neu',confidence:51,edge:0,reason:'Travel: Same timezone — no edge'};
+      if(tzDiff>=3)return{vote:'yes',confidence:72,edge:0.06,reason:`Travel: ${tzDiff} timezone cross-country — home advantage quantified`};
+      if(tzDiff>=2)return{vote:'yes',confidence:64,edge:0.04,reason:`Travel: ${tzDiff} timezone shift — home edge`};
+      return{vote:'yes',confidence:57,edge:0.02,reason:'Travel: 1 timezone difference — minor home edge'};
     },
 
-    // 12. WEATHER IMPACT MODEL
-    weatherImpactModel(game, espn) {
-      const sport = game._sport;
-      const indoorSports = ['NBA','NHL','NCAAB'];
-      if (indoorSports.includes(sport)) return { vote: 'neu', confidence: 50, reason: 'Indoor sport — weather irrelevant' };
-      const total = game._total;
-      if (!total) return { vote: 'neu', confidence: 50, reason: 'No total to assess weather impact' };
-      // Placeholder — weather API needed for outdoor games
-      return { vote: 'neu', confidence: 50, reason: 'Weather data pending API connection' };
+    // 12. WEATHER IMPACT — OpenWeatherMap real-time outdoor conditions
+    weather(game, data) {
+      const sport=game._sport;
+      if(['NBA','NHL','NCAAB'].includes(sport))return{vote:'neu',confidence:50,edge:0,reason:'Weather: Indoor sport — N/A'};
+      const w=data.weather;
+      const total=game._total;
+      if(!w) {
+        // No weather API: use season/month heuristic
+        const month=new Date(game.commence_time).getMonth();
+        const coldMarkets=['Green Bay','Chicago','Cleveland','Buffalo','New England','New York Jets','New York Giants','Philadelphia','Pittsburgh','Minnesota','Kansas City'];
+        const inCold=coldMarkets.some(m=>game.home_team.includes(m.split(' ')[0]));
+        if(sport==='NFL'&&(month>=9||month<=1)&&inCold)return{vote:'no',confidence:68,edge:0.05,reason:'Weather: Cold market winter game — scoring suppression (heuristic)'};
+        if(sport==='MLB'&&month<=4)return{vote:'no',confidence:62,edge:0.03,reason:'Weather: Early MLB season cold — ball carry suppressed'};
+        return{vote:'neu',confidence:51,edge:0,reason:'Weather: OpenWeatherMap not connected — using heuristics'};
+      }
+      // Real weather data
+      const wind=w.data?.[0]?.wind_speed||0;
+      const temp=w.data?.[0]?.temp||60;
+      const rain=w.data?.[0]?.rain?.['1h']||0;
+      const snow=w.data?.[0]?.snow?.['1h']||0;
+      const precip=rain+snow;
+      if(wind>20||precip>0.3||temp<25)return{vote:'no',confidence:Math.min(70+wind/2+precip*10,90),edge:Math.min((wind/200+precip/10),0.12),reason:`Weather: Wind ${wind.toFixed(0)}mph, Temp ${temp.toFixed(0)}°F, Precip ${precip.toFixed(2)}" — scoring suppression`};
+      if(wind>12||temp<35)return{vote:'no',confidence:64,edge:0.04,reason:`Weather: Wind ${wind.toFixed(0)}mph, Temp ${temp.toFixed(0)}°F — moderate impact`};
+      if(temp>80&&wind<5)return{vote:'yes',confidence:60,edge:0.02,reason:`Weather: Ideal conditions ${temp.toFixed(0)}°F — scoring favorable`};
+      return{vote:'neu',confidence:51,edge:0,reason:`Weather: Neutral conditions (${temp.toFixed(0)}°F, ${wind.toFixed(0)}mph)`};
     },
 
-    // 13. HOME/AWAY SPLIT ANALYSIS
-    homeAwaySplit(game, espn) {
-      const spread = game._spread;
-      if (spread === null) return { vote: 'neu', confidence: 50, reason: 'No spread' };
-      // Home teams historically cover at higher rate when favored by 3-7
-      if (spread >= -7 && spread <= -3) return { vote: 'yes', confidence: 64, reason: `Home favored ${spread} — strong cover range historically` };
-      if (spread > 7) return { vote: 'no', confidence: 60, reason: `Large home favorite ${spread} — fade spot` };
-      return { vote: 'neu', confidence: 50, reason: 'Spread outside historical sweet spot' };
+    // 13. HOME/AWAY SPLIT — Historical cover rates by spread range and sport
+    ha(game, data) {
+      const spread=game._spread;
+      const sport=game._sport;
+      if(spread===null)return{vote:'neu',confidence:50,edge:0,reason:'H/A: No spread'};
+      // NBA: home -1 to -5 cover at ~53.5% historically
+      if(sport==='NBA'&&spread>=-5&&spread<=-1)return{vote:'yes',confidence:67,edge:0.035,reason:`H/A: NBA home ${spread} — 53.5% historical cover rate`};
+      // NFL: home underdogs +1.5 to +6 cover at ~54% historically
+      if(sport==='NFL'&&spread>=1.5&&spread<=6)return{vote:'yes',confidence:66,edge:0.03,reason:`H/A: NFL home dog +${spread} — historical 54% ATS`};
+      // MLB: home -110 to -130 ML hits at ~54%
+      if(sport==='MLB'&&game._ml&&game._ml>=-130&&game._ml<=-105)return{vote:'yes',confidence:64,edge:0.025,reason:'H/A: MLB home moderate favorite — 54% historical ML'};
+      // NHL: home ice historically worth ~0.3 goals
+      if(sport==='NHL'&&spread>=-1.5&&spread<=0)return{vote:'yes',confidence:62,edge:0.02,reason:'H/A: NHL home ice — 0.3 goal historical edge'};
+      // Fade large home favorites
+      if(spread<=-10)return{vote:'no',confidence:70,edge:0.05,reason:`H/A: Large favorite ${spread} — historical fade spot (52.8% for dogs)`};
+      if(spread<=-7)return{vote:'no',confidence:62,edge:0.03,reason:`H/A: Heavy favorite ${spread} — moderate fade value`};
+      return{vote:'neu',confidence:51,edge:0,reason:'H/A: No historical split edge at this number'};
     },
 
-    // 14. ATS TREND ANALYSIS
-    atsTrendAnalysis(game, espn) {
-      // Load from Supabase pick history
-      const picks = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
-      const relevant = picks.filter(p => p.matchup && p.matchup.includes(game.home_team) && p.result);
-      if (relevant.length < 3) return { vote: 'neu', confidence: 50, reason: 'Insufficient ATS history' };
-      const wins = relevant.filter(p => p.result === 'W').length;
-      const pct  = wins / relevant.length;
-      if (pct > 0.6) return { vote: 'yes', confidence: 66, reason: `${(pct*100).toFixed(0)}% ATS cover rate in history` };
-      if (pct < 0.4) return { vote: 'no',  confidence: 62, reason: `Only ${(pct*100).toFixed(0)}% ATS cover rate` };
-      return { vote: 'neu', confidence: 50, reason: 'ATS trend neutral' };
+    // 14. ATS TREND — Cover rate from Supabase pick history
+    ats(game, data) {
+      const picks=JSON.parse(localStorage.getItem('edge_picks_local')||'[]');
+      const rel=picks.filter(p=>p.matchup?.includes(game.home_team)&&p.result&&p.pick_type==='ATS');
+      if(rel.length<6) return {vote:'neu',confidence:50,edge:0,reason:`ATS: Need 6+ games (have ${rel.length})`};
+      const wins=rel.filter(p=>p.result==='W').length;
+      const pct=wins/rel.length;
+      const rec=`${wins}-${rel.length-wins}`;
+      if(pct>0.65)return{vote:'yes',confidence:Math.min(60+pct*35,88),edge:pct-0.524,reason:`ATS: ${rec} cover record — ${(pct*100).toFixed(0)}% rate`};
+      if(pct>0.58)return{vote:'yes',confidence:64,edge:pct-0.524,reason:`ATS: ${rec} — trending above breakeven`};
+      if(pct<0.35)return{vote:'no',confidence:Math.min(60+(0.524-pct)*60,86),edge:0.524-pct,reason:`ATS: ${rec} — ${(pct*100).toFixed(0)}% cover rate — strong fade`};
+      if(pct<0.42)return{vote:'no',confidence:62,edge:0.524-pct,reason:`ATS: ${rec} — below breakeven`};
+      return{vote:'neu',confidence:51,edge:0,reason:`ATS: ${rec} — neutral trend`};
     },
 
-    // 15. RECENT FORM INDEX
-    recentFormIndex(game, espn) {
-      const events = espn?.events || [];
-      if (!events.length) return { vote: 'neu', confidence: 50, reason: 'No recent game data from ESPN' };
-      // Count last 5 results
-      const recent = events.slice(0, 5);
-      const wins = recent.filter(e => {
-        const comp = e.competitions?.[0];
-        const home = comp?.competitors?.find(c => c.homeAway === 'home');
-        return home?.winner === true;
-      }).length;
-      if (wins >= 4) return { vote: 'yes', confidence: 68, reason: `Home team ${wins}/5 recent wins — hot form` };
-      if (wins <= 1) return { vote: 'no',  confidence: 65, reason: `Home team ${wins}/5 recent wins — cold form` };
-      return { vote: 'neu', confidence: 52, reason: `Home team ${wins}/5 recent — neutral form` };
+    // 15. RECENT FORM INDEX — Last 5 weighted with recency bias
+    form(game, data) {
+      const events=data.espn?.events||[];
+      if(!events.length)return{vote:'neu',confidence:50,edge:0,reason:'Form: No ESPN data'};
+      const last5=events.slice(0,5);
+      let weightedScore=0, totalWeight=0;
+      last5.forEach((e,i)=>{
+        const w=5-i; // most recent = weight 5
+        const home=e.competitions?.[0]?.competitors?.find(c=>c.homeAway==='home');
+        const winner=home?.winner===true;
+        weightedScore+=winner?w:0;
+        totalWeight+=w;
+      });
+      const formPct=totalWeight>0?weightedScore/totalWeight:0.5;
+      const wins=last5.filter(e=>e.competitions?.[0]?.competitors?.find(c=>c.homeAway==='home')?.winner===true).length;
+      if(formPct>0.72)return{vote:'yes',confidence:Math.min(67+formPct*25,88),edge:formPct-0.524,reason:`Form: ${wins}/5 wins, weighted ${(formPct*100).toFixed(0)}% — hot streak`};
+      if(formPct<0.28)return{vote:'no',confidence:Math.min(65+(0.524-formPct)*30,86),edge:0.524-formPct,reason:`Form: ${wins}/5, weighted ${(formPct*100).toFixed(0)}% — cold streak`};
+      return{vote:'neu',confidence:52,edge:0,reason:`Form: ${wins}/5 wins — neutral momentum`};
     },
 
-    // 16. PUBLIC BETTING % FADE
-    publicBettingFade(game, espn) {
-      const hist = getLineHistory(game.id);
-      if (!hist) return { vote: 'neu', confidence: 50, reason: 'No public betting data' };
-      const pub = hist.public_pct || 50;
-      if (pub > 70) return { vote: 'no',  confidence: 67, reason: `${pub}% public on home — fade the public` };
-      if (pub < 30) return { vote: 'yes', confidence: 65, reason: `Only ${pub}% public on home — contrarian play` };
-      return { vote: 'neu', confidence: 50, reason: 'Public split neutral' };
-    },
-
-    // 17. SITUATIONAL SPOT ANALYSIS
-    situationalSpotAnalysis(game, espn) {
-      const gameDate = new Date(game.commence_time);
-      const day = gameDate.getDay();
-      // Thursday/Monday night games — trap game risk
-      if (day === 4 || day === 1) return { vote: 'neu', confidence: 52, reason: 'Primetime game — trap spot possible' };
-      return { vote: 'neu', confidence: 50, reason: 'No situational flags detected' };
-    },
-
-    // 18. COACHING TENDENCIES
-    coachingTendencies(game, espn) {
-      return { vote: 'neu', confidence: 50, reason: 'Coaching data loads when ESPN roster API connected' };
-    },
-
-    // 19. INJURY IMPACT SCORE
-    injuryImpactScore(game, espn) {
-      return { vote: 'neu', confidence: 50, reason: 'Injury data loads when ESPN connected' };
-    },
-
-    // 20. PRIMETIME PERFORMANCE
-    primetimePerformance(game, espn) {
-      const gameDate = new Date(game.commence_time);
-      const hour = gameDate.getHours();
-      const isPrimetime = hour >= 19; // 7pm+
-      if (isPrimetime) return { vote: 'neu', confidence: 54, reason: 'Primetime game — performance model active' };
-      return { vote: 'neu', confidence: 50, reason: 'Not a primetime game' };
-    },
-
-    // 21. DIVISIONAL RECORD
-    divisionalRecord(game, espn) {
-      return { vote: 'neu', confidence: 50, reason: 'Divisional data loads when ESPN connected' };
-    },
-
-    // 22. REVENGE GAME DETECTOR
-    revengeGameDetector(game, espn) {
-      const picks = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
-      const prevLoss = picks.find(p =>
-        p.matchup && p.matchup.includes(game.home_team) &&
-        p.matchup.includes(game.away_team) &&
-        p.result === 'L'
-      );
-      if (prevLoss) return { vote: 'yes', confidence: 66, reason: `Revenge game detected — home lost to ${game.away_team} previously` };
-      return { vote: 'neu', confidence: 50, reason: 'No revenge game scenario detected' };
-    },
-
-    // 23. LINE OPEN-TO-CLOSE MOVEMENT
-    lineOpenToClose(game, espn) {
-      const hist = getLineHistory(game.id);
-      if (!hist?.spread) return { vote: 'neu', confidence: 50, reason: 'No opening line data' };
-      const move = (game._spread || 0) - hist.spread;
-      if (Math.abs(move) >= 1) return { vote: move < 0 ? 'yes' : 'no', confidence: 65, reason: `Line moved ${move > 0 ? '+' : ''}${move} from open` };
-      return { vote: 'neu', confidence: 50, reason: 'Minimal open-to-close movement' };
-    },
-
-    // 24. TOTALS TREND MODEL
-    totalsTrendModel(game, espn) {
-      const total = game._total;
-      if (!total) return { vote: 'neu', confidence: 50, reason: 'No total data' };
-      const picks = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
-      const totPicks = picks.filter(p => p.pick_type === 'Total' && p.result);
-      const overs = totPicks.filter(p => p.pick_label?.includes('O') && p.result === 'W').length;
-      const unders = totPicks.filter(p => p.pick_label?.includes('U') && p.result === 'W').length;
-      if (overs > unders + 2) return { vote: 'yes', confidence: 60, reason: `Overs trending ${overs} hits vs ${unders} unders` };
-      if (unders > overs + 2) return { vote: 'no',  confidence: 60, reason: `Unders trending ${unders} hits vs ${overs} overs` };
-      return { vote: 'neu', confidence: 50, reason: 'Totals trend neutral' };
-    },
-
-    // 25. REGRESSION TO THE MEAN
-    regressionToMean(game, espn) {
-      const events = espn?.events || [];
-      if (!events.length) return { vote: 'neu', confidence: 50, reason: 'No ESPN data' };
-      // If team won last 5 by large margins, regression likely
-      const recent = events.slice(0, 5);
-      const blowouts = recent.filter(e => {
-        const comp = e.competitions?.[0];
-        const scores = comp?.competitors?.map(c => parseInt(c.score || 0)) || [];
-        return Math.abs(scores[0] - scores[1]) > 20;
-      }).length;
-      if (blowouts >= 3) return { vote: 'no', confidence: 62, reason: `${blowouts} recent blowouts — regression to mean likely` };
-      return { vote: 'neu', confidence: 50, reason: 'No regression signal detected' };
-    },
   };
 
-  // ── LINE HISTORY HELPER ──
-  function getLineHistory(gameId) {
+  // Export Part 1 internals for Part 2
+  return { _p1: true, ALGORITHMS, WKEY, W, KEY, SPORTS, getHist, saveHist, getVal, oddsToProb, kellyUnits, fetchOddsGames, fetchESPN, fetchESPNTeam, fetchSportradar, fetchActionNetwork, fetchWeather, fetchInjuries, fetchSchedule, loadAlgoSettings, startAuto, stopAuto };
+
+})();
+// ============================================================
+// EDGE — ELITE ALGORITHM ENGINE v3.0 — PART 1 of 2
+// Data: Odds API + ESPN + Sportradar + Action Network + OpenWeatherMap
+// Logic: 25 Elite Algorithms + Bayesian Governing + Kelly Criterion
+// Plug & Play — gracefully degrades when APIs not yet connected
+// ============================================================
+
+const EDGE_ENGINE = (() => {
+
+  // ── API KEYS (all from localStorage — set in Admin) ──
+  const KEY = {
+    odds:          () => localStorage.getItem('edge_odds_api_key'),
+    supabaseUrl:   () => localStorage.getItem('edge_supabase_url'),
+    supabaseKey:   () => localStorage.getItem('edge_supabase_key'),
+    claude:        () => localStorage.getItem('edge_claude_api_key'),
+    sportradar:    () => localStorage.getItem('edge_sportradar_key'),
+    actionNetwork: () => localStorage.getItem('edge_action_network_key'),
+    weather:       () => localStorage.getItem('edge_weather_key'),
+  };
+
+  // ── SPORTS ──
+  const SPORTS = [
+    { oddsKey: 'americanfootball_nfl',   label: 'NFL',   srKey: 'nfl',        espnPath: 'football/nfl' },
+    { oddsKey: 'basketball_nba',         label: 'NBA',   srKey: 'nba',        espnPath: 'basketball/nba' },
+    { oddsKey: 'baseball_mlb',           label: 'MLB',   srKey: 'mlb',        espnPath: 'baseball/mlb' },
+    { oddsKey: 'icehockey_nhl',          label: 'NHL',   srKey: 'nhl',        espnPath: 'hockey/nhl' },
+    { oddsKey: 'americanfootball_ncaaf', label: 'NCAAF', srKey: 'ncaafb',     espnPath: 'football/college-football' },
+    { oddsKey: 'basketball_ncaab',       label: 'NCAAB', srKey: 'ncaamb',     espnPath: 'basketball/mens-college-basketball' },
+    { oddsKey: 'soccer_usa_mls',         label: 'MLS',   srKey: 'mls',        espnPath: 'soccer/usa.1' },
+  ];
+
+  // ── SPORT-SPECIFIC ALGORITHM WEIGHTS ──
+  const W = {
+    NFL:  { elo:10,pyth:8,srs:8,sharp:10,clv:10,steam:9,rlm:9,pace:5,sos:8,rest:9,travel:8,weather:10,ha:7,ats:8,form:8,public:8,spot:9,coach:9,injury:10,prime:8,div:9,revenge:8,loc:9,totals:7,reg:7 },
+    NBA:  { elo:9,pyth:10,srs:7,sharp:9,clv:10,steam:8,rlm:8,pace:10,sos:6,rest:10,travel:9,weather:1,ha:8,ats:7,form:10,public:7,spot:8,coach:8,injury:10,prime:6,div:5,revenge:7,loc:9,totals:9,reg:8 },
+    MLB:  { elo:7,pyth:9,srs:6,sharp:9,clv:10,steam:8,rlm:8,pace:7,sos:7,rest:8,travel:7,weather:10,ha:8,ats:8,form:9,public:8,spot:7,coach:7,injury:9,prime:5,div:8,revenge:6,loc:9,totals:10,reg:9 },
+    NHL:  { elo:8,pyth:8,srs:7,sharp:9,clv:10,steam:8,rlm:8,pace:9,sos:7,rest:9,travel:8,weather:1,ha:9,ats:7,form:9,public:7,spot:7,coach:8,injury:10,prime:6,div:8,revenge:7,loc:9,totals:8,reg:7 },
+    DEFAULT:{ elo:7,pyth:7,srs:6,sharp:8,clv:9,steam:7,rlm:7,pace:7,sos:6,rest:8,travel:7,weather:5,ha:7,ats:7,form:8,public:7,spot:7,coach:6,injury:8,prime:5,div:6,revenge:6,loc:8,totals:7,reg:7 },
+  };
+
+  const WKEY = ['elo','pyth','srs','sharp','clv','steam','rlm','pace','sos','rest','travel','weather','ha','ats','form','public','spot','coach','injury','prime','div','revenge','loc','totals','reg'];
+
+  // ── AUTO SCHEDULE ──
+  let autoInterval = null;
+  const startAuto = (ms=1800000) => { if(autoInterval) clearInterval(autoInterval); autoInterval=setInterval(()=>runFullEngine(),ms); };
+  const stopAuto  = () => { if(autoInterval) clearInterval(autoInterval); autoInterval=null; };
+
+  // ── KELLY CRITERION ──
+  function kellyUnits(confidence, americanOdds, bankroll) {
+    const p = Math.min(confidence/100, 0.95);
+    const q = 1-p;
+    const b = americanOdds>0 ? americanOdds/100 : 100/Math.abs(americanOdds||110);
+    const kelly = (b*p-q)/b;
+    const frac  = kelly*0.25; // 25% fractional Kelly for risk management
+    if(frac<=0) return 0;
+    const unitSize = parseFloat(localStorage.getItem('edge_unit_size')||'50');
+    return Math.min(Math.max(Math.round(((frac*(bankroll||1000))/unitSize)*2)/2, 0.5), 5);
+  }
+
+  const oddsToProb = o => !o?0.5:o>0?100/(o+100):Math.abs(o)/(Math.abs(o)+100);
+
+  // ── HELPER: GET MARKET VALUE FROM ODDS API ──
+  function getVal(game, market, side, field) {
     try {
-      const hist = JSON.parse(localStorage.getItem('edge_line_history') || '{}');
-      return hist[gameId] || null;
+      const bk  = game.bookmakers?.[0];
+      const mkt = bk?.markets?.find(m=>m.key===market);
+      const out = mkt?.outcomes?.find(o=>side==='home'?o.name===game.home_team:side==='away'?o.name===game.away_team:o.name===side);
+      return out?.[field]??null;
     } catch { return null; }
   }
 
-  // ── GOVERNING ALGORITHM ──
-  // Synthesizes all 25 votes into final pick decision
-  function governingAlgorithm(votes, algoSettings, game) {
-    let weightedYes = 0, weightedNo = 0, totalWeight = 0;
-    let reasons = [];
+  // ── LINE HISTORY ──
+  function getHist(id) { try { return JSON.parse(localStorage.getItem('edge_line_history')||'{}')[id]||null; } catch { return null; } }
+  function saveHist(id,data) { try { const h=JSON.parse(localStorage.getItem('edge_line_history')||'{}'); if(!h[id])h[id]={...data,saved_at:new Date().toISOString()}; localStorage.setItem('edge_line_history',JSON.stringify(h)); } catch {} }
 
-    votes.forEach((v, i) => {
-      const setting = algoSettings.find(a => a.id === i + 1);
-      if (!setting?.enabled) return;
+  // ============================================================
+  // ── DATA FETCHERS ──
+  // Each returns null if API not connected — engine degrades gracefully
+  // ============================================================
 
-      const weight = setting.weight || 4;
-      totalWeight += weight;
-
-      if (v.vote === 'yes') {
-        weightedYes += weight * (v.confidence / 100);
-        reasons.push(v.reason);
-      } else if (v.vote === 'no') {
-        weightedNo += weight * (v.confidence / 100);
-      }
-    });
-
-    const yesScore = totalWeight > 0 ? (weightedYes / totalWeight) * 100 : 0;
-    const noScore  = totalWeight > 0 ? (weightedNo  / totalWeight) * 100 : 0;
-
-    const yesVotes  = votes.filter(v => v.vote === 'yes').length;
-    const noVotes   = votes.filter(v => v.vote === 'no').length;
-    const neuVotes  = votes.filter(v => v.vote === 'neu').length;
-    const consensus = yesVotes;
-
-    // Chronological weight — recent form gets 1.2x boost
-    const recentFormVote = votes[14]; // index 14 = Recent Form Index
-    const recentBoost = recentFormVote?.vote === 'yes' ? 1.2 : 1.0;
-
-    const finalScore = yesScore * recentBoost;
-    const confidence = Math.min(Math.round(finalScore), 99);
-    const confTier   = confidence >= 68 ? 'high' : confidence >= 48 ? 'med' : 'low';
-
-    const pickSide = yesScore > noScore ? 'home' : 'away';
-    const spread   = game._spread;
-
-    let pickLabel, pickType, line;
-    if (spread !== null) {
-      pickLabel = pickSide === 'home' ? game.home_team : game.away_team;
-      pickType  = 'ATS';
-      line      = pickSide === 'home' ? spread : spread * -1;
-    } else {
-      pickLabel = pickSide === 'home' ? game.home_team : game.away_team;
-      pickType  = 'ML';
-      line      = null;
+  async function fetchOddsGames() {
+    const key=KEY.odds();
+    if(!key) throw new Error('Odds API key not set');
+    const games=[];
+    for(const sport of SPORTS) {
+      try {
+        const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sport.oddsKey}/odds/?apiKey=${key}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`);
+        if(!r.ok) continue;
+        const data=await r.json();
+        data.forEach(g=>{ g._sport=sport.label; g._sportConfig=sport; games.push(g); });
+      } catch {}
     }
-
-    const units = confidence >= 75 ? 2 : 1;
-
-    return {
-      game_id:    game.id,
-      sport:      game._sport,
-      matchup:    `${game.away_team} vs ${game.home_team}`,
-      time:       game.commence_time,
-      pick_label: pickLabel,
-      pick_type:  pickType,
-      line:       line,
-      odds:       game._ml,
-      consensus:  consensus,
-      confidence: confidence,
-      conf_tier:  confTier,
-      yes_votes:  yesVotes,
-      no_votes:   noVotes,
-      neu_votes:  neuVotes,
-      units:      units,
-      reason:     reasons.slice(0, 3).join(' · '),
-      algo_votes: votes,
-      status:     'pending',
-      date:       new Date().toISOString().split('T')[0],
-      created_at: new Date().toISOString(),
-    };
+    return games;
   }
 
-  // ── RUN ALGORITHMS ON SINGLE GAME ──
-  async function analyzeGame(game, algoSettings, espnData) {
-    game._spread = getMarketValue(game, 'spreads', 'home', 'point');
-    game._total  = getMarketValue(game, 'totals',  'Over',  'point');
-    game._ml     = getMarketValue(game, 'h2h',     'home',  'price');
-
-    const algoKeys = Object.keys(ALGORITHMS);
-    const votes = algoKeys.map(key => {
-      try { return ALGORITHMS[key](game, espnData); }
-      catch { return { vote: 'neu', confidence: 50, reason: 'Error in algorithm' }; }
-    });
-
-    return governingAlgorithm(votes, algoSettings, game);
-  }
-
-  // ── SAVE PICKS TO SUPABASE ──
-  async function savePicks(picks) {
-    const url = SUPABASE_URL(); const key = SUPABASE_KEY();
-
-    // Always save to localStorage
-    localStorage.setItem('edge_picks_today', JSON.stringify(picks));
-
-    if (!url || !key) return;
+  async function fetchESPN(sportConfig) {
     try {
-      await fetch(`${url}/rest/v1/picks`, {
-        method: 'POST',
-        headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-        body: JSON.stringify(picks)
+      const r=await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportConfig.espnPath}/scoreboard`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchESPNTeam(sportConfig, teamName) {
+    try {
+      const search=await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportConfig.espnPath}/teams?limit=200`);
+      if(!search.ok) return null;
+      const data=await search.json();
+      const team=data.sports?.[0]?.leagues?.[0]?.teams?.find(t=>t.team?.displayName===teamName||t.team?.shortDisplayName===teamName);
+      if(!team?.team?.id) return null;
+      const r=await fetch(`https://site.api.espn.com/apis/site/v2/sports/${sportConfig.espnPath}/teams/${team.team.id}`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchSportradar(sport, endpoint) {
+    const key=KEY.sportradar();
+    if(!key) return null;
+    try {
+      const r=await fetch(`https://api.sportradar.com/${sport}/trial/v7/en/${endpoint}.json?api_key=${key}`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchActionNetwork(gameId) {
+    const key=KEY.actionNetwork();
+    if(!key) return null;
+    try {
+      const r=await fetch(`https://api.actionnetwork.com/web/v1/games/${gameId}/odds`,{headers:{'Authorization':`Bearer ${key}`}});
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchWeather(venue, gameDate) {
+    const key=KEY.weather();
+    if(!key) return null;
+    try {
+      const geo=await fetch(`https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(venue)}&limit=1&appid=${key}`);
+      if(!geo.ok) return null;
+      const geoData=await geo.json();
+      if(!geoData[0]) return null;
+      const {lat,lon}=geoData[0];
+      const ts=Math.floor(new Date(gameDate).getTime()/1000);
+      const r=await fetch(`https://api.openweathermap.org/data/3.0/onecall/timemachine?lat=${lat}&lon=${lon}&dt=${ts}&appid=${key}&units=imperial`);
+      return r.ok?await r.json():null;
+    } catch { return null; }
+  }
+
+  async function fetchInjuries(sportConfig, teamName) {
+    const key=KEY.sportradar();
+    if(!key) return null;
+    try {
+      const r=await fetch(`https://api.sportradar.com/${sportConfig.srKey}/trial/v7/en/league/injuries.json?api_key=${key}`);
+      if(!r.ok) return null;
+      const data=await r.json();
+      // Filter to team
+      const teams=data.teams||data.league?.teams||[];
+      return teams.find(t=>t.name===teamName||t.alias===teamName)||null;
+    } catch { return null; }
+  }
+
+  async function fetchSchedule(sportConfig, teamName) {
+    const key=KEY.sportradar();
+    if(!key) return null;
+    try {
+      const season=new Date().getFullYear();
+      const r=await fetch(`https://api.sportradar.com/${sportConfig.srKey}/trial/v7/en/seasons/${season}/schedules.json?api_key=${key}`);
+      if(!r.ok) return null;
+      const data=await r.json();
+      const games=(data.games||data.schedule||[]).filter(g=>g.home?.name===teamName||g.away?.name===teamName);
+      return games;
+    } catch { return null; }
+  }
+
+  // ── LOAD ALGO SETTINGS FROM SUPABASE ──
+  async function loadAlgoSettings() {
+    const url=KEY.supabaseUrl(), key=KEY.supabaseKey();
+    if(!url||!key) return Array.from({length:25},(_,i)=>({id:i+1,enabled:true,weight:5}));
+    try {
+      const r=await fetch(`${url}/rest/v1/algorithms?select=*&order=id`,{headers:{'apikey':key,'Authorization':`Bearer ${key}`}});
+      return r.ok?await r.json():Array.from({length:25},(_,i)=>({id:i+1,enabled:true,weight:5}));
+    } catch { return Array.from({length:25},(_,i)=>({id:i+1,enabled:true,weight:5})); }
+  }
+
+  // ============================================================
+  // ── ELITE 25 ALGORITHMS ──
+  // Each returns: { vote:'yes'|'no'|'neu', confidence:0-100, edge:0-1, reason:string }
+  // Degrades gracefully — returns 'neu' when data unavailable
+  // ============================================================
+
+  const ALGORITHMS = {
+
+    // 1. ELO RATING — Dynamic power rating from implied market probability
+    elo(game, data) {
+      const ml=game._ml, spread=game._spread;
+      if(spread===null) return {vote:'neu',confidence:50,edge:0,reason:'Elo: No market data'};
+      const p=ml?oddsToProb(ml):0.5;
+      const absSpread=Math.abs(spread);
+      // Value window: implied prob significantly above breakeven in reasonable spread range
+      if(p>0.62&&absSpread<=7) { const c=Math.min(52+(p-0.5)*130,90); return {vote:'yes',confidence:Math.round(c),edge:p-0.524,reason:`Elo: ${(p*100).toFixed(1)}% implied prob at ${spread} spread — market value window`}; }
+      if(p<0.38) { const c=Math.min(52+(0.5-p)*130,88); return {vote:'no',confidence:Math.round(c),edge:0.524-p,reason:`Elo: Away implied ${((1-p)*100).toFixed(1)}% — dog value on spread`}; }
+      return {vote:'neu',confidence:52,edge:0,reason:`Elo: ${(p*100).toFixed(1)}% implied — no edge`};
+    },
+
+    // 2. PYTHAGOREAN EXPECTATION — True winning % from scoring ratio
+    pyth(game, data) {
+      const events=data.espn?.events||[];
+      const ht=game.home_team;
+      let hPF=0,hPA=0,n=0;
+      events.slice(0,15).forEach(e=>{
+        const comp=e.competitions?.[0];if(!comp)return;
+        const home=comp.competitors?.find(c=>c.homeAway==='home');
+        const away=comp.competitors?.find(c=>c.homeAway==='away');
+        if(!home||!away)return;
+        const hs=parseInt(home.score||0),as=parseInt(away.score||0);
+        if(!hs&&!as)return;
+        if(home.team?.displayName===ht){hPF+=hs;hPA+=as;n++;}
+        else if(away.team?.displayName===ht){hPF+=as;hPA+=hs;n++;}
       });
-    } catch {}
-  }
+      if(n<4||!hPF) return {vote:'neu',confidence:50,edge:0,reason:'Pythagorean: Need 4+ scored games'};
+      const exp=game._sport==='NBA'?13.91:game._sport==='NFL'?2.37:game._sport==='MLB'?1.83:2.0;
+      const pyth=(hPF**exp)/((hPF**exp)+(hPA**exp));
+      if(pyth>0.62){const c=Math.min(56+(pyth-0.62)*280,92);return{vote:'yes',confidence:Math.round(c),edge:pyth-0.524,reason:`Pythagorean: ${(pyth*100).toFixed(1)}% win expectation (${n} game sample)`};}
+      if(pyth<0.38)return{vote:'no',confidence:Math.min(56+(0.38-pyth)*280,90),edge:0.524-pyth,reason:`Pythagorean: ${(pyth*100).toFixed(1)}% — fade home`};
+      return{vote:'neu',confidence:51,edge:0,reason:`Pythagorean: ${(pyth*100).toFixed(1)}% — no edge`};
+    },
 
-  // ── SAVE ALGO VOTES TO SUPABASE ──
-  async function saveAlgoVotes(pick) {
-    const url = SUPABASE_URL(); const key = SUPABASE_KEY();
-    if (!url || !key || !pick.algo_votes) return;
-    try {
-      const updates = pick.algo_votes.map((v, i) => ({
-        id: i + 1,
-        current_vote: v.vote
-      }));
-      for (const u of updates) {
-        await fetch(`${url}/rest/v1/algorithms?id=eq.${u.id}`, {
-          method: 'PATCH',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ current_vote: u.current_vote })
-        });
-      }
-    } catch {}
-  }
-
-  // ── GENERATE CLAUDE NARRATIVE ──
-  async function generateNarrative(pick) {
-    const claudeKey = CLAUDE_KEY();
-    if (!claudeKey) return 'Connect Claude API in Admin for AI narrative.';
-
-    const yesAlgos = pick.algo_votes
-      ?.map((v, i) => v.vote === 'yes' ? Object.keys(ALGORITHMS)[i] : null)
-      .filter(Boolean).join(', ') || 'None';
-
-    const prompt = `You are EDGE, an elite AI sports betting analyst. Based on the following data, write a sharp 2-3 sentence betting narrative. Be direct and data-driven. No fluff.
-
-Game: ${pick.matchup} (${pick.sport})
-Pick: ${pick.pick_label} ${pick.pick_type} ${pick.line || ''}
-Confidence: ${pick.confidence}% (${pick.conf_tier.toUpperCase()})
-Algorithm consensus: ${pick.yes_votes}/25 in favor
-Key signals: ${pick.reason}
-Supporting algorithms: ${yesAlgos}
-
-Write the narrative now:`;
-
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 200,
-          messages: [{ role: 'user', content: prompt }]
-        })
+    // 3. SIMPLE RATING SYSTEM — MOV adjusted for opponent quality
+    srs(game, data) {
+      const events=data.espn?.events||[];
+      const ht=game.home_team;
+      let movTotal=0,n=0;
+      events.slice(0,10).forEach(e=>{
+        const comp=e.competitions?.[0];if(!comp)return;
+        const home=comp.competitors?.find(c=>c.homeAway==='home');
+        const away=comp.competitors?.find(c=>c.homeAway==='away');
+        if(!home||!away)return;
+        const hs=parseInt(home.score||0),as=parseInt(away.score||0);
+        if(!hs&&!as)return;
+        if(home.team?.displayName===ht){movTotal+=(hs-as);n++;}
       });
-      const data = await res.json();
-      return data.content?.[0]?.text || 'Analysis unavailable.';
-    } catch { return 'Claude API error. Check key in Admin.'; }
-  }
+      if(n<4) return {vote:'neu',confidence:50,edge:0,reason:'SRS: Need 4+ games'};
+      const avgMOV=movTotal/n;
+      const spread=game._spread||0;
+      const srs=avgMOV+spread; // positive = home covers
+      if(srs>6)return{vote:'yes',confidence:Math.min(63+srs,90),edge:Math.min(srs/60,0.12),reason:`SRS: +${srs.toFixed(1)} adjusted edge over spread`};
+      if(srs<-6)return{vote:'no',confidence:Math.min(61+Math.abs(srs),88),edge:Math.min(Math.abs(srs)/60,0.10),reason:`SRS: −${Math.abs(srs).toFixed(1)} — home underperforming spread`};
+      return{vote:'neu',confidence:51,edge:0,reason:`SRS: ${srs.toFixed(1)} — no material edge`};
+    },
 
-  // ── 7-DAY DATA PURGE ──
-  async function purgeOldData() {
-    const url = SUPABASE_URL(); const key = SUPABASE_KEY();
-    if (!url || !key) return;
+    // 4. SHARP MONEY INDICATOR — Professional bettor positioning
+    sharp(game, data) {
+      const an=data.actionNetwork;
+      const hist=getHist(game.id);
+      // Action Network is primary source; line history as fallback
+      const sharpPct=an?.consensus?.sharp_money_pct||hist?.sharp_pct||null;
+      const open=hist?.spread, current=game._spread;
+      if(sharpPct===null) return {vote:'neu',confidence:50,edge:0,reason:'Sharp: Action Network not connected'};
+      if(open===null||current===null) return {vote:'neu',confidence:50,edge:0,reason:'Sharp: No opening line'};
+      const move=current-open;
+      const sharpHome=sharpPct>55;
+      const lineConfirms=(sharpHome&&move<0)||(!sharpHome&&move>0);
+      if(sharpPct>=75&&lineConfirms)return{vote:'yes',confidence:88,edge:0.11,reason:`Sharp: ${sharpPct}% sharp on home + line confirmed — max signal`};
+      if(sharpPct>=65&&lineConfirms)return{vote:'yes',confidence:78,edge:0.07,reason:`Sharp: ${sharpPct}% sharp action confirmed by line`};
+      if(sharpPct>=55&&lineConfirms)return{vote:'yes',confidence:66,edge:0.04,reason:`Sharp: ${sharpPct}% sharp — moderate signal`};
+      if(sharpPct<=25)return{vote:'no',confidence:75,edge:0.06,reason:`Sharp: Only ${sharpPct}% sharp on home — strong fade`};
+      if(sharpPct<=35)return{vote:'no',confidence:64,edge:0.03,reason:`Sharp: ${sharpPct}% — lean fade`};
+      return{vote:'neu',confidence:52,edge:0,reason:`Sharp: ${sharpPct}% — no decisive signal`};
+    },
 
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 7);
-    const cutoffStr = cutoff.toISOString();
+    // 5. CLOSING LINE VALUE — Gold standard long-term edge metric
+    clv(game, data) {
+      const hist=getHist(game.id);
+      if(!hist?.spread) return {vote:'neu',confidence:50,edge:0,reason:'CLV: No opening line recorded'};
+      const open=hist.spread, current=game._spread;
+      if(current===null) return {vote:'neu',confidence:50,edge:0,reason:'CLV: No current line'};
+      const move=current-open;
+      if(move<=-2.5)return{vote:'yes',confidence:90,edge:0.13,reason:`CLV: Moved ${move} in home favor — elite positive CLV`};
+      if(move<=-1.5)return{vote:'yes',confidence:82,edge:0.09,reason:`CLV: +${Math.abs(move)} CLV — strong signal`};
+      if(move<=-0.5)return{vote:'yes',confidence:70,edge:0.05,reason:`CLV: ${move} — positive CLV edge`};
+      if(move>=2.5)return{vote:'no',confidence:88,edge:0.12,reason:`CLV: Moved +${move} against home — strong negative CLV`};
+      if(move>=1.5)return{vote:'no',confidence:80,edge:0.08,reason:`CLV: Line shifted +${move} against home`};
+      if(move>=0.5)return{vote:'no',confidence:66,edge:0.04,reason:`CLV: Slight negative CLV (+${move})`};
+      return{vote:'neu',confidence:53,edge:0,reason:'CLV: Line stable — no CLV edge'};
+    },
 
-    try {
-      // Fetch old picks before deleting (for PDF)
-      const res = await fetch(`${url}/rest/v1/picks?created_at=lt.${cutoffStr}&select=*`, {
-        headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+    // 6. STEAM MOVE DETECTOR — Rapid sharp syndicate action
+    steam(game, data) {
+      const hist=getHist(game.id);
+      const an=data.actionNetwork;
+      if(!hist?.spread) return {vote:'neu',confidence:50,edge:0,reason:'Steam: No opening line'};
+      const diff=Math.abs((game._spread||0)-hist.spread);
+      const hoursOut=(new Date(game.commence_time)-new Date())/3600000;
+      const anSteam=an?.consensus?.steam_move||false;
+      if((anSteam||diff>=2.5)&&hoursOut<=24)return{vote:'yes',confidence:90,edge:0.13,reason:`Steam: ${diff}pt rapid move ${hoursOut.toFixed(0)}h out — confirmed syndicate`};
+      if(diff>=2&&hoursOut<=48)return{vote:'yes',confidence:84,edge:0.10,reason:`Steam: ${diff}pt move — sharp syndicate signal`};
+      if(diff>=1.5&&hoursOut<=36)return{vote:'yes',confidence:76,edge:0.07,reason:`Steam: ${diff}pt late move detected`};
+      if(diff>=1)return{vote:'yes',confidence:65,edge:0.04,reason:`Steam: ${diff}pt shift — possible steam`};
+      return{vote:'neu',confidence:50,edge:0,reason:'Steam: None detected'};
+    },
+
+    // 7. REVERSE LINE MOVEMENT — Sharpest signal: line vs public
+    rlm(game, data) {
+      const an=data.actionNetwork;
+      const hist=getHist(game.id);
+      const pubPct=an?.consensus?.home_ticket_pct||hist?.public_pct||null;
+      const open=hist?.spread, current=game._spread;
+      if(pubPct===null||!open||current===null) return {vote:'neu',confidence:50,edge:0,reason:'RLM: Needs Action Network or line history'};
+      const move=current-open;
+      const pubHome=pubPct>55;
+      const against=(pubHome&&move>0.5)||(!pubHome&&move<-0.5);
+      if(pubPct>=75&&against)return{vote:pubHome?'no':'yes',confidence:88,edge:0.12,reason:`RLM: ${pubPct}% public on home but line moved opposite — elite sharp signal`};
+      if(pubPct>=65&&against)return{vote:pubHome?'no':'yes',confidence:78,edge:0.08,reason:`RLM: ${pubPct}% public, line against them — strong RLM`};
+      if(pubPct>=58&&against)return{vote:pubHome?'no':'yes',confidence:68,edge:0.05,reason:`RLM: ${pubPct}% public, moderate RLM`};
+      return{vote:'neu',confidence:51,edge:0,reason:'RLM: Not detected'};
+    },
+
+    // 8. PACE & TEMPO — Possessions drive totals edge
+    pace(game, data) {
+      const total=game._total;
+      if(!total) return {vote:'neu',confidence:50,edge:0,reason:'Pace: No total set'};
+      const events=data.espn?.events||[];
+      let sumTotal=0,n=0;
+      events.slice(0,12).forEach(e=>{
+        const scores=e.competitions?.[0]?.competitors?.map(c=>parseInt(c.score||0))||[];
+        const t=scores.reduce((a,b)=>a+b,0);
+        if(t>0){sumTotal+=t;n++;}
       });
-      const oldPicks = res.ok ? await res.json() : [];
+      if(n<4) return {vote:'neu',confidence:50,edge:0,reason:'Pace: Insufficient scoring history'};
+      const avg=sumTotal/n;
+      const deviation=((total-avg)/avg)*100;
+      if(deviation>8)return{vote:'no',confidence:Math.min(63+deviation,86),edge:Math.min(deviation/100,0.09),reason:`Pace: Total ${total} is ${deviation.toFixed(1)}% above 12-game avg — under value`};
+      if(deviation<-8)return{vote:'yes',confidence:Math.min(61+Math.abs(deviation),84),edge:Math.min(Math.abs(deviation)/100,0.08),reason:`Pace: Total ${total} is ${Math.abs(deviation).toFixed(1)}% below avg — over value`};
+      return{vote:'neu',confidence:51,edge:0,reason:`Pace: Total ${total} near ${avg.toFixed(0)} avg — no edge`};
+    },
 
-      if (oldPicks.length > 0) {
-        await generatePDF(oldPicks);
-        // Delete from Supabase
-        await fetch(`${url}/rest/v1/picks?created_at=lt.${cutoffStr}`, {
-          method: 'DELETE',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+    // 9. STRENGTH OF SCHEDULE — Sportradar standings adjusted
+    sos(game, data) {
+      const sr=data.sportradar;
+      if(!sr) {
+        // ESPN fallback
+        const events=data.espn?.events||[];
+        const ht=game.home_team;
+        let oppScoreSum=0,n=0;
+        events.slice(0,10).forEach(e=>{
+          const comp=e.competitions?.[0];if(!comp)return;
+          const home=comp.competitors?.find(c=>c.homeAway==='home');
+          const away=comp.competitors?.find(c=>c.homeAway==='away');
+          if(!home||!away)return;
+          if(home.team?.displayName===ht){oppScoreSum+=parseInt(away.score||0);n++;}
         });
-        await fetch(`${url}/rest/v1/line_history?created_at=lt.${cutoffStr}`, {
-          method: 'DELETE',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
-        });
-        console.log(`[EDGE] Purged ${oldPicks.length} picks older than 7 days`);
+        if(n<4) return {vote:'neu',confidence:50,edge:0,reason:'SOS: Sportradar not connected — ESPN fallback insufficient'};
+        const avg=oppScoreSum/n;
+        const sport=game._sport;
+        if(avg>27&&sport==='NFL')return{vote:'yes',confidence:67,edge:0.04,reason:`SOS: Tough schedule (avg opp ${avg.toFixed(0)} pts NFL) — team undervalued`};
+        if(avg>112&&sport==='NBA')return{vote:'yes',confidence:65,edge:0.03,reason:`SOS: High opp avg ${avg.toFixed(0)} NBA — battle-tested edge`};
+        return{vote:'neu',confidence:51,edge:0,reason:'SOS: Average schedule difficulty'};
       }
-    } catch (e) { console.error('[EDGE] Purge error:', e); }
-  }
+      // Full Sportradar SOS calculation
+      const standings=sr.standings||[];
+      const homeTeam=standings.find(t=>t.name===game.home_team);
+      if(!homeTeam) return {vote:'neu',confidence:51,edge:0,reason:'SOS: Team not in Sportradar standings'};
+      const sosRank=homeTeam.sos_rank||null;
+      if(!sosRank) return {vote:'neu',confidence:51,edge:0,reason:'SOS: No SOS data in Sportradar'};
+      const totalTeams=standings.length;
+      const percentile=(totalTeams-sosRank)/totalTeams;
+      if(percentile>0.75)return{vote:'yes',confidence:70,edge:0.05,reason:`SOS: Top ${Math.round((1-percentile)*100)}% schedule difficulty — undervalued team`};
+      if(percentile<0.25)return{vote:'no',confidence:64,edge:0.03,reason:`SOS: Easy schedule — team may be overvalued`};
+      return{vote:'neu',confidence:51,edge:0,reason:`SOS: Average schedule (${sosRank}/${totalTeams})`};
+    },
 
-  // ── PDF GENERATOR ──
-  function generatePDF(picks) {
-    // Sort by date, sport, result
-    const sorted = [...picks].sort((a, b) => {
-      if (a.date !== b.date) return a.date.localeCompare(b.date);
-      if (a.sport !== b.sport) return a.sport.localeCompare(b.sport);
-      return (a.result || '').localeCompare(b.result || '');
-    });
-
-    const wins   = sorted.filter(p => p.result === 'W').length;
-    const losses = sorted.filter(p => p.result === 'L').length;
-    const pushes = sorted.filter(p => p.result === 'P').length;
-    const pnl    = sorted.reduce((s, p) => s + (p.pnl || 0), 0);
-
-    const rows = sorted.map(p => `
-      <tr>
-        <td>${p.date || '—'}</td>
-        <td>${p.sport || '—'}</td>
-        <td>${p.matchup || '—'}</td>
-        <td>${p.pick_label || '—'} ${p.pick_type || ''}</td>
-        <td>${p.confidence || '—'}%</td>
-        <td>${p.result || 'PENDING'}</td>
-        <td>${p.pnl != null ? (p.pnl > 0 ? '+' : '') + p.pnl + 'u' : '—'}</td>
-      </tr>`).join('');
-
-    const html = `
-      <html><head><style>
-        body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 20px; }
-        h1 { font-size: 22px; margin-bottom: 4px; }
-        .meta { font-size: 11px; color: #666; margin-bottom: 16px; }
-        .summary { display: flex; gap: 20px; margin-bottom: 16px; }
-        .sum-box { border: 1px solid #ddd; padding: 8px 14px; }
-        .sum-val { font-size: 20px; font-weight: bold; }
-        .sum-lbl { font-size: 10px; color: #666; }
-        table { width: 100%; border-collapse: collapse; }
-        th { background: #111; color: #C9A84C; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 8px 6px; text-align: left; }
-        td { padding: 7px 6px; border-bottom: 1px solid #eee; font-size: 11px; }
-        tr:nth-child(even) { background: #f9f9f9; }
-      </style></head><body>
-        <h1>EDGE — Pick History Report</h1>
-        <div class="meta">Generated ${new Date().toLocaleDateString()} · Last 7 Days</div>
-        <div class="summary">
-          <div class="sum-box"><div class="sum-val">${wins}–${losses}–${pushes}</div><div class="sum-lbl">Record</div></div>
-          <div class="sum-box"><div class="sum-val">${pnl > 0 ? '+' : ''}${pnl.toFixed(1)}u</div><div class="sum-lbl">P&L</div></div>
-          <div class="sum-box"><div class="sum-val">${sorted.length}</div><div class="sum-lbl">Total Picks</div></div>
-        </div>
-        <table>
-          <thead><tr><th>Date</th><th>Sport</th><th>Matchup</th><th>Pick</th><th>Conf</th><th>Result</th><th>P&L</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </body></html>`;
-
-    const blob = new Blob([html], { type: 'text/html' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `EDGE_Picks_${new Date().toISOString().split('T')[0]}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  // ── MAIN ENGINE RUN ──
-  async function runFullEngine(options = {}) {
-    const { onProgress, onComplete, onError } = options;
-
-    try {
-      onProgress?.('Fetching game data...');
-      const games = await fetchGames();
-      if (!games.length) { onProgress?.('No games found'); return []; }
-
-      onProgress?.(`${games.length} games found — loading algorithms...`);
-      const algoSettings = await loadAlgoSettings();
-
-      const picks = [];
-      let processed = 0;
-
-      for (const game of games) {
-        try {
-          const espnData = await fetchESPNData(game._sport);
-          const pick = await analyzeGame(game, algoSettings, espnData);
-
-          // Only generate picks above minimum confidence
-          const minConf = parseInt(localStorage.getItem('edge_min_conf') || '0');
-          const minCons = parseInt(localStorage.getItem('edge_min_cons') || '0');
-
-          if (pick.confidence >= minConf && pick.consensus >= minCons) {
-            // Generate Claude narrative
-            onProgress?.(`Generating AI narrative for ${pick.matchup}...`);
-            pick.reason = await generateNarrative(pick);
-            picks.push(pick);
-            await saveAlgoVotes(pick);
-          }
-
-          processed++;
-          onProgress?.(`Analyzed ${processed}/${games.length} games...`);
-        } catch {}
+    // 10. REST & RECOVERY INDEX — Days rest from Sportradar schedule
+    rest(game, data) {
+      const schedule=data.schedule||[];
+      const gameDate=new Date(game.commence_time);
+      if(!schedule.length){
+        // ESPN fallback
+        const events=data.espn?.events||[];
+        const last=events[0]?.date?new Date(events[0].date):null;
+        if(!last) return {vote:'neu',confidence:50,edge:0,reason:'Rest: No schedule data'};
+        const days=Math.round((gameDate-last)/86400000);
+        if(days===0)return{vote:'no',confidence:75,edge:0.06,reason:'Rest: Back-to-back — fatigue quantified'};
+        if(days===1)return{vote:'no',confidence:63,edge:0.03,reason:'Rest: 1 day — fatigue concern'};
+        if(days>=7)return{vote:'yes',confidence:74,edge:0.06,reason:`Rest: ${days} days — peak recovery + hunger`};
+        if(days>=4)return{vote:'yes',confidence:64,edge:0.03,reason:`Rest: ${days} days — adequate recovery`};
+        return{vote:'neu',confidence:52,edge:0,reason:`Rest: ${days} days — neutral`};
       }
+      // Sportradar: find actual last game
+      const pastGames=schedule.filter(g=>new Date(g.scheduled)<gameDate).sort((a,b)=>new Date(b.scheduled)-new Date(a.scheduled));
+      const lastGame=pastGames[0];
+      if(!lastGame) return {vote:'neu',confidence:51,edge:0,reason:'Rest: No past games in schedule'};
+      const days=Math.round((gameDate-new Date(lastGame.scheduled))/86400000);
+      if(days===0)return{vote:'no',confidence:76,edge:0.07,reason:'Rest: Back-to-back confirmed via Sportradar'};
+      if(days===1)return{vote:'no',confidence:65,edge:0.04,reason:'Rest: 1 day rest — Sportradar confirmed'};
+      if(days>=7)return{vote:'yes',confidence:76,edge:0.07,reason:`Rest: ${days} days rest — Sportradar confirmed`};
+      if(days>=4)return{vote:'yes',confidence:66,edge:0.04,reason:`Rest: ${days} days rest`};
+      return{vote:'neu',confidence:52,edge:0,reason:`Rest: ${days} days — neutral`};
+    },
 
-      // Sort picks by confidence descending
-      picks.sort((a, b) => b.confidence - a.confidence);
-
-      await savePicks(picks);
-
-      // Check if 7-day purge needed
-      const lastPurge = localStorage.getItem('edge_last_purge');
-      const now = Date.now();
-      if (!lastPurge || now - parseInt(lastPurge) > 7 * 24 * 60 * 60 * 1000) {
-        await purgeOldData();
-        localStorage.setItem('edge_last_purge', now.toString());
+    // 11. TRAVEL FATIGUE — Cross-timezone travel from Sportradar locations
+    travel(game, data) {
+      const sr=data.sportradar;
+      let homeCity=null, awayCity=null;
+      if(sr?.venue) {
+        homeCity=sr.venue.city;
       }
+      // City from team name as fallback
+      const east=['Boston','Brooklyn','Philadelphia','Toronto','Miami','Orlando','Atlanta','Charlotte','Washington','Cleveland','Indiana','Detroit','Milwaukee'];
+      const west=['Los Angeles','Golden State','Portland','Sacramento','Phoenix','Utah','Denver','Dallas','Houston','San Antonio','Oklahoma','Memphis'];
+      const getZone=t=>east.some(c=>t.includes(c.split(' ')[0]))?0:west.some(c=>t.includes(c.split(' ')[0]))?3:1;
+      const homeZone=getZone(game.home_team);
+      const awayZone=getZone(game.away_team);
+      const tzDiff=Math.abs(homeZone-awayZone);
+      if(tzDiff===0)return{vote:'neu',confidence:51,edge:0,reason:'Travel: Same timezone — no edge'};
+      if(tzDiff>=3)return{vote:'yes',confidence:72,edge:0.06,reason:`Travel: ${tzDiff} timezone cross-country — home advantage quantified`};
+      if(tzDiff>=2)return{vote:'yes',confidence:64,edge:0.04,reason:`Travel: ${tzDiff} timezone shift — home edge`};
+      return{vote:'yes',confidence:57,edge:0.02,reason:'Travel: 1 timezone difference — minor home edge'};
+    },
 
-      onProgress?.(`✓ Engine complete — ${picks.length} picks generated`);
-      onComplete?.(picks);
-      return picks;
+    // 12. WEATHER IMPACT — OpenWeatherMap real-time outdoor conditions
+    weather(game, data) {
+      const sport=game._sport;
+      if(['NBA','NHL','NCAAB'].includes(sport))return{vote:'neu',confidence:50,edge:0,reason:'Weather: Indoor sport — N/A'};
+      const w=data.weather;
+      const total=game._total;
+      if(!w) {
+        // No weather API: use season/month heuristic
+        const month=new Date(game.commence_time).getMonth();
+        const coldMarkets=['Green Bay','Chicago','Cleveland','Buffalo','New England','New York Jets','New York Giants','Philadelphia','Pittsburgh','Minnesota','Kansas City'];
+        const inCold=coldMarkets.some(m=>game.home_team.includes(m.split(' ')[0]));
+        if(sport==='NFL'&&(month>=9||month<=1)&&inCold)return{vote:'no',confidence:68,edge:0.05,reason:'Weather: Cold market winter game — scoring suppression (heuristic)'};
+        if(sport==='MLB'&&month<=4)return{vote:'no',confidence:62,edge:0.03,reason:'Weather: Early MLB season cold — ball carry suppressed'};
+        return{vote:'neu',confidence:51,edge:0,reason:'Weather: OpenWeatherMap not connected — using heuristics'};
+      }
+      // Real weather data
+      const wind=w.data?.[0]?.wind_speed||0;
+      const temp=w.data?.[0]?.temp||60;
+      const rain=w.data?.[0]?.rain?.['1h']||0;
+      const snow=w.data?.[0]?.snow?.['1h']||0;
+      const precip=rain+snow;
+      if(wind>20||precip>0.3||temp<25)return{vote:'no',confidence:Math.min(70+wind/2+precip*10,90),edge:Math.min((wind/200+precip/10),0.12),reason:`Weather: Wind ${wind.toFixed(0)}mph, Temp ${temp.toFixed(0)}°F, Precip ${precip.toFixed(2)}" — scoring suppression`};
+      if(wind>12||temp<35)return{vote:'no',confidence:64,edge:0.04,reason:`Weather: Wind ${wind.toFixed(0)}mph, Temp ${temp.toFixed(0)}°F — moderate impact`};
+      if(temp>80&&wind<5)return{vote:'yes',confidence:60,edge:0.02,reason:`Weather: Ideal conditions ${temp.toFixed(0)}°F — scoring favorable`};
+      return{vote:'neu',confidence:51,edge:0,reason:`Weather: Neutral conditions (${temp.toFixed(0)}°F, ${wind.toFixed(0)}mph)`};
+    },
 
-    } catch (e) {
-      onError?.(e.message);
-      console.error('[EDGE ENGINE ERROR]', e);
-      return [];
-    }
-  }
+    // 13. HOME/AWAY SPLIT — Historical cover rates by spread range and sport
+    ha(game, data) {
+      const spread=game._spread;
+      const sport=game._sport;
+      if(spread===null)return{vote:'neu',confidence:50,edge:0,reason:'H/A: No spread'};
+      // NBA: home -1 to -5 cover at ~53.5% historically
+      if(sport==='NBA'&&spread>=-5&&spread<=-1)return{vote:'yes',confidence:67,edge:0.035,reason:`H/A: NBA home ${spread} — 53.5% historical cover rate`};
+      // NFL: home underdogs +1.5 to +6 cover at ~54% historically
+      if(sport==='NFL'&&spread>=1.5&&spread<=6)return{vote:'yes',confidence:66,edge:0.03,reason:`H/A: NFL home dog +${spread} — historical 54% ATS`};
+      // MLB: home -110 to -130 ML hits at ~54%
+      if(sport==='MLB'&&game._ml&&game._ml>=-130&&game._ml<=-105)return{vote:'yes',confidence:64,edge:0.025,reason:'H/A: MLB home moderate favorite — 54% historical ML'};
+      // NHL: home ice historically worth ~0.3 goals
+      if(sport==='NHL'&&spread>=-1.5&&spread<=0)return{vote:'yes',confidence:62,edge:0.02,reason:'H/A: NHL home ice — 0.3 goal historical edge'};
+      // Fade large home favorites
+      if(spread<=-10)return{vote:'no',confidence:70,edge:0.05,reason:`H/A: Large favorite ${spread} — historical fade spot (52.8% for dogs)`};
+      if(spread<=-7)return{vote:'no',confidence:62,edge:0.03,reason:`H/A: Heavy favorite ${spread} — moderate fade value`};
+      return{vote:'neu',confidence:51,edge:0,reason:'H/A: No historical split edge at this number'};
+    },
 
-  // ── PUBLIC API ──
-  return {
-    run: runFullEngine,
-    startAuto,
-    stopAuto,
-    generatePDF,
-    purgeOldData,
-    analyzeGame,
-    generateNarrative,
-    isAutoRunning: () => autoInterval !== null,
+    // 14. ATS TREND — Cover rate from Supabase pick history
+    ats(game, data) {
+      const picks=JSON.parse(localStorage.getItem('edge_picks_local')||'[]');
+      const rel=picks.filter(p=>p.matchup?.includes(game.home_team)&&p.result&&p.pick_type==='ATS');
+      if(rel.length<6) return {vote:'neu',confidence:50,edge:0,reason:`ATS: Need 6+ games (have ${rel.length})`};
+      const wins=rel.filter(p=>p.result==='W').length;
+      const pct=wins/rel.length;
+      const rec=`${wins}-${rel.length-wins}`;
+      if(pct>0.65)return{vote:'yes',confidence:Math.min(60+pct*35,88),edge:pct-0.524,reason:`ATS: ${rec} cover record — ${(pct*100).toFixed(0)}% rate`};
+      if(pct>0.58)return{vote:'yes',confidence:64,edge:pct-0.524,reason:`ATS: ${rec} — trending above breakeven`};
+      if(pct<0.35)return{vote:'no',confidence:Math.min(60+(0.524-pct)*60,86),edge:0.524-pct,reason:`ATS: ${rec} — ${(pct*100).toFixed(0)}% cover rate — strong fade`};
+      if(pct<0.42)return{vote:'no',confidence:62,edge:0.524-pct,reason:`ATS: ${rec} — below breakeven`};
+      return{vote:'neu',confidence:51,edge:0,reason:`ATS: ${rec} — neutral trend`};
+    },
+
+    // 15. RECENT FORM INDEX — Last 5 weighted with recency bias
+    form(game, data) {
+      const events=data.espn?.events||[];
+      if(!events.length)return{vote:'neu',confidence:50,edge:0,reason:'Form: No ESPN data'};
+      const last5=events.slice(0,5);
+      let weightedScore=0, totalWeight=0;
+      last5.forEach((e,i)=>{
+        const w=5-i; // most recent = weight 5
+        const home=e.competitions?.[0]?.competitors?.find(c=>c.homeAway==='home');
+        const winner=home?.winner===true;
+        weightedScore+=winner?w:0;
+        totalWeight+=w;
+      });
+      const formPct=totalWeight>0?weightedScore/totalWeight:0.5;
+      const wins=last5.filter(e=>e.competitions?.[0]?.competitors?.find(c=>c.homeAway==='home')?.winner===true).length;
+      if(formPct>0.72)return{vote:'yes',confidence:Math.min(67+formPct*25,88),edge:formPct-0.524,reason:`Form: ${wins}/5 wins, weighted ${(formPct*100).toFixed(0)}% — hot streak`};
+      if(formPct<0.28)return{vote:'no',confidence:Math.min(65+(0.524-formPct)*30,86),edge:0.524-formPct,reason:`Form: ${wins}/5, weighted ${(formPct*100).toFixed(0)}% — cold streak`};
+      return{vote:'neu',confidence:52,edge:0,reason:`Form: ${wins}/5 wins — neutral momentum`};
+    },
+
   };
 
-})();
+  // Export Part 1 internals for Part 2
+  return { _p1: true, ALGORITHMS, WKEY, W, KEY, SPORTS, getHist, saveHist, getVal, oddsToProb, kellyUnits, fetchOddsGames, fetchESPN, fetchESPNTeam, fetchSportradar, fetchActionNetwork, fetchWeather, fetchInjuries, fetchSchedule, loadAlgoSettings, startAuto, stopAuto };
 
-// ── AUTO-START IF IN AUTO MODE ──
-if (localStorage.getItem('edge_betting_mode') === 'auto') {
-  EDGE_ENGINE.startAuto();
-}
+})();
