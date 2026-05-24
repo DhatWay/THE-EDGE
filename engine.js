@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — ELITE ALGORITHM ENGINE v3.0 — PART 1 of 2
+// EDGE — ELITE ALGORITHM ENGINE v3.0
 // Data: Odds API + ESPN + Sportradar + Action Network + OpenWeatherMap
 // Logic: 25 Elite Algorithms + Bayesian Governing + Kelly Criterion
 // Plug & Play — gracefully degrades when APIs not yet connected
@@ -503,12 +503,7 @@ const EDGE_ENGINE = (() => {
   return { _p1: true, ALGORITHMS, WKEY, W, KEY, SPORTS, getHist, saveHist, getVal, oddsToProb, kellyUnits, fetchOddsGames, fetchESPN, fetchESPNTeam, fetchSportradar, fetchActionNetwork, fetchWeather, fetchInjuries, fetchSchedule, loadAlgoSettings, startAuto, stopAuto };
 
 })();
-// ============================================================
-// EDGE — ELITE ALGORITHM ENGINE v3.0 — PART 1 of 2
-// Data: Odds API + ESPN + Sportradar + Action Network + OpenWeatherMap
-// Logic: 25 Elite Algorithms + Bayesian Governing + Kelly Criterion
-// Plug & Play — gracefully degrades when APIs not yet connected
-// ============================================================
+
 
 const EDGE_ENGINE = (() => {
 
