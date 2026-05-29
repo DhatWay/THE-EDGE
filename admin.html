@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EDGE — Admin</title>
+  <title>THE EDGE — Admin</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<script src="engine.js"></script>
   <link rel="manifest" href="manifest.json" />
   <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
   <style>
@@ -146,7 +147,7 @@
     <a href="index.html" class="logo">
       <div class="logo-mark">ED</div>
       <div>
-        <div class="logo-text">EDGE</div>
+        <div class="logo-text">THE EDGE</div>
         <div class="logo-sub">AI Betting Intelligence</div>
       </div>
     </a>
@@ -233,7 +234,7 @@
       <div class="key-block">
         <div class="key-lbl">Project URL <button class="key-test-btn" onclick="testSupabase()">Test</button></div>
         <div class="key-row">
-          <input type="text" class="key-input" id="supabaseUrl" placeholder="https://xxxx.supabase.co" />
+          <input type="text" class="key-input" id="supabaseUrl" placeholder="https://cxugimmabnlfkghypiex.supabase.co" />
           <button class="key-save-btn" onclick="saveKey('edge_supabase_url','supabaseUrl','dotSupabase','statusSupabase')">SAVE</button>
         </div>
         <div class="key-saved" id="savedSupabaseUrl"></div>
@@ -242,7 +243,7 @@
       <div class="key-block">
         <div class="key-lbl">Anon Key</div>
         <div class="key-row">
-          <input type="password" class="key-input" id="supabaseKey" placeholder="eyJhbGci..." />
+          <input type="password" class="key-input" id="supabaseKey" placeholder="sb_publishable_4jYRAXzEV74u1IEdJnhTdQ_Ls9z9B7l" />
           <button class="key-save-btn" onclick="saveKey('edge_supabase_key','supabaseKey')">SAVE</button>
         </div>
         <div class="key-saved" id="savedSupabaseKey"></div>
@@ -394,7 +395,7 @@
     </div>
 
     <footer>
-      <div class="foot-logo">EDGE</div>
+      <div class="foot-logo">THE EDGE</div>
       <div class="foot-txt">Admin Panel · Keys stored locally only · Never in code · © 2026</div>
     </footer>
 
@@ -761,6 +762,15 @@
 
     // ── TODAY DATE DEFAULT ──
     document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
+
+    // ── SET DEFAULT KEYS IF NOT ALREADY SET ──
+  // ── SET DEFAULT KEYS IF NOT ALREADY SET ──
+    if (!localStorage.getItem('edge_supabase_url'))
+      localStorage.setItem('edge_supabase_url', 'https://cxugimmabnlfkghypiex.supabase.co');
+    if (!localStorage.getItem('edge_supabase_key'))
+      localStorage.setItem('edge_supabase_key', 'sb_publishable_4jYRAXzEV74u1IEdJnhTdQ_Ls9z9B7l');
+    if (!localStorage.getItem('edge_odds_api_key'))
+      localStorage.setItem('edge_odds_api_key', 'd7917ce937da1ade2eed49848494841c');
 
     // ── INIT ──
     buildAlgoSelect();
