@@ -7,7 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
   <link rel="manifest" href="manifest.json" />
   <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
   <style>
@@ -384,6 +383,39 @@
     </div>
 
     <!-- DANGER ZONE -->
+
+    <!-- SIMULATION SETTINGS -->
+    <div class="section">
+      <div class="sec-title">SIMULATION <em>MODE</em></div>
+
+      <div class="field">
+        <div class="field-lbl">Simulation Bankroll <span class="field-hint">Fake USD</span></div>
+        <input type="number" class="field-input" id="simBankroll" placeholder="10000" min="0" oninput="markUnsaved()" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Simulation Unit Size <span class="field-hint">per bet</span></div>
+        <input type="number" class="field-input" id="simUnitSize" placeholder="100" min="1" oninput="markUnsaved()" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Simulation Daily Cap <span class="field-hint">max per day</span></div>
+        <input type="number" class="field-input" id="simDailyCap" placeholder="500" min="0" oninput="markUnsaved()" />
+      </div>
+
+      <div class="anon-row" style="margin-top:10px;">
+        <div class="anon-info">
+          <div class="anon-name">Auto-Grade Results</div>
+          <div class="anon-desc">Automatically grade simulation bets when ESPN posts final scores</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="simAutoGrade" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <button onclick="resetSimulation()" style="display:block;width:100%;margin-top:14px;background:none;border:1px solid var(--gold-dim);color:var(--gold);font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:12px;cursor:pointer;transition:all 0.2s;">Reset Simulation Bankroll</button>
+    </div>
     <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
@@ -494,6 +526,13 @@
         if (el) localStorage.setItem('edge_' + id, el.checked);
       });
 
+      // Simulation settings
+      set('edge_sim_bankroll',  document.getElementById('simBankroll').value);
+      set('edge_sim_unit_size', document.getElementById('simUnitSize').value);
+      set('edge_sim_daily_cap', document.getElementById('simDailyCap').value);
+      const sgEl = document.getElementById('simAutoGrade');
+      if (sgEl) localStorage.setItem('edge_sim_auto_grade', sgEl.checked);
+
       // Sync to Supabase settings table if connected
       syncToSupabase();
 
@@ -561,6 +600,16 @@
 
       setUnitType(get('edge_unit_type', 'flat'));
 
+      // Simulation settings
+      const simBankroll = document.getElementById('simBankroll');
+      const simUnitSize = document.getElementById('simUnitSize');
+      const simDailyCap = document.getElementById('simDailyCap');
+      const simAutoGrade = document.getElementById('simAutoGrade');
+      if (simBankroll)  simBankroll.value  = get('edge_sim_bankroll', '10000');
+      if (simUnitSize)  simUnitSize.value  = get('edge_sim_unit_size', '100');
+      if (simDailyCap)  simDailyCap.value  = get('edge_sim_daily_cap', '500');
+      if (simAutoGrade) simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') === 'true';
+
       // Notifications
       ['notifSteam','notifPick','notifCap','notifResult','notifLine'].forEach(id => {
         const el = document.getElementById(id);
@@ -602,6 +651,17 @@
       keys.forEach(k => localStorage.removeItem(k));
       loadAll();
       showToast('Settings reset');
+    }
+
+    // ── SIMULATION RESET ──
+    function resetSimulation() {
+      if (typeof EDGE_SIM !== 'undefined') {
+        EDGE_SIM.reset();
+        showToast('Simulation bankroll reset');
+      } else {
+        localStorage.removeItem('edge_sim_state');
+        showToast('Simulation reset');
+      }
     }
 
     // ── INIT ──
