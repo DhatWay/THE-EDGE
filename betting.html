@@ -3,12 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>THE EDGE — Betting Control</title>
+  <title>EDGE — Betting Control</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
-  <script src="simulation.js"></script>
   <link rel="manifest" href="manifest.json" />
   <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
   <style>
@@ -179,7 +177,7 @@
     <a href="index.html" class="logo">
       <div class="logo-mark">ED</div>
       <div>
-        <div class="logo-text">THE EDGE</div>
+        <div class="logo-text">EDGE</div>
         <div class="logo-sub">AI Betting Intelligence</div>
       </div>
     </a>
@@ -229,11 +227,6 @@
           <div class="mode-name">Auto</div>
           <div class="mode-desc">Automatically queue picks above your confidence threshold</div>
         </div>
-        <div class="mode-card" id="modeSim" onclick="setMode('simulation')" style="grid-column:span 2;border-color:rgba(201,168,76,0.3);">
-          <div class="mode-icon">◎</div>
-          <div class="mode-name" style="color:var(--gold);">Simulation</div>
-          <div class="mode-desc">Claude bets with fake money to test algorithms — no real money at risk</div>
-        </div>
       </div>
 
       <div class="status-bar">
@@ -241,45 +234,6 @@
         <div class="status-text" id="statusText">Manual mode active</div>
         <button class="status-action danger" id="pauseBtn" onclick="togglePause()">Pause</button>
       </div>
-    </div>
-
-    <!-- SIMULATION PANEL -->
-    <div class="section" id="simPanel" style="display:none;">
-      <div class="sec-title">SIMULATION <em>ENGINE</em></div>
-
-      <!-- Sim Stats -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
-        <div style="background:var(--surface);border:1px solid var(--border);padding:14px;">
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Sim Bankroll</div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;letter-spacing:2px;color:var(--gold);" id="simBankrollDisplay">$0</div>
-        </div>
-        <div style="background:var(--surface);border:1px solid var(--border);padding:14px;">
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Sim P&L</div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;letter-spacing:2px;" id="simPnlDisplay">$0</div>
-        </div>
-        <div style="background:var(--surface);border:1px solid var(--border);padding:14px;">
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Record</div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:var(--text);" id="simRecordDisplay">0-0-0</div>
-        </div>
-        <div style="background:var(--surface);border:1px solid var(--border);padding:14px;">
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">ROI</div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;" id="simRoiDisplay">0%</div>
-        </div>
-      </div>
-
-      <!-- Run Button -->
-      <button id="simRunBtn" onclick="runSimEngine()" style="width:100%;background:var(--gold);border:none;color:#000;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:3px;padding:14px;cursor:pointer;margin-bottom:8px;">◎ RUN SIMULATION</button>
-      <div id="simProgress" style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);text-align:center;padding:6px 0;min-height:20px;"></div>
-
-      <!-- Sim Bet Log -->
-      <div style="margin-top:14px;">
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:3px;color:var(--text);margin-bottom:10px;">SIM <span style="color:var(--gold);">BET LOG</span></div>
-        <div id="simBetLog" style="display:flex;flex-direction:column;gap:8px;">
-          <div style="text-align:center;padding:20px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">No simulation bets yet</div>
-        </div>
-      </div>
-
-      <button onclick="resetSim()" style="display:block;width:100%;margin-top:14px;background:none;border:1px solid rgba(231,76,60,0.3);color:var(--red);font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:11px;cursor:pointer;">Reset Simulation</button>
     </div>
 
     <!-- CAP STATUS -->
@@ -370,55 +324,7 @@
       <a href="settings.html" style="display:block;margin-top:10px;text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--gold-dim);text-decoration:none;padding:10px;border:1px solid var(--border);">Edit Limits in Settings →</a>
     </div>
 
-    <!-- SUGGESTED BETS LOG (Manual Mode) -->
-    <div class="section" id="suggestedSection">
-      <div class="sec-title">SUGGESTED <em>BETS</em></div>
-      <div id="suggestedList" style="display:flex;flex-direction:column;gap:10px;">
-        <div style="text-align:center;padding:28px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">
-          Run the engine on Picks page to generate suggested bets
-        </div>
-      </div>
-    </div>
-
-    <!-- ACTIVE BET FORM (populated by Claude) -->
-    <div class="section" id="betFormSection" style="display:none;">
-      <div class="sec-title">PLACE <em>BET</em></div>
-      <div style="background:var(--surface);border:1px solid var(--border-bright);padding:18px 16px;display:flex;flex-direction:column;gap:12px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px;">Matchup</div>
-            <div id="formMatchup" style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px;color:var(--text);">—</div>
-          </div>
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px;">Pick</div>
-            <div id="formPick" style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px;color:var(--gold);">—</div>
-          </div>
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px;">Type</div>
-            <div id="formType" style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px;color:var(--text-mid);">—</div>
-          </div>
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px;">Odds</div>
-            <div id="formOdds" style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px;color:var(--text-mid);">—</div>
-          </div>
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px;">Units</div>
-            <div id="formUnits" style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:1px;color:var(--gold);">—</div>
-          </div>
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px;">Amount</div>
-            <div id="formAmount" style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:1px;color:var(--green);">—</div>
-          </div>
-        </div>
-        <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;color:var(--text-dim);line-height:1.6;" id="formReason">—</div>
-        <div style="display:flex;gap:8px;">
-          <button onclick="submitBet()" style="flex:2;background:var(--gold);border:none;color:#000;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;padding:13px;cursor:pointer;">SUBMIT BET</button>
-          <button onclick="cancelBet()" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;padding:13px;cursor:pointer;">CANCEL</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- SESSION BET LOG -->
+    <!-- BET LOG -->
     <div class="section">
       <div class="sec-title">SESSION <em>BET LOG</em></div>
       <div style="overflow-x:auto;">
@@ -463,7 +369,7 @@
     </div>
 
     <footer>
-      <div class="foot-logo">THE EDGE</div>
+      <div class="foot-logo">EDGE</div>
       <div class="foot-txt">Bet responsibly · Caps enforced · © 2026</div>
     </footer>
 
@@ -635,271 +541,6 @@
     }
 
     init();
-
-    // ── SUGGESTED BETS ──
-    let activePick = null;
-
-    function loadSuggestedBets() {
-      const picks = JSON.parse(localStorage.getItem('edge_picks_today') || '[]');
-      const mode  = localStorage.getItem('edge_betting_mode') || 'manual';
-      const list  = document.getElementById('suggestedList');
-      const section = document.getElementById('suggestedSection');
-
-      // Hide in auto mode — auto handles placement
-      if (mode === 'auto') {
-        section.style.display = 'none';
-        autoPlaceBets(picks);
-        return;
-      }
-
-      section.style.display = 'block';
-      const pending = picks.filter(p => p.status === 'pending' || p.status === 'approved');
-
-      if (!pending.length) {
-        list.innerHTML = `<div style="text-align:center;padding:28px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">Run the engine on Picks page to generate suggested bets</div>`;
-        return;
-      }
-
-      const unitSize = parseFloat(localStorage.getItem('edge_unit_size') || '0');
-
-      list.innerHTML = pending.map(p => {
-        const amount = unitSize * (p.units || 1);
-        const confCls = p.conf_tier === 'high' ? 'color:var(--gold)' : p.conf_tier === 'med' ? 'color:var(--text-mid)' : 'color:var(--text-dim)';
-        return `
-          <div style="background:var(--surface);border:1px solid var(--border);overflow:hidden;">
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;gap:8px;">
-              <div>
-                <div style="font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px;">${p.sport}</div>
-                <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:1px;">${p.matchup}</div>
-              </div>
-              <div style="text-align:right;">
-                <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:1px;${confCls};">${p.confidence}%</div>
-                <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">${(p.conf_tier||'').toUpperCase()} CONF</div>
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;padding:6px 14px 10px;">
-              <span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:1px;color:var(--gold);">${p.pick_label} ${p.pick_type} ${p.line || ''}</span>
-              <span style="font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--text-dim);">${p.consensus}/25 algos · ${p.units || 1}u${unitSize ? ' = $'+amount.toFixed(0) : ''}</span>
-            </div>
-            <div style="display:flex;border-top:1px solid var(--border);">
-              <button onclick="selectBet(${JSON.stringify(p).replace(/"/g,'&quot;')})" style="flex:1;background:none;border:none;border-right:1px solid var(--border);padding:11px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--green);cursor:pointer;">✓ Select</button>
-              <button onclick="dismissBet('${p.game_id}')" style="flex:1;background:none;border:none;padding:11px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--red);cursor:pointer;">✗ Dismiss</button>
-            </div>
-          </div>`;
-      }).join('');
-    }
-
-    function selectBet(pick) {
-      activePick = pick;
-      const unitSize = parseFloat(localStorage.getItem('edge_unit_size') || '0');
-      const units    = pick.units || 1;
-      const amount   = unitSize * units;
-
-      document.getElementById('formMatchup').textContent = pick.matchup;
-      document.getElementById('formPick').textContent    = `${pick.pick_label} ${pick.pick_type} ${pick.line || ''}`;
-      document.getElementById('formType').textContent    = pick.pick_type;
-      document.getElementById('formOdds').textContent    = pick.odds ? (pick.odds > 0 ? '+' : '') + pick.odds : '—';
-      document.getElementById('formUnits').textContent   = units + 'u';
-      document.getElementById('formAmount').textContent  = unitSize ? '$' + amount.toFixed(2) : units + ' units';
-      document.getElementById('formReason').textContent  = pick.reason || '—';
-      document.getElementById('betFormSection').style.display = 'block';
-      document.getElementById('betFormSection').scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function cancelBet() {
-      activePick = null;
-      document.getElementById('betFormSection').style.display = 'none';
-    }
-
-    async function submitBet() {
-      if (!activePick) return;
-
-      const unitSize = parseFloat(localStorage.getItem('edge_unit_size') || '0');
-      const units    = activePick.units || 1;
-      const amount   = unitSize * units;
-
-      // Cap enforcement
-      const dailyCap   = parseFloat(localStorage.getItem('edge_daily_cap')  || '0');
-      const dailyUsed  = parseFloat(localStorage.getItem('edge_daily_used') || '0');
-      const weeklyCap  = parseFloat(localStorage.getItem('edge_weekly_cap')  || '0');
-      const weeklyUsed = parseFloat(localStorage.getItem('edge_weekly_used') || '0');
-      const maxBets    = parseInt(localStorage.getItem('edge_max_bets')      || '0');
-      const betsUsed   = parseInt(localStorage.getItem('edge_bets_used')     || '0');
-
-      if (dailyCap > 0 && (dailyUsed + amount) > dailyCap)  { alert('Daily cap reached'); return; }
-      if (weeklyCap > 0 && (weeklyUsed + amount) > weeklyCap) { alert('Weekly cap reached'); return; }
-      if (maxBets > 0 && betsUsed >= maxBets)                { alert('Max bets for today reached'); return; }
-
-      const logEntry = {
-        time:     new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }),
-        matchup:  activePick.matchup,
-        pick:     `${activePick.pick_label} ${activePick.pick_type} ${activePick.line || ''}`,
-        type:     activePick.pick_type,
-        units:    units,
-        amount:   amount,
-        sport:    activePick.sport,
-        odds:     activePick.odds,
-        status:   'placed',
-        mode:     'manual',
-      };
-
-      // Save to session log
-      const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
-      log.unshift(logEntry);
-      localStorage.setItem('edge_session_bet_log', JSON.stringify(log));
-
-      // Update cap tracking
-      localStorage.setItem('edge_daily_used',  (dailyUsed  + amount).toFixed(2));
-      localStorage.setItem('edge_weekly_used', (weeklyUsed + amount).toFixed(2));
-      localStorage.setItem('edge_bets_used',   (betsUsed   + 1).toString());
-
-      // Save to Supabase bet_log
-      const sbUrl = localStorage.getItem('edge_supabase_url');
-      const sbKey = localStorage.getItem('edge_supabase_key');
-      if (sbUrl && sbKey) {
-        try {
-          await fetch(`${sbUrl}/rest/v1/bet_log`, {
-            method: 'POST',
-            headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ ...logEntry, date: new Date().toISOString().split('T')[0], created_at: new Date().toISOString() })
-          });
-        } catch {}
-      }
-
-      // Mark pick as placed
-      const picks = JSON.parse(localStorage.getItem('edge_picks_today') || '[]');
-      const idx = picks.findIndex(p => p.game_id === activePick.game_id);
-      if (idx > -1) { picks[idx].status = 'placed'; localStorage.setItem('edge_picks_today', JSON.stringify(picks)); }
-
-      cancelBet();
-      loadCaps();
-      loadBetLog();
-      loadSuggestedBets();
-    }
-
-    function dismissBet(gameId) {
-      const picks = JSON.parse(localStorage.getItem('edge_picks_today') || '[]');
-      const idx = picks.findIndex(p => p.game_id === gameId);
-      if (idx > -1) { picks[idx].status = 'skipped'; localStorage.setItem('edge_picks_today', JSON.stringify(picks)); }
-      loadSuggestedBets();
-    }
-
-    // ── AUTO PLACE BETS ──
-    async function autoPlaceBets(picks) {
-      if (localStorage.getItem('edge_betting_paused') === 'true') return;
-      const threshold = parseInt(localStorage.getItem('edge_auto_threshold') || '65');
-      const eligible  = picks.filter(p => p.confidence >= threshold && p.status === 'pending');
-      for (const pick of eligible) {
-        activePick = pick;
-        await submitBet();
-      }
-    }
-
-    loadSuggestedBets();
-
-    // ── SIMULATION FUNCTIONS ──
-    function loadSimDisplay() {
-      if (typeof EDGE_SIM === 'undefined') return;
-      const state = EDGE_SIM.getState();
-      const report = EDGE_SIM.report(state);
-
-      document.getElementById('simBankrollDisplay').textContent = '$' + parseFloat(state.bankroll || 0).toLocaleString();
-
-      const pnl = state.pnl || 0;
-      const pnlEl = document.getElementById('simPnlDisplay');
-      pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-
-      document.getElementById('simRecordDisplay').textContent = `${state.wins}-${state.losses}-${state.pushes}`;
-
-      const roi = state.roi || 0;
-      const roiEl = document.getElementById('simRoiDisplay');
-      roiEl.textContent = (roi >= 0 ? '+' : '') + roi + '%';
-      roiEl.style.color = roi >= 0 ? 'var(--green)' : 'var(--red)';
-
-      renderSimBetLog(state.log || []);
-    }
-
-    function renderSimBetLog(log) {
-      const container = document.getElementById('simBetLog');
-      if (!log.length) {
-        container.innerHTML = '<div style="text-align:center;padding:20px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">No simulation bets yet</div>';
-        return;
-      }
-      container.innerHTML = log.slice(0, 20).map(b => {
-        const resCls = b.result === 'W' ? 'color:var(--green)' : b.result === 'L' ? 'color:var(--red)' : 'color:var(--text-dim)';
-        const pnlStr = b.pnl != null ? (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(2) : '—';
-        const pnlCls = b.pnl > 0 ? 'color:var(--green)' : b.pnl < 0 ? 'color:var(--red)' : 'color:var(--text-dim)';
-        return `
-          <div style="background:var(--surface);border:1px solid var(--border);padding:12px 14px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-              <span style="font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;background:var(--bg4);border:1px solid var(--border);padding:2px 7px;color:var(--text-dim);">${b.sport}</span>
-              <span style="font-family:'Bebas Neue',sans-serif;font-size:20px;${resCls};">${b.result || 'PENDING'}</span>
-            </div>
-            <div style="font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:1px;margin-bottom:4px;">${b.matchup}</div>
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;color:var(--gold);">${b.pick_label} ${b.pick_type} ${b.line||''}</span>
-              <span style="font-family:'Barlow Condensed',sans-serif;font-size:12px;color:var(--text-dim);">${b.units}u · $${b.amount}</span>
-            </div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
-              <span style="font-family:'Barlow Condensed',sans-serif;font-size:11px;color:var(--text-dim);">Conf: ${b.confidence}% · Edge: ${b.edge}</span>
-              <span style="font-family:'Bebas Neue',sans-serif;font-size:18px;${pnlCls};">${pnlStr}</span>
-            </div>
-            ${b.result === null || b.result === undefined ? `
-              <div style="display:flex;gap:6px;margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
-                <button onclick="gradeSimBet('${b.id}','W')" style="flex:1;background:none;border:1px solid rgba(39,174,96,0.4);color:var(--green);font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:7px;cursor:pointer;">W</button>
-                <button onclick="gradeSimBet('${b.id}','L')" style="flex:1;background:none;border:1px solid rgba(231,76,60,0.35);color:var(--red);font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:7px;cursor:pointer;">L</button>
-                <button onclick="gradeSimBet('${b.id}','P')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:7px;cursor:pointer;">P</button>
-              </div>` : ''}
-          </div>`;
-      }).join('');
-    }
-
-    async function runSimEngine() {
-      if (typeof EDGE_SIM === 'undefined') { alert('simulation.js not loaded'); return; }
-      const btn = document.getElementById('simRunBtn');
-      const prog = document.getElementById('simProgress');
-      btn.disabled = true;
-      btn.textContent = 'RUNNING...';
-
-      await EDGE_SIM.run({
-        onProgress: msg => { prog.textContent = msg; },
-        onComplete: ({ simState, betsPlaced }) => {
-          btn.disabled = false;
-          btn.textContent = '◎ RUN SIMULATION';
-          prog.textContent = `✓ ${betsPlaced.length} bets placed`;
-          loadSimDisplay();
-        },
-        onError: err => {
-          btn.disabled = false;
-          btn.textContent = '◎ RUN SIMULATION';
-          prog.textContent = 'Error: ' + err;
-        }
-      });
-    }
-
-    function gradeSimBet(betId, result) {
-      if (typeof EDGE_SIM === 'undefined') return;
-      let state = EDGE_SIM.getState();
-      state = EDGE_SIM.gradebet(betId, result, state);
-      EDGE_SIM.saveState(state);
-      loadSimDisplay();
-    }
-
-    function resetSim() {
-      if (typeof EDGE_SIM === 'undefined') return;
-      if (confirm('Reset simulation? This clears all sim bets and bankroll.')) {
-        EDGE_SIM.reset();
-        loadSimDisplay();
-      }
-    }
-
-    // Init sim display if in simulation mode
-    if (currentMode === 'simulation') {
-      document.getElementById('simPanel').style.display = 'block';
-      document.getElementById('suggestedSection').style.display = 'none';
-      loadSimDisplay();
-    }
   </script>
 </body>
 </html>
