@@ -16,5 +16,6 @@ const STATIC = [
   '/THE-EDGE/admin.html',
   '/THE-EDGE/manifest.json',
   '/THE-EDGE/engine.js',
+  '/THE-EDGE/simulation.js',
   '/THE-EDGE/sw.js'
 ];
