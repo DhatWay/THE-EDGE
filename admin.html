@@ -7,32 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -51,20 +44,15 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px,12vw,72px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
-
     .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
     .sec-title em { color: var(--gold); font-style: normal; }
-
-    /* CONNECTION STATUS */
     .conn-grid { display: flex; flex-direction: column; gap: 8px; }
     .conn-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); padding: 13px 14px; }
     .conn-left { display: flex; align-items: center; gap: 10px; }
@@ -77,8 +65,6 @@
     .conn-status.ok  { color: var(--green); }
     .conn-status.off { color: var(--text-dim); }
     .conn-status.err { color: var(--red); }
-
-    /* API KEY FIELDS */
     .key-block { background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; margin-bottom: 10px; }
     .key-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
     .key-test-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 4px 10px; cursor: pointer; transition: all 0.2s; }
@@ -93,6 +79,25 @@
     .key-saved.set { color: var(--green); }
     .key-saved.unset { color: var(--text-dim); }
 
+    /* PIPELINE PANEL */
+    .pipeline-panel { background: var(--surface); border: 1px solid var(--border-bright); padding: 18px 16px; margin-bottom: 12px; }
+    .pipeline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+    .pipeline-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--text); }
+    .pipeline-mode { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
+    .pipeline-mode.math { border-color: var(--gold-dim); color: var(--gold); }
+    .pipeline-mode.ai   { border-color: var(--blue); color: var(--blue); }
+    .pipeline-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; font-weight: 300; margin-bottom: 14px; }
+    .pipeline-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .pipeline-actions.single { grid-template-columns: 1fr; }
+    .pipeline-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; padding: 12px 14px; cursor: pointer; transition: opacity 0.2s; text-align: center; }
+    .pipeline-btn:hover { opacity: 0.85; }
+    .pipeline-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .pipeline-btn.secondary { background: none; border: 1px solid var(--border); color: var(--text-mid); }
+    .pipeline-btn.secondary:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+    .pipeline-btn.blue { background: var(--blue); color: #fff; }
+    .pipeline-log { background: var(--bg4); border: 1px solid var(--border); padding: 12px 14px; font-family: 'Barlow', monospace; font-size: 11px; color: var(--text-mid); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+    .pipeline-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 8px; }
+
     /* RESULT ENTRY */
     .result-form { display: flex; flex-direction: column; gap: 10px; }
     .form-row { display: flex; gap: 8px; }
@@ -103,38 +108,23 @@
     .submit-btn { width: 100%; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; padding: 14px; cursor: pointer; transition: opacity 0.2s; }
     .submit-btn:hover { opacity: 0.85; }
 
-    /* ALGO OVERRIDE */
-    .override-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .override-select { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 1px; padding: 10px 10px; appearance: none; -webkit-appearance: none; cursor: pointer; }
-    .override-select:focus { outline: none; border-color: var(--gold); }
-    .vote-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-    .vote-btn:hover { border-color: var(--gold); color: var(--gold); }
-    .vote-btn.yes-active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
-    .vote-btn.no-active  { border-color: var(--red); color: var(--red); background: rgba(231,76,60,0.08); }
-
-    /* RAW DATA VIEWER */
+    /* RAW DATA */
     .raw-tabs { display: flex; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
     .raw-tabs::-webkit-scrollbar { display: none; }
     .raw-tab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 14px; cursor: pointer; transition: all 0.2s; }
     .raw-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
-    .raw-output { background: var(--bg4); border: 1px solid var(--border); padding: 14px; margin-top: 10px; font-family: 'Barlow', monospace; font-size: 11px; color: var(--text-dim); line-height: 1.6; max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .raw-output { background: var(--bg4); border: 1px solid var(--border); padding: 14px; margin-top: 10px; font-family: 'Barlow', monospace; font-size: 11px; color: var(--text-dim); line-height: 1.6; max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
     .raw-fetch-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 8px 16px; cursor: pointer; margin-top: 8px; transition: all 0.2s; width: 100%; }
     .raw-fetch-btn:hover { border-color: var(--gold); color: var(--gold); }
-
-    /* TRIGGER ANALYSIS */
-    .trigger-btn { width: 100%; background: none; border: 1px solid var(--border-bright); color: var(--gold); font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; padding: 14px; cursor: pointer; transition: all 0.2s; margin-bottom: 8px; }
-    .trigger-btn:hover { background: var(--gold-glow); }
-    .trigger-btn.secondary { font-size: 16px; border-color: var(--border); color: var(--text-mid); }
-    .trigger-btn.secondary:hover { border-color: var(--border-bright); color: var(--text); }
-
-    /* TOAST */
-    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-    .toast.error { background: var(--red); color: #fff; }
 
     /* DANGER */
     .danger-btn { display: block; width: 100%; background: none; border: 1px solid rgba(231,76,60,0.3); color: var(--red); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px; cursor: pointer; text-align: center; transition: all 0.2s; margin-bottom: 8px; }
     .danger-btn:hover { background: rgba(231,76,60,0.08); border-color: var(--red); }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { background: var(--red); color: #fff; }
+    .toast.blue  { background: var(--blue); color: #fff; }
 
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
@@ -147,7 +137,7 @@
     <a href="index.html" class="logo">
       <div class="logo-mark">ED</div>
       <div>
-        <div class="logo-text">THE EDGE</div>
+        <div class="logo-text">EDGE</div>
         <div class="logo-sub">AI Betting Intelligence</div>
       </div>
     </a>
@@ -185,43 +175,75 @@
       <div class="page-title">ADMIN <em>PANEL</em></div>
     </div>
 
+    <!-- PIPELINE CONTROL -->
+    <div class="section">
+      <div class="sec-title">PIPELINE <em>CONTROL</em></div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Full Engine</div>
+          <div class="pipeline-mode math" id="pipelineMode">DETERMINISTIC</div>
+        </div>
+        <div class="pipeline-desc">
+          Runs power ratings → algorithms → governor → physics. In AI-assisted mode, also sends actionable picks to Claude for review.
+        </div>
+        <div class="pipeline-actions">
+          <button class="pipeline-btn" id="runPipelineBtn" onclick="runPipeline()">▶ Run Pipeline</button>
+          <button class="pipeline-btn secondary" onclick="toggleDecisionMode()">Toggle Mode</button>
+        </div>
+        <div class="pipeline-log" id="pipelineLog">Idle. Ready to run.</div>
+        <div class="pipeline-status" id="pipelineStatus"></div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Learning Loop</div>
+        </div>
+        <div class="pipeline-desc">
+          Reads graded shadow picks from last 60 days. Adjusts algorithm family weights based on ROI. Rebuilds calibration table. Runs automatically once weekly.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn blue" id="runLearningBtn" onclick="runLearning()">↻ Run Learning Loop</button>
+        </div>
+        <div class="pipeline-log" id="learningLog">Idle. Last run: <span id="lastLearningRun">never</span></div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Power Ratings</div>
+        </div>
+        <div class="pipeline-desc">
+          Fetches ESPN data for all 7 sports, computes team + coaching + defense matchup ratings, upserts to Supabase.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runPowerBtn" onclick="runPowerRatings()">▲ Recompute Ratings</button>
+        </div>
+        <div class="pipeline-log" id="powerLog">Idle.</div>
+      </div>
+    </div>
+
     <!-- CONNECTION STATUS -->
     <div class="section">
       <div class="sec-title">CONNECTION <em>STATUS</em></div>
       <div class="conn-grid">
         <div class="conn-row">
-          <div class="conn-left">
-            <div class="conn-dot" id="dotSupabase"></div>
-            <div class="conn-name">Supabase</div>
-          </div>
+          <div class="conn-left"><div class="conn-dot" id="dotSupabase"></div><div class="conn-name">Supabase</div></div>
           <span class="conn-status" id="statusSupabase">Not connected</span>
         </div>
         <div class="conn-row">
-          <div class="conn-left">
-            <div class="conn-dot" id="dotOdds"></div>
-            <div class="conn-name">The Odds API</div>
-          </div>
+          <div class="conn-left"><div class="conn-dot" id="dotOdds"></div><div class="conn-name">The Odds API</div></div>
           <span class="conn-status" id="statusOdds">Not connected</span>
         </div>
         <div class="conn-row">
-          <div class="conn-left">
-            <div class="conn-dot" id="dotESPN"></div>
-            <div class="conn-name">ESPN API</div>
-          </div>
+          <div class="conn-left"><div class="conn-dot" id="dotESPN"></div><div class="conn-name">ESPN API</div></div>
           <span class="conn-status" id="statusESPN">Not connected</span>
         </div>
         <div class="conn-row">
-          <div class="conn-left">
-            <div class="conn-dot" id="dotClaude"></div>
-            <div class="conn-name">Claude API</div>
-          </div>
+          <div class="conn-left"><div class="conn-dot" id="dotClaude"></div><div class="conn-name">Claude API</div></div>
           <span class="conn-status" id="statusClaude">Not connected</span>
         </div>
         <div class="conn-row">
-          <div class="conn-left">
-            <div class="conn-dot" id="dotSportsbook"></div>
-            <div class="conn-name">Sportsbook API</div>
-          </div>
+          <div class="conn-left"><div class="conn-dot" id="dotSportsbook"></div><div class="conn-name">Sportsbook API</div></div>
           <span class="conn-status" id="statusSportsbook">Not connected</span>
         </div>
       </div>
@@ -230,20 +252,18 @@
     <!-- SUPABASE -->
     <div class="section">
       <div class="sec-title">SUPA<em>BASE</em></div>
-
       <div class="key-block">
         <div class="key-lbl">Project URL <button class="key-test-btn" onclick="testSupabase()">Test</button></div>
         <div class="key-row">
-          <input type="text" class="key-input" id="supabaseUrl" placeholder="https://flzxqnfuyasjfjqdygmd.supabase.co" />
+          <input type="text" class="key-input" id="supabaseUrl" placeholder="https://your-project.supabase.co" />
           <button class="key-save-btn" onclick="saveKey('edge_supabase_url','supabaseUrl','dotSupabase','statusSupabase')">SAVE</button>
         </div>
         <div class="key-saved" id="savedSupabaseUrl"></div>
       </div>
-
       <div class="key-block">
-        <div class="key-lbl">Anon Key</div>
+        <div class="key-lbl">Publishable / Anon Key</div>
         <div class="key-row">
-          <input type="password" class="key-input" id="supabaseKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsenhxbmZ1eWFzamZqcWR5Z21kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzA1MzQsImV4cCI6MjEwNDc0NjUzNH0.JOCzzDOjk7Z1H8jnE-zMFauJ0qo4E3QDSbliObQSDNQ" />
+          <input type="password" class="key-input" id="supabaseKey" placeholder="sb_publishable_..." />
           <button class="key-save-btn" onclick="saveKey('edge_supabase_key','supabaseKey')">SAVE</button>
         </div>
         <div class="key-saved" id="savedSupabaseKey"></div>
@@ -269,7 +289,7 @@
       <div class="key-block">
         <div class="key-lbl">API Key (optional) <button class="key-test-btn" onclick="testESPN()">Test</button></div>
         <div class="key-row">
-          <input type="password" class="key-input" id="espnKey" placeholder="ESPN API key (public endpoints may not need one)" />
+          <input type="password" class="key-input" id="espnKey" placeholder="Public endpoints may not need a key" />
           <button class="key-save-btn" onclick="saveKey('edge_espn_api_key','espnKey','dotESPN','statusESPN')">SAVE</button>
         </div>
         <div class="key-saved" id="savedESPNKey"></div>
@@ -287,13 +307,16 @@
         </div>
         <div class="key-saved" id="savedClaudeKey"></div>
       </div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1.5px;color:var(--text-dim);line-height:1.7;margin-top:8px;">
+        Model: claude-opus-4 · Batch-first with prompt caching · Only active in AI-assisted mode
+      </div>
     </div>
 
-    <!-- SPORTSBOOK API -->
+    <!-- SPORTSBOOK -->
     <div class="section">
       <div class="sec-title">SPORTSBOOK <em>API</em></div>
       <div class="key-block">
-        <div class="key-lbl">Sportsbook Name</div>
+        <div class="key-lbl">Sportsbook</div>
         <div class="key-row">
           <select class="form-select" id="sportsbookName">
             <option value="">Select sportsbook</option>
@@ -315,7 +338,7 @@
       </div>
     </div>
 
-    <!-- MANUAL RESULT ENTRY -->
+    <!-- RESULT ENTRY -->
     <div class="section">
       <div class="sec-title">ENTER <em>RESULT</em></div>
       <div class="result-form">
@@ -326,11 +349,9 @@
           <input type="text" class="form-input" id="resultMatchup" placeholder="Matchup (e.g. BOS vs MIA)" />
         </div>
         <div class="form-row">
-          <input type="text" class="form-input" id="resultPick" placeholder="Pick (e.g. BOS −5.5)" />
+          <input type="text" class="form-input" id="resultPick" placeholder="Pick (e.g. BOS -5.5)" />
           <select class="form-select" id="resultType">
-            <option>ATS</option>
-            <option>ML</option>
-            <option>Total</option>
+            <option>ATS</option><option>ML</option><option>Total</option>
           </select>
         </div>
         <div class="form-row">
@@ -342,61 +363,36 @@
           </select>
           <input type="number" class="form-input" id="resultPnl" placeholder="P&L (units)" step="0.5" />
         </div>
-        <button class="submit-btn" onclick="submitResult()">SUBMIT RESULT → DASHBOARD</button>
+        <button class="submit-btn" onclick="submitResult()">SUBMIT RESULT →</button>
       </div>
     </div>
 
-    <!-- ALGORITHM VOTE OVERRIDE -->
-    <div class="section">
-      <div class="sec-title">ALGO VOTE <em>OVERRIDE</em></div>
-      <div class="override-row">
-        <select class="override-select" id="overrideAlgo">
-          <option value="">Select algorithm</option>
-        </select>
-      </div>
-      <div class="override-row">
-        <input type="text" class="form-input" id="overrideGame" placeholder="Game (e.g. BOS vs MIA)" style="flex:1;" />
-      </div>
-      <div class="override-row">
-        <button class="vote-btn" id="voteYes" onclick="setVote('yes')">YES</button>
-        <button class="vote-btn" id="voteNo"  onclick="setVote('no')">NO</button>
-        <button class="vote-btn" id="voteNeu" onclick="setVote('neu')">NEUTRAL</button>
-        <button class="key-save-btn" onclick="submitOverride()" style="margin-left:auto;">SAVE</button>
-      </div>
-    </div>
-
-    <!-- TRIGGER ANALYSIS -->
-    <div class="section">
-      <div class="sec-title">MANUAL <em>TRIGGERS</em></div>
-      <button class="trigger-btn" onclick="triggerAnalysis()">◎ RUN FULL ANALYSIS</button>
-      <button class="trigger-btn secondary" onclick="triggerSync()">↻ SYNC SUPABASE DATA</button>
-      <button class="trigger-btn secondary" onclick="triggerLineSnapshot()">→ SAVE LINE SNAPSHOT</button>
-    </div>
-
-    <!-- RAW API DATA -->
+    <!-- RAW DATA -->
     <div class="section">
       <div class="sec-title">RAW <em>API DATA</em></div>
       <div class="raw-tabs">
-        <button class="raw-tab active" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
+        <button class="raw-tab active" data-tab="storage" onclick="setRawTab('storage',this)">LocalStorage</button>
+        <button class="raw-tab" data-tab="shadow" onclick="setRawTab('shadow',this)">Shadow Picks</button>
+        <button class="raw-tab" data-tab="weights" onclick="setRawTab('weights',this)">Algo Weights</button>
+        <button class="raw-tab" data-tab="power" onclick="setRawTab('power',this)">Power Ratings</button>
+        <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
-        <button class="raw-tab" data-tab="supabase" onclick="setRawTab('supabase',this)">Supabase</button>
-        <button class="raw-tab" data-tab="storage" onclick="setRawTab('storage',this)">LocalStorage</button>
       </div>
       <div class="raw-output" id="rawOutput">Select a tab and fetch to view raw data.</div>
       <button class="raw-fetch-btn" onclick="fetchRaw()">↓ Fetch Raw Data</button>
     </div>
 
-    <!-- DANGER ZONE -->
+    <!-- DANGER -->
     <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="clearAllKeys()">Remove All API Keys</button>
-      <button class="danger-btn" onclick="clearSupabaseData()">Clear All Supabase Pick Data</button>
-      <button class="danger-btn" onclick="clearLocalStorage()">Wipe All Local Storage</button>
+      <button class="danger-btn" onclick="clearShadowPicks()">Clear All Shadow Picks</button>
+      <button class="danger-btn" onclick="clearLocalStorage()">Wipe Local Storage (keeps API keys)</button>
     </div>
 
     <footer>
-      <div class="foot-logo">THE EDGE</div>
-      <div class="foot-txt">Admin Panel · Keys stored locally only · Never in code · © 2026</div>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Admin Panel · Keys stored locally only · © 2026</div>
     </footer>
 
   </main>
@@ -414,65 +410,191 @@
     }));
 
     // ── TOAST ──
-    function showToast(msg, isError = false) {
+    function showToast(msg, type = '') {
       const t = document.getElementById('toast');
       t.textContent = msg;
-      t.className = 'toast show' + (isError ? ' error' : '');
+      t.className = 'toast show' + (type ? ' ' + type : '');
       setTimeout(() => t.className = 'toast', 2500);
+    }
+
+    // ── PIPELINE MODE ──
+    function updatePipelineMode() {
+      const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
+      const el = document.getElementById('pipelineMode');
+      if (mode === 'ai_assisted') {
+        el.textContent = 'AI-ASSISTED';
+        el.className = 'pipeline-mode ai';
+      } else {
+        el.textContent = 'DETERMINISTIC';
+        el.className = 'pipeline-mode math';
+      }
+    }
+
+    function toggleDecisionMode() {
+      const current = localStorage.getItem('edge_decision_mode') || 'math_only';
+      const next = current === 'math_only' ? 'ai_assisted' : 'math_only';
+      localStorage.setItem('edge_decision_mode', next);
+      updatePipelineMode();
+      showToast('Decision mode: ' + (next === 'ai_assisted' ? 'AI-Assisted' : 'Deterministic'), next === 'ai_assisted' ? 'blue' : '');
+    }
+
+    // ── RUN FULL PIPELINE ──
+    async function runPipeline() {
+      const btn = document.getElementById('runPipelineBtn');
+      const logEl = document.getElementById('pipelineLog');
+      const statusEl = document.getElementById('pipelineStatus');
+
+      if (!window.EDGE_ORCHESTRATOR) {
+        showToast('Orchestrator not loaded', 'error');
+        return;
+      }
+
+      const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+      if (!games.length) {
+        showToast('No games loaded — refresh Matchups first', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      logEl.textContent = 'Starting…\n';
+      statusEl.textContent = '';
+
+      const result = await window.EDGE_ORCHESTRATOR.run({
+        games,
+        onProgress: (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      btn.disabled = false;
+
+      if (result.errors.length) {
+        logEl.textContent += '\nERRORS:\n' + result.errors.join('\n');
+        statusEl.textContent = 'Failed';
+        showToast('Pipeline error', 'error');
+        return;
+      }
+
+      const pickCount = result.picks.length;
+      statusEl.textContent = `${pickCount} picks · ${result.duration_ms}ms · mode: ${result.mode}`;
+      logEl.textContent += `\n✓ Done · ${pickCount} picks · ${result.duration_ms}ms`;
+      showToast(`✓ Pipeline: ${pickCount} picks`, '');
+    }
+
+    // ── RUN LEARNING ──
+    async function runLearning() {
+      const btn = document.getElementById('runLearningBtn');
+      const logEl = document.getElementById('learningLog');
+
+      if (!window.EDGE_LEARNING) {
+        showToast('Learning module not loaded', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      logEl.textContent = 'Analyzing…\n';
+
+      const result = await window.EDGE_LEARNING.run({
+        onProgress: (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      btn.disabled = false;
+
+      if (result.errors.length) {
+        logEl.textContent += '\nERRORS: ' + result.errors.join(', ');
+        showToast('Learning error', 'error');
+        return;
+      }
+
+      localStorage.setItem('edge_learning_last_run', new Date().toISOString());
+      document.getElementById('lastLearningRun').textContent = new Date().toLocaleString();
+
+      logEl.textContent += `\n✓ ${result.families_updated} updated · ${result.picks_analyzed} picks analyzed`;
+      showToast(`Learning: ${result.families_updated} families updated`, 'blue');
+    }
+
+    // ── RUN POWER RATINGS ──
+    async function runPowerRatings() {
+      const btn = document.getElementById('runPowerBtn');
+      const logEl = document.getElementById('powerLog');
+
+      if (!window.EDGE_POWER) {
+        showToast('Power engine not loaded', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      logEl.textContent = 'Fetching ESPN data for all sports…\n';
+
+      const result = await window.EDGE_POWER.computeAllTeamRatings();
+
+      btn.disabled = false;
+
+      const teamsCount = Object.keys(result.teams || {}).length;
+      const coachesCount = Object.keys(result.coaching || {}).length;
+
+      logEl.textContent += `✓ ${teamsCount} teams · ${coachesCount} coaches rated\n`;
+      if (result.errors?.length) logEl.textContent += `Errors: ${result.errors.length}`;
+
+      showToast(`✓ ${teamsCount} teams rated`, '');
     }
 
     // ── SAVE KEY ──
     function saveKey(storageKey, inputId, dotId, statusId) {
       const val = document.getElementById(inputId).value.trim();
-      if (!val) { showToast('Enter a value first', true); return; }
+      if (!val) { showToast('Enter a value first', 'error'); return; }
       localStorage.setItem(storageKey, val);
       const savedEl = document.getElementById('saved' + inputId.charAt(0).toUpperCase() + inputId.slice(1));
       if (savedEl) { savedEl.textContent = '✓ Saved'; savedEl.className = 'key-saved set'; }
-      if (dotId)    updateDot(dotId, statusId, 'ok', 'Connected');
+      if (dotId && statusId) updateDot(dotId, statusId, 'ok', 'Connected');
       showToast('Key saved');
     }
 
     function saveSportsbook() {
       const name = document.getElementById('sportsbookName').value;
       const key  = document.getElementById('sportsbookKey').value.trim();
-      if (!key) { showToast('Enter a key first', true); return; }
+      if (!key) { showToast('Enter a key first', 'error'); return; }
       localStorage.setItem('edge_sportsbook_name', name);
       localStorage.setItem('edge_sportsbook_api_key', key);
       document.getElementById('savedSportsbookKey').textContent = '✓ Saved — ' + name;
       document.getElementById('savedSportsbookKey').className = 'key-saved set';
       updateDot('dotSportsbook','statusSportsbook','ok', name + ' Connected');
-      showToast('Sportsbook key saved');
+      showToast('Sportsbook saved');
     }
 
     function updateDot(dotId, statusId, cls, text) {
       if (!dotId) return;
-      document.getElementById(dotId).className  = 'conn-dot ' + cls;
+      document.getElementById(dotId).className = 'conn-dot ' + cls;
       document.getElementById(statusId).textContent = text;
-      document.getElementById(statusId).className   = 'conn-status ' + cls;
+      document.getElementById(statusId).className = 'conn-status ' + cls;
     }
 
-    // ── TEST CONNECTIONS ──
+    // ── TESTS ──
     async function testSupabase() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) { showToast('Save URL and key first', true); return; }
+      if (!url || !key) { showToast('Save URL and key first', 'error'); return; }
       try {
         const res = await fetch(`${url}/rest/v1/settings?select=id&limit=1`, {
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+          headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
         if (res.ok) {
           updateDot('dotSupabase','statusSupabase','ok','Connected');
           showToast('Supabase connected ✓');
         } else {
           updateDot('dotSupabase','statusSupabase','err','Error ' + res.status);
-          showToast('Supabase error: ' + res.status, true);
+          showToast('Supabase error ' + res.status, 'error');
         }
-      } catch { showToast('Connection failed', true); }
+      } catch { showToast('Connection failed', 'error'); }
     }
 
     async function testOddsAPI() {
       const key = localStorage.getItem('edge_odds_api_key');
-      if (!key) { showToast('Save API key first', true); return; }
+      if (!key) { showToast('Save API key first', 'error'); return; }
       try {
         const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
         if (res.ok) {
@@ -480,9 +602,9 @@
           showToast('Odds API connected ✓');
         } else {
           updateDot('dotOdds','statusOdds','err','Invalid key');
-          showToast('Invalid Odds API key', true);
+          showToast('Invalid Odds API key', 'error');
         }
-      } catch { showToast('Connection failed', true); }
+      } catch { showToast('Connection failed', 'error'); }
     }
 
     async function testESPN() {
@@ -490,31 +612,40 @@
         const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
         if (res.ok) {
           updateDot('dotESPN','statusESPN','ok','Connected');
-          showToast('ESPN API reachable ✓');
+          showToast('ESPN reachable ✓');
         } else {
           updateDot('dotESPN','statusESPN','err','Unreachable');
-          showToast('ESPN API error', true);
+          showToast('ESPN error', 'error');
         }
-      } catch { showToast('ESPN unreachable', true); }
+      } catch { showToast('ESPN unreachable', 'error'); }
     }
 
     async function testClaude() {
       const key = localStorage.getItem('edge_claude_api_key');
-      if (!key) { showToast('Save API key first', true); return; }
+      if (!key) { showToast('Save API key first', 'error'); return; }
       try {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
-          headers: { 'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01' },
-          body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:10, messages:[{role:'user',content:'ping'}] })
+          headers: {
+            'Content-Type':'application/json',
+            'x-api-key':key,
+            'anthropic-version':'2023-06-01',
+            'anthropic-dangerous-direct-browser-access':'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-opus-4-20250514',
+            max_tokens: 10,
+            messages: [{ role: 'user', content: 'ping' }]
+          })
         });
         if (res.ok) {
           updateDot('dotClaude','statusClaude','ok','Connected');
-          showToast('Claude API connected ✓');
+          showToast('Claude connected ✓');
         } else {
           updateDot('dotClaude','statusClaude','err','Invalid key');
-          showToast('Invalid Claude API key', true);
+          showToast('Invalid Claude API key', 'error');
         }
-      } catch { showToast('Claude API error', true); }
+      } catch { showToast('Claude API error', 'error'); }
     }
 
     // ── RESULT ENTRY ──
@@ -527,13 +658,16 @@
       const type    = document.getElementById('resultType').value;
 
       if (!matchup || !pick || !outcome || !date) {
-        showToast('Fill in all fields', true);
+        showToast('Fill in all fields', 'error');
         return;
       }
 
-      const record = { matchup, pick_label: pick, pick_type: type, result: outcome, pnl, date, created_at: new Date().toISOString() };
+      const record = {
+        matchup, pick_label: pick, pick_type: type,
+        result: outcome, pnl, date,
+        created_at: new Date().toISOString(),
+      };
 
-      // Save to Supabase
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
 
@@ -541,100 +675,26 @@
         try {
           await fetch(`${url}/rest/v1/picks`, {
             method: 'POST',
-            headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify(record)
+            headers: {
+              apikey: key, Authorization: `Bearer ${key}`,
+              'Content-Type': 'application/json', Prefer: 'return=minimal',
+            },
+            body: JSON.stringify(record),
           });
-          showToast('Result saved → Redirecting');
-        } catch { showToast('Supabase error — saved locally', true); }
+          showToast('Result saved');
+        } catch { showToast('Saved locally', 'error'); }
       } else {
-        // Fall back to localStorage
         const existing = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
         existing.unshift(record);
         localStorage.setItem('edge_picks_local', JSON.stringify(existing));
-        showToast('Saved locally → Redirecting');
+        showToast('Saved locally');
       }
 
-      // Clear form then redirect to dashboard
-      setTimeout(() => { window.location.href = 'index.html'; }, 1400);
-    }
-
-    // ── ALGO OVERRIDE ──
-    const ALGORITHMS = [
-      'Elo Rating','Pythagorean Expectation','Simple Rating System','Sharp Money Indicator',
-      'Closing Line Value','Steam Move Detector','Reverse Line Movement','Pace & Tempo Analysis',
-      'Strength of Schedule','Rest & Recovery Index','Travel Fatigue Model','Weather Impact Model',
-      'Home/Away Split','ATS Trend Analysis','Recent Form Index','Public Betting % Fade',
-      'Situational Spot Analysis','Coaching Tendencies','Injury Impact Score','Primetime Performance',
-      'Divisional Record','Revenge Game Detector','Line Open-to-Close','Totals Trend Model','Regression to Mean'
-    ];
-
-    function buildAlgoSelect() {
-      const sel = document.getElementById('overrideAlgo');
-      ALGORITHMS.forEach((a, i) => {
-        const opt = document.createElement('option');
-        opt.value = i + 1;
-        opt.textContent = a;
-        sel.appendChild(opt);
-      });
-    }
-
-    let currentVote = null;
-
-    function setVote(v) {
-      currentVote = v;
-      document.getElementById('voteYes').className = 'vote-btn' + (v === 'yes' ? ' yes-active' : '');
-      document.getElementById('voteNo').className  = 'vote-btn' + (v === 'no'  ? ' no-active'  : '');
-      document.getElementById('voteNeu').className = 'vote-btn' + (v === 'neu' ? ' yes-active'  : '');
-    }
-
-    async function submitOverride() {
-      const algoId = document.getElementById('overrideAlgo').value;
-      const game   = document.getElementById('overrideGame').value.trim();
-      if (!algoId || !game || !currentVote) { showToast('Fill all fields', true); return; }
-
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-
-      if (url && key) {
-        try {
-          await fetch(`${url}/rest/v1/algorithms?id=eq.${algoId}`, {
-            method: 'PATCH',
-            headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ current_vote: currentVote, override_game: game })
-          });
-          showToast('Vote override saved');
-        } catch { showToast('Supabase error', true); }
-      } else {
-        showToast('Connect Supabase first', true);
-      }
-    }
-
-    // ── TRIGGERS ──
-    function triggerAnalysis() {
-      showToast('Analysis triggered — check AI Analysis page');
-      setTimeout(() => { window.location.href = 'analysis.html'; }, 1200);
-    }
-
-    async function triggerSync() {
-      showToast('Syncing...');
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) { showToast('Connect Supabase first', true); return; }
-      try {
-        await fetch(`${url}/rest/v1/settings?select=id&limit=1`, {
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
-        });
-        showToast('Supabase sync complete ✓');
-      } catch { showToast('Sync failed', true); }
-    }
-
-    function triggerLineSnapshot() {
-      showToast('Line snapshot triggered — check Line Movement');
-      setTimeout(() => { window.location.href = 'lines.html'; }, 1200);
+      setTimeout(() => { window.location.href = 'index.html'; }, 1200);
     }
 
     // ── RAW DATA ──
-    let currentRawTab = 'odds';
+    let currentRawTab = 'storage';
 
     function setRawTab(tab, el) {
       currentRawTab = tab;
@@ -645,54 +705,73 @@
 
     async function fetchRaw() {
       const out = document.getElementById('rawOutput');
-      out.textContent = 'Fetching...';
+      out.textContent = 'Fetching…';
 
-      if (currentRawTab === 'storage') {
-        const data = {};
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k.startsWith('edge_')) data[k] = localStorage.getItem(k);
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      try {
+        if (currentRawTab === 'storage') {
+          const data = {};
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k.startsWith('edge_')) data[k] = localStorage.getItem(k);
+          }
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
         }
-        out.textContent = JSON.stringify(data, null, 2);
-        return;
-      }
 
-      if (currentRawTab === 'odds') {
-        const key = localStorage.getItem('edge_odds_api_key');
-        if (!key) { out.textContent = 'No Odds API key saved.'; return; }
-        try {
-          const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
-        } catch (e) { out.textContent = 'Error: ' + e.message; }
-        return;
-      }
-
-      if (currentRawTab === 'espn') {
-        try {
-          const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
-        } catch (e) { out.textContent = 'Error: ' + e.message; }
-        return;
-      }
-
-      if (currentRawTab === 'supabase') {
-        const url = localStorage.getItem('edge_supabase_url');
-        const key = localStorage.getItem('edge_supabase_key');
-        if (!url || !key) { out.textContent = 'Supabase not connected.'; return; }
-        try {
-          const res = await fetch(`${url}/rest/v1/picks?select=*&limit=10&order=created_at.desc`, {
-            headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        if (currentRawTab === 'shadow') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/shadow_picks?select=*&limit=20&order=created_at.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
           });
           const data = await res.json();
           out.textContent = JSON.stringify(data, null, 2);
-        } catch (e) { out.textContent = 'Error: ' + e.message; }
-        return;
+          return;
+        }
+
+        if (currentRawTab === 'weights') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/algorithm_weights?select=*&order=sport,family`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
+        if (currentRawTab === 'power') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/power_ratings?select=*&limit=30&order=overall.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
+        if (currentRawTab === 'odds') {
+          const oddsKey = localStorage.getItem('edge_odds_api_key');
+          if (!oddsKey) { out.textContent = 'No Odds API key'; return; }
+          const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${oddsKey}`);
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
+        if (currentRawTab === 'espn') {
+          const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+      } catch (e) {
+        out.textContent = 'Error: ' + e.message;
       }
     }
 
-    // ── DANGER ──
+    // ── DANGER ZONE ──
     function clearAllKeys() {
       ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key',
        'edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name'].forEach(k => localStorage.removeItem(k));
@@ -701,58 +780,60 @@
       checkConnections();
     }
 
-    async function clearSupabaseData() {
+    async function clearShadowPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) { showToast('Connect Supabase first', true); return; }
+      if (!url || !key) { showToast('Connect Supabase first', 'error'); return; }
+      if (!confirm('Delete ALL shadow picks? This cannot be undone.')) return;
       try {
-        await fetch(`${url}/rest/v1/picks?id=gt.0`, {
+        await fetch(`${url}/rest/v1/shadow_picks?id=gt.0`, {
           method: 'DELETE',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+          headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
-        showToast('Supabase picks cleared');
-      } catch { showToast('Error clearing data', true); }
+        showToast('Shadow picks cleared');
+      } catch { showToast('Error clearing', 'error'); }
     }
 
     function clearLocalStorage() {
-      const keysToKeep = ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_claude_api_key'];
+      const keep = ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key','edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name'];
       const saved = {};
-      keysToKeep.forEach(k => { const v = localStorage.getItem(k); if (v) saved[k] = v; });
+      keep.forEach(k => { const v = localStorage.getItem(k); if (v) saved[k] = v; });
       localStorage.clear();
-      Object.entries(saved).forEach(([k,v]) => localStorage.setItem(k,v));
-      showToast('Local storage wiped (API keys kept)');
+      Object.entries(saved).forEach(([k, v]) => localStorage.setItem(k, v));
+      showToast('Local storage wiped (keys kept)');
     }
 
     // ── SAVED INDICATORS ──
     function loadSavedIndicators() {
       const indicators = [
-        { key: 'edge_supabase_url',      elId: 'savedSupabaseUrl',  label: 'URL saved' },
-        { key: 'edge_supabase_key',      elId: 'savedSupabaseKey',  label: 'Key saved' },
-        { key: 'edge_odds_api_key',      elId: 'savedOddsKey',      label: 'Key saved' },
-        { key: 'edge_espn_api_key',      elId: 'savedESPNKey',      label: 'Key saved' },
-        { key: 'edge_claude_api_key',    elId: 'savedClaudeKey',    label: 'Key saved' },
-        { key: 'edge_sportsbook_api_key',elId: 'savedSportsbookKey',label: 'Key saved' },
+        { key: 'edge_supabase_url',       elId: 'savedSupabaseUrl',   label: 'URL saved', inputId: 'supabaseUrl' },
+        { key: 'edge_supabase_key',       elId: 'savedSupabaseKey',   label: 'Key saved', inputId: 'supabaseKey' },
+        { key: 'edge_odds_api_key',       elId: 'savedOddsKey',       label: 'Key saved', inputId: 'oddsKey' },
+        { key: 'edge_espn_api_key',       elId: 'savedESPNKey',       label: 'Key saved', inputId: 'espnKey' },
+        { key: 'edge_claude_api_key',     elId: 'savedClaudeKey',     label: 'Key saved', inputId: 'claudeKey' },
+        { key: 'edge_sportsbook_api_key', elId: 'savedSportsbookKey', label: 'Key saved', inputId: 'sportsbookKey' },
       ];
-      indicators.forEach(({ key, elId, label }) => {
+      indicators.forEach(({ key, elId, label, inputId }) => {
         const el = document.getElementById(elId);
-        if (!el) return;
+        const input = document.getElementById(inputId);
         const val = localStorage.getItem(key);
+        if (input && val) input.value = val;
+        if (!el) return;
         el.textContent = val ? '✓ ' + label : 'Not set';
         el.className = 'key-saved ' + (val ? 'set' : 'unset');
       });
 
-      // Sportsbook name
       const sbName = localStorage.getItem('edge_sportsbook_name');
       if (sbName) document.getElementById('sportsbookName').value = sbName;
     }
 
     function checkConnections() {
       const checks = [
-        { key: 'edge_supabase_url',       dot: 'dotSupabase',    status: 'statusSupabase',    label: 'Key saved — tap Test' },
-        { key: 'edge_odds_api_key',        dot: 'dotOdds',        status: 'statusOdds',        label: 'Key saved — tap Test' },
-        { key: 'edge_espn_api_key',        dot: 'dotESPN',        status: 'statusESPN',        label: 'Key saved — tap Test' },
-        { key: 'edge_claude_api_key',      dot: 'dotClaude',      status: 'statusClaude',      label: 'Key saved — tap Test' },
-        { key: 'edge_sportsbook_api_key',  dot: 'dotSportsbook',  status: 'statusSportsbook',  label: 'Key saved' },
+        { key: 'edge_supabase_url',      dot: 'dotSupabase',   status: 'statusSupabase',   label: 'Key saved' },
+        { key: 'edge_odds_api_key',      dot: 'dotOdds',       status: 'statusOdds',       label: 'Key saved' },
+        { key: 'edge_espn_api_key',      dot: 'dotESPN',       status: 'statusESPN',       label: 'Key saved' },
+        { key: 'edge_claude_api_key',    dot: 'dotClaude',     status: 'statusClaude',     label: 'Key saved' },
+        { key: 'edge_sportsbook_api_key',dot: 'dotSportsbook', status: 'statusSportsbook', label: 'Key saved' },
       ];
       checks.forEach(({ key, dot, status, label }) => {
         const val = localStorage.getItem(key);
@@ -760,22 +841,29 @@
       });
     }
 
-    // ── TODAY DATE DEFAULT ──
-    document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
-
-    // ── SET DEFAULT KEYS IF NOT ALREADY SET ──
-  // ── SET DEFAULT KEYS IF NOT ALREADY SET ──
-    if (!localStorage.getItem('edge_supabase_url'))
-      localStorage.setItem('edge_supabase_url', 'https://cxugimmabnlfkghypiex.supabase.co');
-    if (!localStorage.getItem('edge_supabase_key'))
-      localStorage.setItem('edge_supabase_key', 'sb_publishable_4jYRAXzEV74u1IEdJnhTdQ_Ls9z9B7l');
-    if (!localStorage.getItem('edge_odds_api_key'))
-      localStorage.setItem('edge_odds_api_key', 'd7917ce937da1ade2eed49848494841c');
-
     // ── INIT ──
-    buildAlgoSelect();
-    loadSavedIndicators();
-    checkConnections();
+    function init() {
+      document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
+
+      // Default Supabase — only set if not already present
+      if (!localStorage.getItem('edge_supabase_url'))
+        localStorage.setItem('edge_supabase_url', 'https://YOUR-PROJECT.supabase.co');
+      if (!localStorage.getItem('edge_supabase_key'))
+        localStorage.setItem('edge_supabase_key', 'YOUR-PUBLISHABLE-KEY');
+
+      // Default Odds API key
+      if (!localStorage.getItem('edge_odds_api_key'))
+        localStorage.setItem('edge_odds_api_key', 'd7917ce937da1ade2eed49848494841c');
+
+      loadSavedIndicators();
+      checkConnections();
+      updatePipelineMode();
+
+      const lastRun = localStorage.getItem('edge_learning_last_run');
+      document.getElementById('lastLearningRun').textContent = lastRun ? new Date(lastRun).toLocaleString() : 'never';
+    }
+
+    init();
   </script>
 </body>
 </html>
