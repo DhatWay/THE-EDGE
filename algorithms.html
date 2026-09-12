@@ -7,33 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
-    /* NAV */
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -52,9 +44,7 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
@@ -62,179 +52,99 @@
     .page-title em { color: var(--gold); font-style: normal; }
 
     /* SUMMARY STRIP */
-    .summary-strip {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      border-bottom: 1px solid var(--border);
-    }
-    .sum-cell {
-      padding: 14px 10px;
-      text-align: center;
-      border-right: 1px solid var(--border);
-    }
+    .summary-strip { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
+    .sum-cell { padding: 14px 10px; text-align: center; border-right: 1px solid var(--border); }
     .sum-cell:last-child { border-right: none; }
     .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; color: var(--text); }
     .sum-val.gold { color: var(--gold); }
     .sum-val.green { color: var(--green); }
+    .sum-val.red { color: var(--red); }
     .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
 
-    /* CONTROLS BAR */
-    .controls-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg2);
-      gap: 10px;
-    }
+    /* SPORT TABS */
+    .sport-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
+    .sport-tabs::-webkit-scrollbar { display: none; }
+    .stab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 12px 16px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .stab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+    /* CONTROLS */
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
     .ctrl-label { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
     .ctrl-btns { display: flex; gap: 0; border: 1px solid var(--border); }
     .ctrl-btn { background: none; border: none; border-right: 1px solid var(--border); padding: 7px 14px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .ctrl-btn:last-child { border-right: none; }
     .ctrl-btn.active { color: var(--gold); background: var(--gold-glow); }
 
-    /* ALGO LIST */
-    .algo-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+    /* FAMILY LIST */
+    .family-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 
-    /* ALGO CARD */
-    .algo-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      overflow: hidden;
-      transition: border-color 0.2s;
-    }
-    .algo-card:hover { border-color: var(--border-bright); }
-    .algo-card.disabled { opacity: 0.45; }
+    /* FAMILY CARD */
+    .family-card { background: var(--surface); border: 1px solid var(--border); overflow: hidden; transition: border-color 0.2s; }
+    .family-card:hover { border-color: var(--border-bright); }
+    .family-card.disabled { opacity: 0.45; }
+    .family-card.vote-yes { border-left: 3px solid var(--green); }
+    .family-card.vote-no  { border-left: 3px solid var(--red); }
+    .family-card.vote-neu { border-left: 3px solid var(--text-dim); }
 
-    .algo-top {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 14px 16px;
-    }
-
-    .algo-num {
-      font-family: 'Bebas Neue', sans-serif;
-      font-size: 13px;
-      letter-spacing: 1px;
-      color: var(--text-dim);
-      width: 24px;
-      flex-shrink: 0;
-      text-align: center;
-    }
-
-    .algo-info { flex: 1; min-width: 0; }
-
-    .algo-name {
-      font-family: 'Bebas Neue', sans-serif;
-      font-size: 20px;
-      letter-spacing: 2px;
-      color: var(--text);
-      line-height: 1;
-      margin-bottom: 3px;
-    }
-
-    .algo-desc {
-      font-size: 12px;
-      color: var(--text-dim);
-      font-weight: 300;
-      line-height: 1.4;
-    }
-
-    .algo-right {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 6px;
-      flex-shrink: 0;
-    }
-
-    /* TOGGLE SWITCH */
-    .toggle {
-      position: relative;
-      width: 40px;
-      height: 22px;
-      cursor: pointer;
-    }
+    .family-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; }
+    .family-num { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--gold-dim); width: 28px; flex-shrink: 0; text-align: center; }
+    .family-card.vote-yes .family-num { color: var(--green); }
+    .family-card.vote-no  .family-num { color: var(--red); }
+    .family-info { flex: 1; min-width: 0; }
+    .family-name { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--text); line-height: 1; margin-bottom: 4px; }
+    .family-desc { font-size: 12px; color: var(--text-dim); font-weight: 300; line-height: 1.4; }
+    .family-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+    .family-vote-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; min-width: 50px; text-align: center; }
+    .family-vote-badge.yes { border-color: rgba(39,174,96,0.5); color: var(--green); }
+    .family-vote-badge.no  { border-color: rgba(231,76,60,0.4); color: var(--red); }
+    .family-vote-badge.neu { border-color: var(--border); color: var(--text-dim); }
+    .toggle { position: relative; width: 40px; height: 22px; cursor: pointer; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-    .toggle-track {
-      position: absolute;
-      inset: 0;
-      background: var(--bg4);
-      border: 1px solid var(--border);
-      transition: all 0.25s;
-    }
+    .toggle-track { position: absolute; inset: 0; background: var(--bg4); border: 1px solid var(--border); transition: all 0.25s; }
     .toggle input:checked + .toggle-track { background: var(--gold-glow); border-color: var(--gold); }
-    .toggle-thumb {
-      position: absolute;
-      top: 3px; left: 3px;
-      width: 14px; height: 14px;
-      background: var(--text-dim);
-      transition: all 0.25s;
-    }
+    .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; background: var(--text-dim); transition: all 0.25s; }
     .toggle input:checked ~ .toggle-thumb { left: 21px; background: var(--gold); }
 
-    /* STATS ROW */
-    .algo-stats {
-      display: flex;
-      gap: 0;
-      border-top: 1px solid var(--border);
-    }
-    .algo-stat {
-      flex: 1;
-      padding: 10px 10px;
-      text-align: center;
-      border-right: 1px solid var(--border);
-    }
-    .algo-stat:last-child { border-right: none; }
-    .algo-stat-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text-mid); }
-    .algo-stat-val.green { color: var(--green); }
-    .algo-stat-val.gold  { color: var(--gold); }
-    .algo-stat-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 1px; }
+    /* FAMILY STATS */
+    .family-stats { display: flex; border-top: 1px solid var(--border); }
+    .fstat { flex: 1; padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .fstat:last-child { border-right: none; }
+    .fstat-val { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; color: var(--text-mid); }
+    .fstat-val.green { color: var(--green); }
+    .fstat-val.red { color: var(--red); }
+    .fstat-val.gold { color: var(--gold); }
+    .fstat-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
 
-    /* WEIGHT EDITOR */
-    .weight-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 16px;
-      border-top: 1px solid var(--border);
-      background: var(--bg2);
-    }
+    /* WEIGHT ROW */
+    .weight-row { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg2); }
     .weight-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
-    .weight-slider {
-      flex: 1;
-      -webkit-appearance: none;
-      appearance: none;
-      height: 3px;
-      background: var(--bg4);
-      outline: none;
-      border: none;
-    }
-    .weight-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 16px; height: 16px;
-      background: var(--gold);
-      cursor: pointer;
-      border: none;
-    }
-    .weight-val { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; width: 36px; text-align: right; }
+    .weight-slider { flex: 1; -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg4); outline: none; border: none; }
+    .weight-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: var(--gold); cursor: pointer; border: none; }
+    .weight-val { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; width: 40px; text-align: right; }
+    .weight-dynamic-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--green); color: var(--green); }
 
-    /* VOTE BADGE */
-    .vote-pill {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 10px; font-weight: 900;
-      letter-spacing: 1.5px; text-transform: uppercase;
-      padding: 3px 9px; border: 1px solid;
-    }
-    .vote-pill.yes { border-color: rgba(201,168,76,0.4); color: var(--gold); background: rgba(201,168,76,0.08); }
-    .vote-pill.no  { border-color: rgba(231,76,60,0.35); color: var(--red); background: rgba(231,76,60,0.06); }
-    .vote-pill.neu { border-color: var(--border); color: var(--text-dim); }
+    /* SUB-ALGORITHMS */
+    .subs-section { border-top: 1px solid var(--border); background: var(--bg2); padding: 12px 16px 14px; display: none; }
+    .subs-section.open { display: block; }
+    .subs-head { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
+    .sub-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(201,168,76,0.05); }
+    .sub-row:last-child { border-bottom: none; }
+    .sub-role { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; min-width: 46px; text-align: center; }
+    .sub-role.lead { border-color: var(--gold-dim); color: var(--gold); }
+    .sub-role.support { border-color: var(--border); color: var(--text-dim); }
+    .sub-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text-mid); flex: 1; }
+    .sub-weight { font-family: 'Bebas Neue', sans-serif; font-size: 15px; color: var(--gold); letter-spacing: 1px; min-width: 30px; text-align: right; }
+
+    .expand-hint { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 5px; }
+    .expand-hint::after { content: '▾'; transition: transform 0.25s; display: inline-block; }
+    .family-card.expanded .expand-hint::after { transform: rotate(180deg); }
 
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
@@ -272,6 +182,8 @@
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
   </div>
 
+  <div class="toast" id="toast"></div>
+
   <main>
 
     <div class="page-header">
@@ -282,21 +194,32 @@
     <!-- SUMMARY -->
     <div class="summary-strip">
       <div class="sum-cell">
-        <div class="sum-val gold" id="sumActive">25</div>
-        <div class="sum-lbl">Active</div>
+        <div class="sum-val gold" id="sumFamilies">9</div>
+        <div class="sum-lbl">Families</div>
       </div>
       <div class="sum-cell">
-        <div class="sum-val" id="sumOff">0</div>
-        <div class="sum-lbl">Off</div>
+        <div class="sum-val" id="sumSubs">24</div>
+        <div class="sum-lbl">Sub-Algos</div>
       </div>
       <div class="sum-cell">
-        <div class="sum-val green">—</div>
+        <div class="sum-val green" id="sumBest">—</div>
         <div class="sum-lbl">Best ROI</div>
       </div>
       <div class="sum-cell">
-        <div class="sum-val">—</div>
-        <div class="sum-lbl">Season W%</div>
+        <div class="sum-val" id="sumActive">—</div>
+        <div class="sum-lbl">Active</div>
       </div>
+    </div>
+
+    <!-- SPORT TABS -->
+    <div class="sport-tabs" id="sportTabs">
+      <button class="stab active" data-sport="NFL">NFL</button>
+      <button class="stab" data-sport="NBA">NBA</button>
+      <button class="stab" data-sport="MLB">MLB</button>
+      <button class="stab" data-sport="NHL">NHL</button>
+      <button class="stab" data-sport="NCAAF">NCAAF</button>
+      <button class="stab" data-sport="NCAAB">NCAAB</button>
+      <button class="stab" data-sport="MLS">MLS</button>
     </div>
 
     <!-- CONTROLS -->
@@ -309,12 +232,12 @@
       </div>
     </div>
 
-    <!-- ALGO LIST -->
-    <div class="algo-list" id="algoList"></div>
+    <!-- FAMILY LIST -->
+    <div class="family-list" id="familyList"></div>
 
     <footer>
       <div class="foot-logo">EDGE</div>
-      <div class="foot-txt">25 Algorithms · Weights stored in Supabase · © 2026</div>
+      <div class="foot-txt">9 signal families · 24 sub-algorithms · Deterministic + AI · © 2026</div>
     </footer>
 
   </main>
@@ -331,179 +254,373 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── ALGORITHM DEFINITIONS ──
-    const ALGORITHMS = [
-      { id: 1,  name: 'Elo Rating',                desc: 'Dynamic team strength ratings updated after every game based on win/loss margin.' },
-      { id: 2,  name: 'Pythagorean Expectation',   desc: 'Estimates true win % from points scored vs allowed — filters out luck.' },
-      { id: 3,  name: 'Simple Rating System',      desc: 'Adjusts margin of victory for strength of schedule to produce a composite rating.' },
-      { id: 4,  name: 'Sharp Money Indicator',     desc: 'Tracks where professional bettors are placing money based on line movement vs ticket %.' },
-      { id: 5,  name: 'Closing Line Value',        desc: 'Measures pick quality by comparing our line to the closing number — the gold standard metric.' },
-      { id: 6,  name: 'Steam Move Detector',       desc: 'Identifies rapid, coordinated line movements triggered by sharp syndicate action.' },
-      { id: 7,  name: 'Reverse Line Movement',     desc: 'Flags when lines move opposite to public betting % — a sharp money signal.' },
-      { id: 8,  name: 'Pace & Tempo Analysis',     desc: 'Evaluates team pace matchups to project scoring totals and over/under edges.' },
-      { id: 9,  name: 'Strength of Schedule',      desc: 'Contextualizes records by ranking difficulty of opponents faced this season.' },
-      { id: 10, name: 'Rest & Recovery Index',     desc: 'Scores teams on days of rest, practice time, and back-to-back game fatigue.' },
-      { id: 11, name: 'Travel Fatigue Model',      desc: 'Calculates distance traveled, time zones crossed, and road trip length impact.' },
-      { id: 12, name: 'Weather Impact Model',      desc: 'For outdoor sports — wind speed, temperature, and precipitation effect on scoring.' },
-      { id: 13, name: 'Home/Away Split Analysis',  desc: 'Isolates each team\'s performance splits at home vs on the road ATS.' },
-      { id: 14, name: 'ATS Trend Analysis',        desc: 'Identifies cover streaks, fade patterns, and historical spread performance trends.' },
-      { id: 15, name: 'Recent Form Index',         desc: 'Weights last 5 games performance — both SU and ATS — with recency bias.' },
-      { id: 16, name: 'Public Betting % Fade',     desc: 'Fades heavy public sides when ticket % and money % diverge from line movement.' },
-      { id: 17, name: 'Situational Spot Analysis', desc: 'Identifies letdown spots, look-ahead games, revenge games, and trap situations.' },
-      { id: 18, name: 'Coaching Tendencies',       desc: 'Models coach behavior in key situations: covering vs dogs, totals tendencies, clock management.' },
-      { id: 19, name: 'Injury Impact Score',       desc: 'Quantifies the betting value impact of key player injuries and lineup changes.' },
-      { id: 20, name: 'Primetime Performance',     desc: 'Tracks team ATS records in nationally televised, primetime, and playoff-style games.' },
-      { id: 21, name: 'Divisional Record',         desc: 'Separates conference and divisional records — familiarity breeds tighter games.' },
-      { id: 22, name: 'Revenge Game Detector',     desc: 'Flags teams facing opponents who beat them previously — especially in blowouts.' },
-      { id: 23, name: 'Line Open-to-Close',        desc: 'Tracks full line movement from open to close to identify sharp vs public pressure.' },
-      { id: 24, name: 'Totals Trend Model',        desc: 'Analyzes over/under trends by pace matchup, weather, and referee/umpire tendencies.' },
-      { id: 25, name: 'Regression to the Mean',    desc: 'Identifies teams due for performance correction after outlier results.' },
+    // ── FAMILY DEFINITIONS WITH SUB-ALGORITHMS ──
+    const FAMILIES = [
+      {
+        id: 'team_quality',
+        name: 'Team Quality',
+        desc: 'True team strength, adjusted for opponent. The predictive core.',
+        subs: [
+          { role: 'lead',    name: 'Elo Rating (Score-Adjusted)', weight: 4.0 },
+          { role: 'support', name: 'Massey Simple Rating System',  weight: 3.0 },
+          { role: 'support', name: 'Pythagorean Expectation',      weight: 3.0 },
+        ],
+      },
+      {
+        id: 'offense_defense',
+        name: 'Offense / Defense',
+        desc: 'Pace-adjusted scoring efficiency and scheme matchup edges.',
+        subs: [
+          { role: 'lead',    name: 'Net Rating (Pace-Adjusted)',   weight: 4.5 },
+          { role: 'support', name: 'Defense Scheme Matchup',        weight: 3.0 },
+          { role: 'support', name: 'Offensive Efficiency Delta',    weight: 2.5 },
+        ],
+      },
+      {
+        id: 'coaching',
+        name: 'Coaching',
+        desc: 'Situational spots, in-game adjustments, and close-game discipline.',
+        subs: [
+          { role: 'lead',    name: 'Composite Coaching Rating',     weight: 4.0 },
+          { role: 'support', name: 'Halftime Adjustment Diff',      weight: 3.0 },
+          { role: 'support', name: 'Close-Game Record',             weight: 3.0 },
+        ],
+      },
+      {
+        id: 'market',
+        name: 'Market Intelligence',
+        desc: 'Closing line value, sharp money, and reverse line movement.',
+        subs: [
+          { role: 'lead',    name: 'Closing Line Value (CLV)',      weight: 4.5 },
+          { role: 'support', name: 'Sharp Money Indicator',         weight: 3.5 },
+          { role: 'support', name: 'Reverse Line Movement',         weight: 2.0 },
+        ],
+      },
+      {
+        id: 'line_dynamics',
+        name: 'Line Dynamics',
+        desc: 'Steam moves, open-to-close magnitude, and public fade signals.',
+        subs: [
+          { role: 'lead',    name: 'Steam Move Detector',           weight: 4.0 },
+          { role: 'support', name: 'Open-to-Close Movement',        weight: 3.0 },
+          { role: 'support', name: 'Public Fade (Extremes)',        weight: 3.0 },
+        ],
+      },
+      {
+        id: 'fatigue',
+        name: 'Fatigue & Recovery',
+        desc: 'Rest differential, travel miles, and timezone shifts.',
+        subs: [
+          { role: 'lead',    name: 'Rest Differential',             weight: 4.0 },
+          { role: 'support', name: 'Travel Miles Penalty',          weight: 3.0 },
+          { role: 'support', name: 'Timezone Shift',                weight: 3.0 },
+        ],
+      },
+      {
+        id: 'environment',
+        name: 'Environment',
+        desc: 'Weather, venue, and park factors that suppress or inflate scoring.',
+        subs: [
+          { role: 'lead',    name: 'Wind Impact',                   weight: 4.0 },
+          { role: 'support', name: 'Temperature Impact',            weight: 3.0 },
+          { role: 'support', name: 'Precipitation Impact',          weight: 3.0 },
+        ],
+      },
+      {
+        id: 'trend',
+        name: 'Trend & Momentum',
+        desc: 'Recent form, regression signals, and home/away splits.',
+        subs: [
+          { role: 'lead',    name: 'Recency-Weighted Form',         weight: 4.0 },
+          { role: 'support', name: 'Regression to Mean',            weight: 3.5 },
+          { role: 'support', name: 'Home/Away Split Signal',        weight: 2.5 },
+        ],
+      },
+      {
+        id: 'injury',
+        name: 'Injury Impact',
+        desc: 'VORP-weighted impact of missing key players.',
+        subs: [
+          { role: 'lead',    name: 'Injury VORP Sum',               weight: 5.0 },
+          { role: 'support', name: 'Lineup Continuity',             weight: 3.0 },
+          { role: 'support', name: 'Questionable-Doubtful Penalty', weight: 2.0 },
+        ],
+      },
     ];
 
-    // ── STATE (persisted to localStorage) ──
-    function loadState() {
-      try { return JSON.parse(localStorage.getItem('edge_algo_state') || '{}'); } catch { return {}; }
-    }
-
-    function saveState(state) {
-      localStorage.setItem('edge_algo_state', JSON.stringify(state));
-    }
-
-    function getAlgoState(id) {
-      const s = loadState();
-      return s[id] || { enabled: true, weight: 4 };
-    }
-
-    function setAlgoState(id, key, val) {
-      const s = loadState();
-      if (!s[id]) s[id] = { enabled: true, weight: 4 };
-      s[id][key] = val;
-      saveState(s);
-      updateSummary();
-    }
-
-    // ── SUMMARY ──
-    function updateSummary() {
-      const activeCount = ALGORITHMS.filter(a => getAlgoState(a.id).enabled).length;
-      document.getElementById('sumActive').textContent = activeCount;
-      document.getElementById('sumOff').textContent = 25 - activeCount;
-    }
-
-    // ── VIEW FILTER ──
+    // ── STATE ──
+    let currentSport = 'NFL';
     let currentView = 'all';
+    let weightsBySport = {};   // { NFL: { team_quality: 10, ... } }
+    let perfBySport = {};      // { NFL: { team_quality: { wins, losses, roi, ... } } }
+    let expandedFamilies = new Set();
 
+    // ── SPORT TABS ──
+    document.querySelectorAll('.stab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.stab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentSport = tab.dataset.sport;
+        render();
+      });
+    });
+
+    // ── VIEW ──
     function setView(v) {
       currentView = v;
-      ['all','on','off'].forEach(k => document.getElementById('view' + k.charAt(0).toUpperCase() + k.slice(1)).classList.toggle('active', k === v));
-      renderAlgos();
-    }
-
-    // ── RENDER ──
-    function renderAlgos() {
-      const list = document.getElementById('algoList');
-
-      const filtered = ALGORITHMS.filter(a => {
-        const on = getAlgoState(a.id).enabled;
-        if (currentView === 'on')  return on;
-        if (currentView === 'off') return !on;
-        return true;
+      ['all','on','off'].forEach(k => {
+        const btn = document.getElementById('view' + k.charAt(0).toUpperCase() + k.slice(1));
+        if (btn) btn.classList.toggle('active', k === v);
       });
-
-      list.innerHTML = filtered.map(a => {
-        const state = getAlgoState(a.id);
-        const enabled = state.enabled;
-        const weight  = state.weight ?? 4;
-
-        return `
-          <div class="algo-card ${enabled ? '' : 'disabled'}" id="acard-${a.id}">
-            <div class="algo-top">
-              <div class="algo-num">${String(a.id).padStart(2,'0')}</div>
-              <div class="algo-info">
-                <div class="algo-name">${a.name}</div>
-                <div class="algo-desc">${a.desc}</div>
-              </div>
-              <div class="algo-right">
-                <label class="toggle">
-                  <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleAlgo(${a.id}, this.checked)" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
-                <span class="vote-pill neu" id="vote-${a.id}">—</span>
-              </div>
-            </div>
-
-            <div class="algo-stats">
-              <div class="algo-stat">
-                <div class="algo-stat-val" id="rec-${a.id}">—</div>
-                <div class="algo-stat-lbl">Season W-L</div>
-              </div>
-              <div class="algo-stat">
-                <div class="algo-stat-val green" id="roi-${a.id}">—</div>
-                <div class="algo-stat-lbl">ROI</div>
-              </div>
-              <div class="algo-stat">
-                <div class="algo-stat-val gold" id="wrate-${a.id}">—</div>
-                <div class="algo-stat-lbl">Win %</div>
-              </div>
-            </div>
-
-            <div class="weight-row">
-              <span class="weight-lbl">Weight</span>
-              <input type="range" class="weight-slider" min="1" max="10" value="${weight}"
-                oninput="updateWeight(${a.id}, this.value, this)" />
-              <span class="weight-val" id="wval-${a.id}">${weight}</span>
-            </div>
-          </div>`;
-      }).join('');
-
-      // Load Supabase records if connected
-      loadSupabaseRecords();
+      render();
     }
 
-    function toggleAlgo(id, enabled) {
-      setAlgoState(id, 'enabled', enabled);
-      const card = document.getElementById('acard-' + id);
-      if (card) card.classList.toggle('disabled', !enabled);
-    }
-
-    function updateWeight(id, val, slider) {
-      setAlgoState(id, 'weight', parseInt(val));
-      document.getElementById('wval-' + id).textContent = val;
-    }
-
-    // ── LOAD RECORDS FROM SUPABASE ──
-    async function loadSupabaseRecords() {
+    // ── LOAD WEIGHTS FROM SUPABASE ──
+    async function loadWeights() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) return;
 
       try {
-        const res = await fetch(`${url}/rest/v1/algorithms?select=*`, {
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+        const res = await fetch(`${url}/rest/v1/algorithm_weights?select=*`, {
+          headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
         if (!res.ok) return;
-        const data = await res.json();
+        const rows = await res.json();
 
-        data.forEach(row => {
-          const recEl   = document.getElementById('rec-' + row.id);
-          const roiEl   = document.getElementById('roi-' + row.id);
-          const wrateEl = document.getElementById('wrate-' + row.id);
-          const voteEl  = document.getElementById('vote-' + row.id);
+        weightsBySport = {};
+        perfBySport = {};
 
-          if (recEl)   recEl.textContent   = `${row.wins || 0}–${row.losses || 0}`;
-          if (roiEl)   roiEl.textContent   = row.roi != null ? (row.roi > 0 ? '+' : '') + row.roi + '%' : '—';
-          if (wrateEl) wrateEl.textContent = row.win_rate != null ? row.win_rate + '%' : '—';
-          if (voteEl && row.current_vote) {
-            voteEl.textContent = row.current_vote.toUpperCase();
-            voteEl.className   = 'vote-pill ' + row.current_vote;
-          }
+        rows.forEach(r => {
+          if (!weightsBySport[r.sport]) weightsBySport[r.sport] = {};
+          weightsBySport[r.sport][r.family] = {
+            dynamic_weight: r.dynamic_weight ?? r.base_weight ?? 7,
+            base_weight: r.base_weight ?? 7,
+          };
+
+          if (!perfBySport[r.sport]) perfBySport[r.sport] = {};
+          perfBySport[r.sport][r.family] = {
+            wins: r.wins || 0,
+            losses: r.losses || 0,
+            pushes: r.pushes || 0,
+            roi: r.roi ?? 0,
+          };
         });
-      } catch (e) { /* Supabase not connected */ }
+      } catch {}
+    }
+
+    // ── GET WEIGHT FOR FAMILY ──
+    function getWeight(familyId) {
+      return weightsBySport[currentSport]?.[familyId]?.dynamic_weight ?? 7;
+    }
+
+    function getBaseWeight(familyId) {
+      return weightsBySport[currentSport]?.[familyId]?.base_weight ?? 7;
+    }
+
+    function getPerf(familyId) {
+      return perfBySport[currentSport]?.[familyId] || { wins: 0, losses: 0, pushes: 0, roi: 0 };
+    }
+
+    // ── UPDATE WEIGHT (LOCAL) ──
+    async function updateWeight(familyId, val) {
+      if (!weightsBySport[currentSport]) weightsBySport[currentSport] = {};
+      if (!weightsBySport[currentSport][familyId]) weightsBySport[currentSport][familyId] = {};
+      weightsBySport[currentSport][familyId].dynamic_weight = parseFloat(val);
+
+      // Persist to Supabase
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (url && key) {
+        try {
+          await fetch(
+            `${url}/rest/v1/algorithm_weights?family=eq.${encodeURIComponent(familyId)}&sport=eq.${encodeURIComponent(currentSport)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                apikey: key,
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ dynamic_weight: parseFloat(val), last_updated: new Date().toISOString() }),
+            }
+          );
+        } catch {}
+      }
+
+      // Sync to local governor cache
+      syncDynamicWeightsLocal();
+
+      document.getElementById('wval-' + familyId).textContent = val;
+    }
+
+    // ── TOGGLE FAMILY ON/OFF ──
+    function toggleFamily(familyId, enabled) {
+      const card = document.getElementById('fcard-' + familyId);
+      if (card) card.classList.toggle('disabled', !enabled);
+      localStorage.setItem(`edge_family_enabled_${currentSport}_${familyId}`, String(enabled));
+      updateSummary();
+    }
+
+    function isFamilyEnabled(familyId) {
+      const stored = localStorage.getItem(`edge_family_enabled_${currentSport}_${familyId}`);
+      return stored === null ? true : stored === 'true';
+    }
+
+    // ── EXPAND/COLLAPSE ──
+    function toggleExpand(familyId) {
+      if (expandedFamilies.has(familyId)) expandedFamilies.delete(familyId);
+      else expandedFamilies.add(familyId);
+
+      const card = document.getElementById('fcard-' + familyId);
+      const subs = document.getElementById('subs-' + familyId);
+      if (card) card.classList.toggle('expanded', expandedFamilies.has(familyId));
+      if (subs) subs.classList.toggle('open', expandedFamilies.has(familyId));
+    }
+
+    // ── RENDER ──
+    function render() {
+      const list = document.getElementById('familyList');
+
+      // Filter by view
+      const visible = FAMILIES.filter(f => {
+        const on = isFamilyEnabled(f.id);
+        if (currentView === 'on') return on;
+        if (currentView === 'off') return !on;
+        return true;
+      });
+
+      if (!visible.length) {
+        list.innerHTML = `<div style="text-align:center;padding:40px 20px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">No families match view</div>`;
+        updateSummary();
+        return;
+      }
+
+      list.innerHTML = visible.map((f, idx) => buildFamilyCard(f, idx)).join('');
+      updateSummary();
+    }
+
+    function buildFamilyCard(f, idx) {
+      const enabled = isFamilyEnabled(f.id);
+      const weight = getWeight(f.id);
+      const baseW = getBaseWeight(f.id);
+      const perf = getPerf(f.id);
+      const expanded = expandedFamilies.has(f.id);
+
+      const total = perf.wins + perf.losses;
+      const winPct = total > 0 ? (perf.wins / total * 100).toFixed(0) + '%' : '—';
+      const record = total > 0 ? `${perf.wins}-${perf.losses}` : '—';
+      const roi = perf.roi != null && total > 0 ? (perf.roi > 0 ? '+' : '') + (perf.roi * 100).toFixed(1) + '%' : '—';
+      const roiCls = perf.roi > 0 ? 'green' : perf.roi < 0 ? 'red' : '';
+
+      const isDynamic = Math.abs(weight - baseW) > 0.01;
+
+      const subsRows = f.subs.map(s => `
+        <div class="sub-row">
+          <span class="sub-role ${s.role}">${s.role === 'lead' ? 'LEAD' : 'SUPPORT'}</span>
+          <span class="sub-name">${s.name}</span>
+          <span class="sub-weight">${s.weight.toFixed(1)}</span>
+        </div>
+      `).join('');
+
+      return `
+        <div class="family-card ${enabled ? '' : 'disabled'} ${expanded ? 'expanded' : ''}" id="fcard-${f.id}">
+          <div class="family-head" onclick="toggleExpand('${f.id}')">
+            <div class="family-num">${String(idx + 1).padStart(2, '0')}</div>
+            <div class="family-info">
+              <div class="family-name">${f.name}</div>
+              <div class="family-desc">${f.desc}</div>
+            </div>
+            <div class="family-right">
+              <label class="toggle" onclick="event.stopPropagation()">
+                <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleFamily('${f.id}', this.checked)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+              <span class="expand-hint">${f.subs.length} subs</span>
+            </div>
+          </div>
+
+          <div class="family-stats">
+            <div class="fstat">
+              <div class="fstat-val">${record}</div>
+              <div class="fstat-lbl">W-L</div>
+            </div>
+            <div class="fstat">
+              <div class="fstat-val">${winPct}</div>
+              <div class="fstat-lbl">Win %</div>
+            </div>
+            <div class="fstat">
+              <div class="fstat-val ${roiCls}">${roi}</div>
+              <div class="fstat-lbl">ROI</div>
+            </div>
+            <div class="fstat">
+              <div class="fstat-val gold">${weight.toFixed(1)}</div>
+              <div class="fstat-lbl">Weight</div>
+            </div>
+          </div>
+
+          <div class="weight-row">
+            <span class="weight-lbl">Weight</span>
+            <input type="range" class="weight-slider" min="1" max="10" step="0.5" value="${weight}"
+              oninput="updateWeight('${f.id}', this.value)" />
+            <span class="weight-val" id="wval-${f.id}">${weight.toFixed(1)}</span>
+            ${isDynamic ? `<span class="weight-dynamic-badge">ADJUSTED</span>` : ''}
+          </div>
+
+          <div class="subs-section ${expanded ? 'open' : ''}" id="subs-${f.id}">
+            <div class="subs-head">Sub-Algorithms</div>
+            ${subsRows}
+          </div>
+        </div>`;
+    }
+
+    // ── SUMMARY ──
+    function updateSummary() {
+      const totalSubs = FAMILIES.reduce((s, f) => s + f.subs.length, 0);
+      document.getElementById('sumFamilies').textContent = FAMILIES.length;
+      document.getElementById('sumSubs').textContent = totalSubs;
+
+      const active = FAMILIES.filter(f => isFamilyEnabled(f.id)).length;
+      document.getElementById('sumActive').textContent = `${active}/${FAMILIES.length}`;
+
+      // Best ROI in current sport
+      const rois = FAMILIES
+        .map(f => getPerf(f.id).roi || 0)
+        .filter(r => r !== 0);
+      const best = rois.length ? Math.max(...rois) : null;
+      document.getElementById('sumBest').textContent = best !== null
+        ? (best > 0 ? '+' : '') + (best * 100).toFixed(1) + '%'
+        : '—';
+    }
+
+    // ── SYNC DYNAMIC WEIGHTS TO LOCALSTORAGE ──
+    // The governor reads from edge_dynamic_weights when present
+    function syncDynamicWeightsLocal() {
+      const bySport = {};
+      Object.entries(weightsBySport).forEach(([sport, families]) => {
+        bySport[sport] = {};
+        Object.entries(families).forEach(([family, data]) => {
+          bySport[sport][family] = data.dynamic_weight;
+        });
+      });
+      localStorage.setItem('edge_dynamic_weights', JSON.stringify(bySport));
+    }
+
+    // ── TOAST ──
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2000);
     }
 
     // ── INIT ──
-    updateSummary();
-    renderAlgos();
+    (async () => {
+      await loadWeights();
+      syncDynamicWeightsLocal();
+      render();
+    })();
   </script>
 </body>
 </html>
