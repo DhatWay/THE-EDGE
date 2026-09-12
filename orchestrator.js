@@ -1,7 +1,6 @@
 // ============================================================
-// EDGE — ORCHESTRATOR v2.0
-// Full pipeline: priors → algos → governor → physics → persist
-// Includes auto-sim-bet placement
+// EDGE — ORCHESTRATOR v2.1
+// Dedup-safe persist · Auto-sim-bet · Full pipeline
 // ============================================================
 
 const EDGE_ORCHESTRATOR = (() => {
@@ -15,10 +14,6 @@ const EDGE_ORCHESTRATOR = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
   const MAX_PARALLEL_GAMES = 6;
-
-  // ============================================================
-  // ── MAIN ENTRY ──
-  // ============================================================
 
   async function run(options = {}) {
     const {
@@ -106,20 +101,22 @@ const EDGE_ORCHESTRATOR = (() => {
       summary.picks = picks;
       summary.stages.final_picks = picks.length;
 
-      // ── PERSIST ──
       if (persist && picks.length) {
         log('Persisting shadow picks');
         const persistResult = await persistShadowPicks(picks, priors, mode, runId);
 
         if (persistResult.ok) {
-          log(`  ✓ ${persistResult.count} rows written`);
-          summary.persisted = persistResult.count;
+          if (persistResult.skipped) {
+            log(`  ✓ 0 new rows · ${persistResult.skipped} already persisted today`);
+          } else {
+            log(`  ✓ ${persistResult.count} rows written`);
+          }
+          summary.persisted = persistResult.count || 0;
         } else {
           log(`  ✗ Persist failed: ${persistResult.status || ''} ${persistResult.reason || ''}`);
           summary.errors.push('Persist: ' + (persistResult.reason || 'unknown'));
         }
 
-        // ── AUTO-SIM-BET ──
         const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
         const bettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
 
@@ -145,10 +142,6 @@ const EDGE_ORCHESTRATOR = (() => {
     }
   }
 
-  // ============================================================
-  // ── STAGE 2: POWER INDEX ──
-  // ============================================================
-
   async function loadPowerIndex() {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -173,10 +166,6 @@ const EDGE_ORCHESTRATOR = (() => {
     const fresh = await EDGE_POWER.computeAllTeamRatings();
     return { teams: fresh.teams, coaching: fresh.coaching };
   }
-
-  // ============================================================
-  // ── STAGE 3: BUILD PRIORS ──
-  // ============================================================
 
   async function buildPriors(games, powerIndex) {
     const priors = [];
@@ -216,10 +205,6 @@ const EDGE_ORCHESTRATOR = (() => {
 
     return priors;
   }
-
-  // ============================================================
-  // ── STAGE 4: ALGORITHMS ──
-  // ============================================================
 
   async function runAlgorithmsParallel(priors, context, concurrency, log) {
     const results = [];
@@ -275,10 +260,6 @@ const EDGE_ORCHESTRATOR = (() => {
     return ctx;
   }
 
-  // ============================================================
-  // ── STAGE 5: GOVERNOR ──
-  // ============================================================
-
   function runGovernor(algoResults) {
     return algoResults
       .filter(r => r.families && r.families.length)
@@ -287,10 +268,6 @@ const EDGE_ORCHESTRATOR = (() => {
         return { prior: r.prior, families: r.families, governor: gov };
       });
   }
-
-  // ============================================================
-  // ── STAGE 6: PHYSICS ──
-  // ============================================================
 
   function runPhysics(governorResults) {
     return governorResults.map(r => {
@@ -303,10 +280,6 @@ const EDGE_ORCHESTRATOR = (() => {
       return physics;
     });
   }
-
-  // ============================================================
-  // ── STAGE 7: CLAUDE ──
-  // ============================================================
 
   function buildClaudeBatch(physicsResults, priors, sharedContext) {
     const priorById = new Map(priors.map(p => [p.game_id, p]));
@@ -342,7 +315,7 @@ const EDGE_ORCHESTRATOR = (() => {
   }
 
   // ============================================================
-  // ── PERSIST SHADOW PICKS ──
+  // ── PERSIST SHADOW PICKS (DEDUP-SAFE) ──
   // ============================================================
 
   async function persistShadowPicks(picks, priors, mode, runId) {
@@ -350,9 +323,33 @@ const EDGE_ORCHESTRATOR = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return { ok: false, reason: 'Supabase not connected' };
 
+    const gameIds = picks.map(p => p.game_id).filter(Boolean);
+    if (!gameIds.length) return { ok: false, reason: 'No game IDs' };
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const existingGameIds = new Set();
+
+    try {
+      const inList = gameIds.map(id => `"${id}"`).join(',');
+      const checkRes = await fetch(
+        `${url}/rest/v1/shadow_picks?select=game_id&game_id=in.(${inList})&created_at=gte.${todayStart.toISOString()}`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      if (checkRes.ok) {
+        const rows = await checkRes.json();
+        rows.forEach(r => existingGameIds.add(r.game_id));
+      }
+    } catch {}
+
+    const freshPicks = picks.filter(p => !existingGameIds.has(p.game_id));
+    if (!freshPicks.length) {
+      return { ok: true, count: 0, skipped: picks.length, reason: 'All picks already persisted today' };
+    }
+
     const priorById = new Map(priors.map(p => [p.game_id, p]));
 
-    const rows = picks.map(p => {
+    const rows = freshPicks.map(p => {
       const prior = priorById.get(p.game_id) || {};
       return {
         run_id: runId,
@@ -411,10 +408,6 @@ const EDGE_ORCHESTRATOR = (() => {
       return { ok: false, reason: e.message };
     }
   }
-
-  // ============================================================
-  // ── AUTO-PLACE SIM BETS ──
-  // ============================================================
 
   function autoPlaceSimBets(picks, portfolio) {
     if (!picks.length) return 0;
@@ -519,10 +512,6 @@ const EDGE_ORCHESTRATOR = (() => {
     return placed;
   }
 
-  // ============================================================
-  // ── HELPERS ──
-  // ============================================================
-
   function getMode() {
     return localStorage.getItem('edge_decision_mode') || DEFAULT_MODE;
   }
@@ -540,7 +529,7 @@ const EDGE_ORCHESTRATOR = (() => {
   }
 
   function makePickId(prior) {
-    return `${prior.game_id}_${prior.sport}_${Date.now()}`;
+    return prior.game_id;
   }
 
   function makeLogger(onProgress) {
