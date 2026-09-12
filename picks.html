@@ -7,31 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
-    /* NAV */
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -50,269 +44,130 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
-    /* PAGE HEADER */
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* MODE TOGGLE */
-    .mode-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg2);
-    }
-    .mode-label {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 11px;
-      letter-spacing: 2.5px;
-      text-transform: uppercase;
-      color: var(--text-dim);
-    }
-    .mode-toggle {
-      display: flex;
-      gap: 0;
-      border: 1px solid var(--border);
-    }
-    .mode-btn {
-      background: none;
-      border: none;
-      padding: 7px 16px;
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--text-dim);
-      cursor: pointer;
-      transition: all 0.2s;
-      border-right: 1px solid var(--border);
-    }
-    .mode-btn:last-child { border-right: none; }
-    .mode-btn.active { background: var(--gold-glow); color: var(--gold); }
+    /* PORTFOLIO BAR (REAL vs SIM) */
+    .portfolio-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 14px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
+    .pf-btn:last-child { border-right: none; }
+    .pf-btn.active.real { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .pf-btn.active.sim { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .pf-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+    .pf-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .pf-btn.active.real .pf-val { color: var(--gold); }
+    .pf-btn.active.sim .pf-val { color: var(--blue); }
 
-    /* FILTER STRIP */
-    .filter-strip {
-      display: flex;
-      gap: 8px;
-      padding: 12px 20px;
-      overflow-x: auto;
-      border-bottom: 1px solid var(--border);
-      scrollbar-width: none;
-    }
-    .filter-strip::-webkit-scrollbar { display: none; }
-    .fchip {
-      flex-shrink: 0;
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      padding: 6px 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-      white-space: nowrap;
-    }
-    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+    /* MODE BAR */
+    .mode-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
+    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; }
+    .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
+    .mode-pill.det { border-color: var(--gold-dim); color: var(--gold); }
+    .mode-pill.ai  { border-color: var(--blue); color: var(--blue); }
+    .mode-pill.both { border-color: var(--green); color: var(--green); }
+    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 16px; cursor: pointer; white-space: nowrap; }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* SUMMARY ROW */
-    .summary-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      border-bottom: 1px solid var(--border);
-    }
-    .sum-cell {
-      padding: 14px 16px;
-      border-right: 1px solid var(--border);
-      text-align: center;
-    }
+    .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
+    .sum-cell { padding: 12px 8px; border-right: 1px solid var(--border); text-align: center; }
     .sum-cell:last-child { border-right: none; }
-    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 32px; letter-spacing: 2px; color: var(--text); }
+    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
     .sum-val.gold { color: var(--gold); }
-    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
+    .sum-val.green { color: var(--green); }
+    .sum-val.blue { color: var(--blue); }
+    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* PICKS LIST */
+    /* FILTER STRIP */
+    .filter-strip { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .filter-strip::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+
+    /* PICK LIST */
     .picks-list { padding: 16px 20px; }
-
-    /* PICK CARD */
-    .pick-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      margin-bottom: 12px;
-      overflow: hidden;
-      transition: border-color 0.2s;
-    }
+    .pick-card { background: var(--surface); border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
     .pick-card:hover { border-color: var(--border-bright); }
-    .pick-card.high-conf { border-left: 3px solid var(--gold); }
-    .pick-card.med-conf  { border-left: 3px solid var(--text-mid); }
-    .pick-card.low-conf  { border-left: 3px solid var(--text-dim); }
-    .pick-card.approved  { border-left: 3px solid var(--green); }
-    .pick-card.skipped   { opacity: 0.45; }
+    .pick-card.tier-elite  { border-left: 3px solid var(--gold); }
+    .pick-card.tier-high   { border-left: 3px solid var(--green); }
+    .pick-card.tier-solid  { border-left: 3px solid var(--text-mid); }
+    .pick-card.tier-lean   { border-left: 3px solid var(--text-dim); }
+    .pick-card.bet-real    { border-left-color: var(--gold); }
+    .pick-card.bet-sim     { border-left-color: var(--blue); }
+    .pick-card.vetoed      { opacity: 0.5; }
+    .pick-card.passed      { opacity: 0.55; }
 
-    .pick-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 14px 6px;
-    }
-
-    .pick-sport-time {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .sport-tag {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 10px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      padding: 2px 7px;
-      background: var(--bg4);
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-    }
-
-    .pick-time {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 11px;
-      letter-spacing: 1.5px;
-      color: var(--text-dim);
-    }
-
-    .conf-badge {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      padding: 3px 9px;
-      border: 1px solid;
-    }
-    .conf-badge.high { border-color: rgba(201,168,76,0.5); color: var(--gold); background: rgba(201,168,76,0.08); }
-    .conf-badge.med  { border-color: rgba(168,152,120,0.4); color: var(--text-mid); background: rgba(168,152,120,0.06); }
-    .conf-badge.low  { border-color: rgba(122,112,96,0.3); color: var(--text-dim); }
+    .pick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px; gap: 8px; }
+    .pick-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .pick-time { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); }
+    .decision-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid; }
+    .decision-tag.bet2u { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.1); }
+    .decision-tag.bet1u { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
+    .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
+    .decision-tag.pass  { border-color: var(--text-dim); color: var(--text-dim); }
+    .mode-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--border); color: var(--text-dim); }
+    .mode-badge.ai { border-color: var(--blue); color: var(--blue); }
 
     .pick-body { padding: 6px 14px 12px; }
+    .pick-matchup { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; line-height: 1.1; margin-bottom: 4px; }
+    .pick-side { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
+    .pick-side.away { color: var(--blue); }
 
-    .pick-matchup {
-      font-family: 'Bebas Neue', sans-serif;
-      font-size: 24px;
-      letter-spacing: 2px;
-      line-height: 1.1;
-      margin-bottom: 10px;
-    }
-
-    /* PICK TYPE PILLS */
-    .pick-types {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-bottom: 12px;
-    }
-    .ptype {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      padding: 4px 10px;
-      border: 1px solid var(--border);
-      color: var(--text-mid);
-      cursor: default;
-    }
-    .ptype.selected { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.08); }
+    /* METRIC ROW */
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); margin-bottom: 12px; }
+    .metric-cell { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .metric-cell:last-child { border-right: none; }
+    .metric-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .metric-val.gold  { color: var(--gold); }
+    .metric-val.green { color: var(--green); }
+    .metric-val.red   { color: var(--red); }
+    .metric-val.blue  { color: var(--blue); }
+    .metric-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
     /* CONSENSUS BAR */
-    .cons-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .cons-lbl {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 10px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--text-dim);
-      white-space: nowrap;
-    }
-    .cons-track {
-      flex: 1;
-      background: var(--bg4);
-      height: 4px;
-      overflow: hidden;
-    }
-    .cons-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright));
-      box-shadow: 0 0 4px var(--gold);
-    }
-    .cons-num {
-      font-family: 'Bebas Neue', sans-serif;
-      font-size: 16px;
-      color: var(--gold);
-      letter-spacing: 1px;
-      white-space: nowrap;
-    }
+    .cons-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .cons-track { flex: 1; background: var(--bg4); height: 5px; overflow: hidden; }
+    .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
+    .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
 
-    /* CONFIDENCE RING + REASON */
-    .pick-bottom {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-    }
-    .ring-wrap { position: relative; width: 54px; height: 54px; flex-shrink: 0; }
-    .ring-wrap svg { transform: rotate(-90deg); }
-    .ring-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 15px; color: var(--gold); }
-    .pick-reason { font-size: 13px; color: var(--text-dim); line-height: 1.55; font-weight: 300; flex: 1; }
+    /* REASON */
+    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 12px; }
+    .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
+    .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
+    .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
+    .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
 
-    /* ACTION BUTTONS */
-    .pick-actions {
-      display: flex;
-      gap: 0;
-      border-top: 1px solid var(--border);
-      margin-top: 12px;
-    }
-    .pick-action-btn {
-      flex: 1;
-      background: none;
-      border: none;
-      border-right: 1px solid var(--border);
-      padding: 11px 8px;
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: all 0.2s;
-      text-align: center;
-    }
+    /* CLAUDE NOTE */
+    .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
+    .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
+    .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
+
+    /* ACTIONS */
+    .pick-actions { display: flex; gap: 0; border-top: 1px solid var(--border); }
+    .pick-action-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; }
     .pick-action-btn:last-child { border-right: none; }
     .pick-action-btn.approve { color: var(--green); }
-    .pick-action-btn.approve:hover { background: rgba(39,174,96,0.1); }
+    .pick-action-btn.approve:hover { background: rgba(39,174,96,0.08); }
     .pick-action-btn.skip { color: var(--red); }
-    .pick-action-btn.skip:hover { background: rgba(231,76,60,0.08); }
+    .pick-action-btn.skip:hover { background: rgba(231,76,60,0.06); }
+    .pick-action-btn.simbet { color: var(--blue); }
+    .pick-action-btn.simbet:hover { background: rgba(74,144,217,0.08); }
     .pick-action-btn.analysis { color: var(--gold); }
     .pick-action-btn.analysis:hover { background: var(--gold-glow); }
-    .pick-action-btn.queue { color: var(--text-mid); }
-    .pick-action-btn.queue:hover { background: var(--bg4); }
+    .pick-action-btn.done { color: var(--text-dim); cursor: default; }
+    .pick-action-btn.bet-placed { color: var(--gold); background: var(--gold-glow); }
+    .pick-action-btn.sim-placed { color: var(--blue); background: rgba(74,144,217,0.08); }
 
-    .pick-action-btn.approved-state { color: var(--green); background: rgba(39,174,96,0.08); }
-    .pick-action-btn.skipped-state  { color: var(--red); background: rgba(231,76,60,0.06); }
-
-    /* EMPTY STATE */
+    /* EMPTY */
     .empty-state { padding: 48px 20px; text-align: center; }
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
@@ -323,6 +178,12 @@
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    /* TOAST */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red { background: var(--red); color: #fff; }
   </style>
 </head>
 <body>
@@ -360,6 +221,8 @@
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
   </div>
 
+  <div class="toast" id="toast"></div>
+
   <main>
 
     <div class="page-header">
@@ -367,63 +230,76 @@
       <div class="page-title">TODAY'S <em>PICKS</em></div>
     </div>
 
-    <!-- MODE TOGGLE -->
-    <div class="mode-bar">
-      <div class="mode-label">Betting Mode</div>
-      <div class="mode-toggle">
-        <button class="mode-btn active" id="modeManual" onclick="setMode('manual')">Manual</button>
-        <button class="mode-btn" id="modeAuto" onclick="setMode('auto')">Auto</button>
-      </div>
+    <!-- PORTFOLIO SWITCHER -->
+    <div class="portfolio-bar">
+      <button class="pf-btn real active" id="pfReal" onclick="setPortfolio('real')">
+        <div class="pf-lbl">Real Bankroll</div>
+        <div class="pf-val" id="realBankroll">$0</div>
+      </button>
+      <button class="pf-btn sim" id="pfSim" onclick="setPortfolio('sim')">
+        <div class="pf-lbl">Simulation Bankroll</div>
+        <div class="pf-val" id="simBankroll">$0</div>
+      </button>
     </div>
 
-    <!-- FILTERS -->
-    <div class="filter-strip">
-      <button class="fchip active" data-filter="all">All</button>
-      <button class="fchip" data-filter="ATS">ATS</button>
-      <button class="fchip" data-filter="ML">Moneyline</button>
-      <button class="fchip" data-filter="Total">Total</button>
-      <button class="fchip" data-filter="high">High Conf</button>
-      <button class="fchip" data-filter="med">Med Conf</button>
-      <button class="fchip" data-filter="low">Low Conf</button>
-      <button class="fchip" data-filter="NFL">NFL</button>
-      <button class="fchip" data-filter="NBA">NBA</button>
-      <button class="fchip" data-filter="MLB">MLB</button>
-      <button class="fchip" data-filter="NHL">NHL</button>
+    <!-- MODE BAR -->
+    <div class="mode-bar">
+      <div class="mode-info">
+        <span class="mode-pill" id="modePill">—</span>
+        <span id="modeDesc">Deterministic · no AI overlay</span>
+      </div>
+      <button class="run-btn" id="runBtn" onclick="runPipeline()">▶ RUN PIPELINE</button>
     </div>
 
     <!-- SUMMARY -->
     <div class="summary-row">
       <div class="sum-cell">
         <div class="sum-val" id="sumTotal">0</div>
-        <div class="sum-lbl">Total Picks</div>
+        <div class="sum-lbl">Picks</div>
       </div>
       <div class="sum-cell">
-        <div class="sum-val gold" id="sumApproved">0</div>
-        <div class="sum-lbl">Approved</div>
+        <div class="sum-val gold" id="sumUnits">0u</div>
+        <div class="sum-lbl">Total Units</div>
       </div>
       <div class="sum-cell">
-        <div class="sum-val" id="sumHighConf">0</div>
-        <div class="sum-lbl">High Conf</div>
+        <div class="sum-val green" id="sumAvgConf">—</div>
+        <div class="sum-lbl">Avg Conf</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val" id="sumAvgEdge">—</div>
+        <div class="sum-lbl">Avg Edge</div>
       </div>
     </div>
 
-    <!-- PICKS LIST -->
+    <!-- FILTERS -->
+    <div class="filter-strip">
+      <button class="fchip active" data-filter="all">All</button>
+      <button class="fchip" data-filter="elite">Elite 85+</button>
+      <button class="fchip" data-filter="high">High 75+</button>
+      <button class="fchip" data-filter="solid">Solid 65+</button>
+      <button class="fchip" data-filter="lean">Lean 55+</button>
+      <button class="fchip" data-filter="NFL">NFL</button>
+      <button class="fchip" data-filter="NBA">NBA</button>
+      <button class="fchip" data-filter="MLB">MLB</button>
+      <button class="fchip" data-filter="NHL">NHL</button>
+    </div>
+
+    <!-- PICKS -->
     <div class="picks-list" id="picksList">
       <div class="empty-state">
         <div class="empty-icon">✓</div>
         <div class="empty-title">NO PICKS YET</div>
         <div class="empty-sub">
-          Picks generate automatically<br>
-          once the Odds API is connected<br>
-          and algorithms run on today's games
+          Tap RUN PIPELINE to generate picks<br>
+          from today's matchups
         </div>
-        <a href="matchups.html" class="go-btn">View Matchups →</a>
+        <a href="matchups.html" class="go-btn">Go to Matchups →</a>
       </div>
     </div>
 
     <footer>
       <div class="foot-logo">EDGE</div>
-      <div class="foot-txt">25-algorithm consensus · © 2026 · Not financial advice</div>
+      <div class="foot-txt">Deterministic + AI-assisted modes · © 2026 · Not financial advice</div>
     </footer>
 
   </main>
@@ -440,22 +316,21 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── MODE ──
-    let currentMode = localStorage.getItem('edge_betting_mode') || 'manual';
+    // ── STATE ──
+    let portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
+    let currentFilter = 'all';
+    let allPicks = [];
 
-    function setMode(mode) {
-      currentMode = mode;
-      localStorage.setItem('edge_betting_mode', mode);
-      document.getElementById('modeManual').classList.toggle('active', mode === 'manual');
-      document.getElementById('modeAuto').classList.toggle('active', mode === 'auto');
+    // ── PORTFOLIO SWITCHER ──
+    function setPortfolio(p) {
+      portfolio = p;
+      localStorage.setItem('edge_active_portfolio', p);
+      document.getElementById('pfReal').classList.toggle('active', p === 'real');
+      document.getElementById('pfSim').classList.toggle('active', p === 'sim');
       renderPicks();
     }
 
-    setMode(currentMode);
-
     // ── FILTERS ──
-    let currentFilter = 'all';
-
     document.querySelectorAll('.fchip').forEach(chip => {
       chip.addEventListener('click', () => {
         document.querySelectorAll('.fchip').forEach(c => c.classList.remove('active'));
@@ -465,161 +340,139 @@
       });
     });
 
-    // ── PICKS DATA ──
-    // Loads from Supabase picks table (key: edge_picks_today).
-    // Structure per pick:
-    // { id, sport, matchup, time, pick_type, pick_label, line, odds,
-    //   consensus, confidence, conf_tier, reason, status }
+    // ── BANKROLL DISPLAY ──
+    function updateBankrolls() {
+      const real = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+      const sim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+      document.getElementById('realBankroll').textContent = '$' + real.toLocaleString();
+      document.getElementById('simBankroll').textContent = '$' + sim.toLocaleString();
+    }
 
-    function loadPicks() {
+    // ── MODE INDICATOR ──
+    function updateModeIndicator() {
+      const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
+      const pill = document.getElementById('modePill');
+      const desc = document.getElementById('modeDesc');
+
+      if (mode === 'ai_assisted') {
+        pill.textContent = 'AI-ASSISTED';
+        pill.className = 'mode-pill ai';
+        desc.textContent = 'Deterministic + Claude risk review';
+      } else {
+        pill.textContent = 'DETERMINISTIC';
+        pill.className = 'mode-pill det';
+        desc.textContent = 'Pure math · no AI overlay';
+      }
+    }
+
+    // ── LOAD PICKS FROM SUPABASE ──
+    async function loadPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      if (!url || !key) {
+        allPicks = [];
+        renderPicks();
+        return;
+      }
+
       try {
-        return JSON.parse(localStorage.getItem('edge_picks_today') || '[]');
-      } catch { return []; }
-    }
+        // Only today's picks, both modes
+        const since = new Date(Date.now() - 12 * 3600000).toISOString();
+        const res = await fetch(
+          `${url}/rest/v1/shadow_picks?select=*&created_at=gte.${since}&order=confidence.desc&limit=50`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) throw new Error();
+        allPicks = await res.json();
+      } catch {
+        allPicks = [];
+      }
 
-    function savePicks(picks) {
-      localStorage.setItem('edge_picks_today', JSON.stringify(picks));
-    }
-
-    function approvePick(id) {
-      const picks = loadPicks();
-      const p = picks.find(x => x.id === id);
-      if (p) { p.status = p.status === 'approved' ? 'pending' : 'approved'; }
-      savePicks(picks);
       renderPicks();
     }
 
-    function skipPick(id) {
-      const picks = loadPicks();
-      const p = picks.find(x => x.id === id);
-      if (p) { p.status = p.status === 'skipped' ? 'pending' : 'skipped'; }
-      savePicks(picks);
-      renderPicks();
+    // ── RUN PIPELINE ──
+    async function runPipeline() {
+      const btn = document.getElementById('runBtn');
+      if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'red'); return; }
+
+      const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+      if (!games.length) { showToast('No games — refresh Matchups first', 'red'); return; }
+
+      btn.disabled = true;
+      btn.textContent = 'RUNNING…';
+
+      const result = await window.EDGE_ORCHESTRATOR.run({
+        games,
+        onProgress: (msg) => { btn.textContent = msg.slice(0, 40); },
+      });
+
+      btn.disabled = false;
+      btn.textContent = '▶ RUN PIPELINE';
+
+      if (result.errors.length) {
+        showToast('Error: ' + result.errors[0], 'red');
+        return;
+      }
+
+      await loadPicks();
+      showToast(`✓ ${result.picks.length} pick${result.picks.length === 1 ? '' : 's'} generated`, '');
     }
 
     // ── SUMMARY ──
     function updateSummary(picks) {
       document.getElementById('sumTotal').textContent = picks.length;
-      document.getElementById('sumApproved').textContent = picks.filter(p => p.status === 'approved').length;
-      document.getElementById('sumHighConf').textContent = picks.filter(p => p.conf_tier === 'high').length;
+      const totalUnits = picks.reduce((s, p) => s + (p.units || 0), 0);
+      document.getElementById('sumUnits').textContent = totalUnits.toFixed(1) + 'u';
+
+      const confs = picks.map(p => p.confidence).filter(c => typeof c === 'number');
+      document.getElementById('sumAvgConf').textContent = confs.length
+        ? (confs.reduce((a, b) => a + b, 0) / confs.length).toFixed(1) + '%'
+        : '—';
+
+      const edges = picks.map(p => p.edge).filter(e => typeof e === 'number');
+      document.getElementById('sumAvgEdge').textContent = edges.length
+        ? ((edges.reduce((a, b) => a + b, 0) / edges.length) * 100).toFixed(2) + '%'
+        : '—';
+    }
+
+    // ── FILTER LOGIC ──
+    function applyFilter(picks) {
+      if (currentFilter === 'all') return picks;
+      if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 85);
+      if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 75);
+      if (currentFilter === 'solid') return picks.filter(p => (p.confidence || 0) >= 65);
+      if (currentFilter === 'lean')  return picks.filter(p => (p.confidence || 0) >= 55);
+      return picks.filter(p => p.sport === currentFilter);
+    }
+
+    // ── TIER ──
+    function tier(conf) {
+      if (conf >= 85) return 'elite';
+      if (conf >= 75) return 'high';
+      if (conf >= 65) return 'solid';
+      return 'lean';
     }
 
     // ── RENDER ──
-    function confPct(consensus) {
-      return Math.round((consensus / 25) * 100);
-    }
-
-    function ringPath(pct) {
-      const r = 22;
-      const circ = 2 * Math.PI * r;
-      const dash = (pct / 100) * circ;
-      const gap  = circ - dash;
-      return `stroke-dasharray="${dash.toFixed(1)} ${gap.toFixed(1)}" stroke-dashoffset="0"`;
-    }
-
-    function buildPickCard(p) {
-      const pct = confPct(p.consensus || 0);
-      const consWidth = Math.round((p.consensus / 25) * 100);
-      const cardCls = p.status === 'approved' ? 'approved' : p.status === 'skipped' ? 'skipped' : (p.conf_tier + '-conf');
-      const confCls = p.conf_tier || 'low';
-
-      const approvedState = p.status === 'approved' ? 'approved-state' : '';
-      const skippedState  = p.status === 'skipped'  ? 'skipped-state'  : '';
-
-      const analysisLink = `analysis.html?matchup=${encodeURIComponent(p.matchup)}&sport=${p.sport}`;
-
-      return `
-        <div class="pick-card ${cardCls}" id="pick-${p.id}">
-          <div class="pick-head">
-            <div class="pick-sport-time">
-              <span class="sport-tag">${p.sport}</span>
-              <span class="pick-time">${p.time || '—'}</span>
-            </div>
-            <span class="conf-badge ${confCls}">${confCls.toUpperCase()} CONF</span>
-          </div>
-
-          <div class="pick-body">
-            <div class="pick-matchup">${p.matchup}</div>
-
-            <div class="pick-types">
-              <span class="ptype ${p.pick_type === 'ATS' ? 'selected' : ''}">ATS</span>
-              <span class="ptype ${p.pick_type === 'ML' ? 'selected' : ''}">ML</span>
-              <span class="ptype ${p.pick_type === 'Total' ? 'selected' : ''}">Total</span>
-              <span class="ptype selected" style="border-color:var(--gold);color:var(--gold);">${p.pick_label} ${p.line || ''}</span>
-              ${p.odds ? `<span class="ptype">${p.odds > 0 ? '+' : ''}${p.odds}</span>` : ''}
-            </div>
-
-            <div class="cons-row">
-              <span class="cons-lbl">Consensus</span>
-              <div class="cons-track">
-                <div class="cons-fill" style="width:${consWidth}%"></div>
-              </div>
-              <span class="cons-num">${p.consensus || 0}/25</span>
-            </div>
-
-            <div class="pick-bottom">
-              <div class="ring-wrap">
-                <svg viewBox="0 0 54 54" width="54" height="54">
-                  <circle cx="27" cy="27" r="22" fill="none" stroke="#1C1C1C" stroke-width="5"/>
-                  <circle cx="27" cy="27" r="22" fill="none" stroke="#C9A84C" stroke-width="5"
-                    ${ringPath(pct)} stroke-linecap="round"/>
-                </svg>
-                <div class="ring-label">${pct}%</div>
-              </div>
-              <div class="pick-reason">${p.reason || 'AI reasoning loads when Odds API is connected.'}</div>
-            </div>
-          </div>
-
-          <div class="pick-actions">
-            <button class="pick-action-btn approve ${approvedState}" onclick="approvePick('${p.id}')">
-              ${p.status === 'approved' ? '✓ Approved' : '✓ Approve'}
-            </button>
-            <button class="pick-action-btn skip ${skippedState}" onclick="skipPick('${p.id}')">
-              ${p.status === 'skipped' ? '✗ Skipped' : '✗ Skip'}
-            </button>
-            <a href="${analysisLink}" class="pick-action-btn analysis">◎ Analysis</a>
-          </div>
-        </div>`;
-    }
-
     function renderPicks() {
-      const all = loadPicks();
-      updateSummary(all);
-
-      const minConf = parseInt(localStorage.getItem('edge_min_conf') || '0');
-      const minCons = parseInt(localStorage.getItem('edge_min_cons') || '0');
-
-      let filtered = all.filter(p => {
-        const pct = confPct(p.consensus || 0);
-        if (pct < minConf) return false;
-        if ((p.consensus || 0) < minCons) return false;
-        if (currentFilter === 'all') return true;
-        if (currentFilter === 'high') return p.conf_tier === 'high';
-        if (currentFilter === 'med')  return p.conf_tier === 'med';
-        if (currentFilter === 'low')  return p.conf_tier === 'low';
-        if (['ATS','ML','Total'].includes(currentFilter)) return p.pick_type === currentFilter;
-        return p.sport === currentFilter;
-      });
-
-      // In auto mode, only show picks above threshold
-      if (currentMode === 'auto') {
-        const threshold = parseInt(localStorage.getItem('edge_auto_threshold') || '60');
-        filtered = filtered.filter(p => confPct(p.consensus || 0) >= threshold);
-      }
+      const filtered = applyFilter(allPicks);
+      updateSummary(filtered);
 
       const list = document.getElementById('picksList');
 
-      if (filtered.length === 0) {
+      if (!filtered.length) {
         list.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">✓</div>
-            <div class="empty-title">NO PICKS</div>
+            <div class="empty-title">${allPicks.length ? 'NO MATCHES' : 'NO PICKS YET'}</div>
             <div class="empty-sub">
-              ${all.length > 0
-                ? 'No picks match current filters'
-                : 'Picks generate once Odds API is connected\nand algorithms run on today\'s games'}
+              ${allPicks.length
+                ? 'No picks match current filter'
+                : 'Tap RUN PIPELINE to generate picks'}
             </div>
-            ${all.length === 0 ? '<a href="matchups.html" class="go-btn">View Matchups →</a>' : ''}
+            ${!allPicks.length ? '<a href="matchups.html" class="go-btn">Go to Matchups →</a>' : ''}
           </div>`;
         return;
       }
@@ -627,7 +480,290 @@
       list.innerHTML = filtered.map(buildPickCard).join('');
     }
 
-    renderPicks();
+    function buildPickCard(p) {
+      const conf = p.confidence || 0;
+      const t = tier(conf);
+      const isAi = p.decision_mode === 'ai_assisted';
+      const isVetoed = p.decision === 'VETOED';
+      const isPassed = p.decision === 'PASS' || p.decision === 'CAPPED';
+      const dir = p.direction === 'home' ? 'home' : 'away';
+      const sideTeam = p.side_team || (dir === 'home' ? p.home_team : p.away_team) || '—';
+
+      const decisionTag = isVetoed ? 'VETOED'
+                        : p.decision === 'BET_2U' ? 'BET 2U'
+                        : p.decision === 'BET_1U' ? 'BET 1U'
+                        : p.decision === 'LEAN' ? 'LEAN'
+                        : 'PASS';
+
+      const tagCls = isVetoed ? 'vetoed'
+                   : p.decision === 'BET_2U' ? 'bet2u'
+                   : p.decision === 'BET_1U' ? 'bet1u'
+                   : p.decision === 'LEAN' ? 'lean'
+                   : 'pass';
+
+      const cardCls = [
+        'pick-card',
+        'tier-' + t,
+        isVetoed ? 'vetoed' : '',
+        isPassed ? 'passed' : '',
+      ].filter(Boolean).join(' ');
+
+      const matchup = `${p.away_team || 'Away'} vs ${p.home_team || 'Home'}`;
+      const gameTime = p.commence_time
+        ? new Date(p.commence_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' +
+          new Date(p.commence_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '—';
+
+      const breakdown = p.governor_snapshot?.breakdown || [];
+      const familyChips = breakdown.map(b =>
+        `<span class="family-chip ${b.vote}">${b.family.replace('_',' ')} ${b.vote === 'yes' ? '▲' : b.vote === 'no' ? '▼' : '●'}</span>`
+      ).join('');
+
+      const claudeNote = isAi && p.claude_output
+        ? `<div class="claude-note">
+            <div class="claude-note-lbl">Claude · ${p.claude_output.decision.toUpperCase()}</div>
+            <div class="claude-note-txt">${p.claude_output.reason || 'No reason provided'}</div>
+          </div>`
+        : '';
+
+      const enc = encodeURIComponent(JSON.stringify({
+        id: p.game_id, home: p.home_team, away: p.away_team,
+        sport: p.sport, time: p.commence_time,
+      }));
+
+      // Bet state
+      const betPlacedReal = localStorage.getItem(`edge_bet_real_${p.id}`) === 'true';
+      const betPlacedSim  = localStorage.getItem(`edge_bet_sim_${p.id}`) === 'true';
+
+      let actions = '';
+      if (isVetoed || isPassed) {
+        actions = `
+          <button class="pick-action-btn done" disabled>${decisionTag}</button>
+          <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          <button class="pick-action-btn done" disabled>${Math.round(conf)}%</button>
+        `;
+      } else if (portfolio === 'real') {
+        actions = betPlacedReal
+          ? `
+            <button class="pick-action-btn done bet-placed" disabled>✓ BET PLACED</button>
+            <button class="pick-action-btn skip" onclick="undoBet('real','${p.id}')">Undo</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `
+          : `
+            <button class="pick-action-btn approve" onclick="placeBet('real','${p.id}')">✓ Approve ${p.units}u</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${p.id}')">✗ Skip</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `;
+      } else {
+        actions = betPlacedSim
+          ? `
+            <button class="pick-action-btn done sim-placed" disabled>✓ SIM BET PLACED</button>
+            <button class="pick-action-btn skip" onclick="undoBet('sim','${p.id}')">Undo</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `
+          : `
+            <button class="pick-action-btn simbet" onclick="placeBet('sim','${p.id}')">▶ Bet Sim ${p.units}u</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${p.id}')">✗ Skip</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `;
+      }
+
+      return `
+        <div class="${cardCls}">
+          <div class="pick-head">
+            <div class="pick-meta">
+              <span class="sport-tag">${p.sport || '—'}</span>
+              <span class="pick-time">${gameTime}</span>
+              <span class="decision-tag ${tagCls}">${decisionTag}</span>
+              ${isAi ? '<span class="mode-badge ai">AI-REVIEWED</span>' : '<span class="mode-badge">DETERMINISTIC</span>'}
+            </div>
+          </div>
+
+          <div class="pick-body">
+            <div class="pick-matchup">${matchup}</div>
+            <div class="pick-side ${dir === 'away' ? 'away' : ''}">▶ ${sideTeam}</div>
+
+            <div class="metric-row">
+              <div class="metric-cell">
+                <div class="metric-val ${conf >= 75 ? 'gold' : conf >= 65 ? 'green' : ''}">${Math.round(conf)}%</div>
+                <div class="metric-lbl">Confidence</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val ${p.edge > 0 ? 'green' : 'red'}">${((p.edge || 0) * 100).toFixed(2)}%</div>
+                <div class="metric-lbl">Edge</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val gold">${p.units || 0}u</div>
+                <div class="metric-lbl">Units</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val">${p.market_spread !== null ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—'}</div>
+                <div class="metric-lbl">Spread</div>
+              </div>
+            </div>
+
+            <div class="cons-row">
+              <span class="cons-lbl">Consensus</span>
+              <div class="cons-track">
+                <div class="cons-fill" style="width:${Math.min(Math.abs((p.governor_snapshot?.consensus_score || 0) * 100), 100)}%"></div>
+              </div>
+              <span class="cons-num">${((p.governor_snapshot?.consensus_score || 0) * 100).toFixed(0)}%</span>
+            </div>
+
+            <div class="family-mini">${familyChips}</div>
+
+            ${claudeNote}
+
+            <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
+          </div>
+
+          <div class="pick-actions">
+            ${actions}
+          </div>
+        </div>`;
+    }
+
+    // ── PLACE BET (REAL OR SIM) ──
+    async function placeBet(mode, pickId) {
+      const pick = allPicks.find(p => p.id === pickId);
+      if (!pick) return;
+
+      const units = pick.units || 1;
+
+      if (mode === 'real') {
+        const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+        if (bankroll <= 0) { showToast('Set bankroll in Settings first', 'red'); return; }
+
+        const unitType = localStorage.getItem('edge_unit_type') || 'flat';
+        const unitSize = unitType === 'pct'
+          ? (bankroll * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
+          : parseFloat(localStorage.getItem('edge_unit_size') || '50');
+
+        const stakeDollars = units * unitSize;
+        const dailyCap = parseFloat(localStorage.getItem('edge_daily_cap') || '0');
+        const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
+
+        if (dailyCap > 0 && dailyUsed + stakeDollars > dailyCap) {
+          showToast('Daily cap exceeded', 'red');
+          return;
+        }
+
+        // Deduct from bankroll and add to daily used
+        localStorage.setItem('edge_bankroll', String(bankroll - stakeDollars));
+        localStorage.setItem('edge_daily_used', String(dailyUsed + stakeDollars));
+        localStorage.setItem(`edge_bet_real_${pickId}`, 'true');
+
+        await logBet('real', pick, units, stakeDollars);
+        showToast(`Real bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, '');
+      } else {
+        const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+        const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
+        const stakeDollars = units * simUnitSize;
+
+        if (stakeDollars > simBankroll * 0.05) {
+          showToast('Bet exceeds 5% of sim bankroll', 'red');
+          return;
+        }
+
+        localStorage.setItem('edge_sim_bankroll', String(simBankroll - stakeDollars));
+        localStorage.setItem(`edge_bet_sim_${pickId}`, 'true');
+
+        await logBet('sim', pick, units, stakeDollars);
+        showToast(`Sim bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, 'blue');
+      }
+
+      updateBankrolls();
+      renderPicks();
+    }
+
+    async function undoBet(mode, pickId) {
+      const pick = allPicks.find(p => p.id === pickId);
+      if (!pick) return;
+
+      const units = pick.units || 1;
+
+      if (mode === 'real') {
+        const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+        const unitType = localStorage.getItem('edge_unit_type') || 'flat';
+        const unitSize = unitType === 'pct'
+          ? (bankroll * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
+          : parseFloat(localStorage.getItem('edge_unit_size') || '50');
+        const stakeDollars = units * unitSize;
+        const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
+
+        localStorage.setItem('edge_bankroll', String(bankroll + stakeDollars));
+        localStorage.setItem('edge_daily_used', String(Math.max(0, dailyUsed - stakeDollars)));
+        localStorage.removeItem(`edge_bet_real_${pickId}`);
+      } else {
+        const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+        const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
+        const stakeDollars = units * simUnitSize;
+        localStorage.setItem('edge_sim_bankroll', String(simBankroll + stakeDollars));
+        localStorage.removeItem(`edge_bet_sim_${pickId}`);
+      }
+
+      updateBankrolls();
+      renderPicks();
+      showToast('Bet undone', '');
+    }
+
+    function skipPick(pickId) {
+      localStorage.setItem(`edge_skipped_${pickId}`, 'true');
+      showToast('Pick skipped', '');
+    }
+
+    // ── LOG BET TO SUPABASE ──
+    async function logBet(mode, pick, units, stakeDollars) {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return;
+
+      const row = {
+        mode,
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        sport: pick.sport,
+        matchup: `${pick.away_team} vs ${pick.home_team}`,
+        pick_label: pick.side_team,
+        pick_type: pick.direction === 'home' ? 'HOME' : 'AWAY',
+        line: String(pick.market_spread ?? ''),
+        odds: pick.market_home_ml || null,
+        confidence: pick.confidence,
+        edge: pick.edge,
+        units,
+        amount: stakeDollars,
+        status: 'pending',
+        game_id: pick.game_id,
+        reason: (pick.reasons || [])[0] || '',
+      };
+
+      try {
+        await fetch(`${url}/rest/v1/bet_log`, {
+          method: 'POST',
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(row),
+        });
+      } catch {}
+    }
+
+    // ── TOAST ──
+    function showToast(msg, color) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (color ? ' ' + color : '');
+      setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2400);
+    }
+
+    // ── INIT ──
+    setPortfolio(portfolio);
+    updateBankrolls();
+    updateModeIndicator();
+    loadPicks();
   </script>
 </body>
 </html>
