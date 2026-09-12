@@ -7,31 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -50,9 +44,7 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
@@ -60,43 +52,53 @@
     .page-title em { color: var(--gold); font-style: normal; }
 
     /* SAVE BAR */
-    .save-bar {
-      position: sticky; top: 60px; z-index: 50;
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 20px;
-      background: rgba(8,8,8,0.97);
-      border-bottom: 1px solid var(--border);
-      backdrop-filter: blur(8px);
-    }
+    .save-bar { position: sticky; top: 60px; z-index: 50; display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(8px); gap: 10px; flex-wrap: wrap; }
     .save-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
     .save-status.saved  { color: var(--green); }
     .save-status.unsaved { color: var(--gold); }
     .save-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; padding: 8px 22px; cursor: pointer; transition: opacity 0.2s; }
     .save-btn:hover { opacity: 0.85; }
 
-    /* SECTION */
     .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
     .sec-title em { color: var(--gold); font-style: normal; }
+    .sec-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: -8px; margin-bottom: 14px; }
+
+    /* DECISION ENGINE CARDS */
+    .decision-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .decision-card { background: var(--surface); border: 2px solid var(--border); padding: 16px 14px; cursor: pointer; transition: all 0.2s; text-align: center; }
+    .decision-card.active.math { border-color: var(--gold); background: var(--gold-glow); }
+    .decision-card.active.ai   { border-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .decision-card:hover { border-color: var(--border-bright); }
+    .decision-icon { font-size: 22px; margin-bottom: 8px; opacity: 0.75; }
+    .decision-name { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: var(--text); margin-bottom: 4px; }
+    .decision-card.active.math .decision-name { color: var(--gold); }
+    .decision-card.active.ai .decision-name   { color: var(--blue); }
+    .decision-desc { font-size: 11px; color: var(--text-dim); line-height: 1.4; font-weight: 300; }
+
+    /* PORTFOLIO CARDS */
+    .portfolio-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .portfolio-card { background: var(--surface); border: 2px solid var(--border); padding: 16px 14px; cursor: pointer; transition: all 0.2s; text-align: center; }
+    .portfolio-card.active.real { border-color: var(--gold); background: var(--gold-glow); }
+    .portfolio-card.active.sim  { border-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .portfolio-card:hover { border-color: var(--border-bright); }
+    .portfolio-icon { font-size: 22px; margin-bottom: 8px; opacity: 0.75; }
+    .portfolio-name { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: var(--text); margin-bottom: 4px; }
+    .portfolio-card.active.real .portfolio-name { color: var(--gold); }
+    .portfolio-card.active.sim .portfolio-name  { color: var(--blue); }
+    .portfolio-desc { font-size: 11px; color: var(--text-dim); line-height: 1.4; font-weight: 300; }
 
     /* FIELD */
     .field { margin-bottom: 14px; }
     .field:last-child { margin-bottom: 0; }
-    .field-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+    .field-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .field-hint { font-size: 10px; color: var(--text-dim); font-weight: 300; letter-spacing: 0; text-transform: none; }
-
-    .field-input {
-      width: 100%; background: var(--bg4); border: 1px solid var(--border);
-      color: var(--text); font-family: 'Bebas Neue', sans-serif;
-      font-size: 24px; letter-spacing: 2px; padding: 12px 14px;
-      transition: border-color 0.2s;
-    }
+    .field-input { width: 100%; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 2px; padding: 12px 14px; transition: border-color 0.2s; }
     .field-input:focus { outline: none; border-color: var(--gold); }
     .field-input::placeholder { color: var(--text-dim); }
-
     .field-input.sm { font-family: 'Barlow', sans-serif; font-size: 15px; letter-spacing: 0; }
 
-    /* UNIT TYPE TOGGLE */
+    /* UNIT TOGGLE */
     .unit-toggle { display: flex; border: 1px solid var(--border); margin-bottom: 14px; }
     .unit-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; transition: all 0.2s; text-align: center; }
     .unit-btn:last-child { border-right: none; }
@@ -123,13 +125,13 @@
     .toggle input:checked ~ .toggle-thumb { left: 24px; background: var(--gold); }
 
     /* NOTIFICATION ROWS */
-    .notif-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-top: none; padding: 12px 14px; }
+    .notif-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-top: none; padding: 12px 14px; gap: 10px; }
     .notif-row:first-of-type { border-top: 1px solid var(--border); }
     .notif-info { flex: 1; }
     .notif-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); }
     .notif-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 300; }
 
-    /* THEME SELECTOR */
+    /* THEME */
     .theme-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
     .theme-card { background: var(--surface); border: 2px solid var(--border); padding: 14px 10px; text-align: center; cursor: pointer; transition: all 0.2s; }
     .theme-card.active { border-color: var(--gold); }
@@ -137,13 +139,17 @@
     .theme-name { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
     .theme-card.active .theme-name { color: var(--gold); }
 
-    /* DANGER ZONE */
+    /* SIMULATION SECTION */
+    .sim-badge { display: inline-block; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 8px; border: 1px solid var(--blue); color: var(--blue); margin-left: 8px; }
+
+    /* DANGER */
     .danger-btn { display: block; width: 100%; background: none; border: 1px solid rgba(231,76,60,0.3); color: var(--red); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px; cursor: pointer; text-align: center; transition: all 0.2s; margin-bottom: 8px; }
     .danger-btn:hover { background: rgba(231,76,60,0.08); border-color: var(--red); }
 
-    /* TOAST */
-    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red  { background: var(--red); color: #fff; }
 
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
@@ -185,7 +191,7 @@
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
   </div>
 
-  <div class="toast" id="toast">Settings Saved</div>
+  <div class="toast" id="toast"></div>
 
   <main>
 
@@ -194,16 +200,50 @@
       <div class="page-title">SETTINGS</div>
     </div>
 
-    <!-- SAVE BAR -->
     <div class="save-bar">
-      <span class="save-status" id="saveStatus">All changes saved</span>
+      <span class="save-status saved" id="saveStatus">All changes saved</span>
       <button class="save-btn" onclick="saveAll()">SAVE</button>
     </div>
 
-    <!-- BANKROLL -->
+    <!-- DECISION ENGINE -->
     <div class="section">
-      <div class="sec-title">BANK<em>ROLL</em></div>
+      <div class="sec-title">DECISION <em>ENGINE</em></div>
+      <div class="sec-sub">Deterministic always runs. AI overlays when enabled.</div>
+      <div class="decision-cards">
+        <div class="decision-card math active" id="dcMath" onclick="setDecisionMode('math_only')">
+          <div class="decision-icon">∑</div>
+          <div class="decision-name">Math Only</div>
+          <div class="decision-desc">Pure physics. No AI overlay.</div>
+        </div>
+        <div class="decision-card ai" id="dcAi" onclick="setDecisionMode('ai_assisted')">
+          <div class="decision-icon">◎</div>
+          <div class="decision-name">AI-Assisted</div>
+          <div class="decision-desc">Claude reviews, can veto or reduce.</div>
+        </div>
+      </div>
+    </div>
 
+    <!-- ACTIVE PORTFOLIO -->
+    <div class="section">
+      <div class="sec-title">ACTIVE <em>PORTFOLIO</em></div>
+      <div class="sec-sub">Real money or simulation mode</div>
+      <div class="portfolio-cards">
+        <div class="portfolio-card real active" id="pfReal" onclick="setPortfolio('real')">
+          <div class="portfolio-icon">$</div>
+          <div class="portfolio-name">Real</div>
+          <div class="portfolio-desc">Actual bankroll</div>
+        </div>
+        <div class="portfolio-card sim" id="pfSim" onclick="setPortfolio('sim')">
+          <div class="portfolio-icon">▷</div>
+          <div class="portfolio-name">Simulation</div>
+          <div class="portfolio-desc">Practice mode</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REAL BANKROLL -->
+    <div class="section">
+      <div class="sec-title">REAL <em>BANKROLL</em></div>
       <div class="field">
         <div class="field-lbl">Starting Bankroll <span class="field-hint">USD</span></div>
         <input type="number" class="field-input" id="bankroll" placeholder="2000" min="0" oninput="markUnsaved()" />
@@ -223,28 +263,51 @@
       </div>
     </div>
 
-    <!-- CAPS -->
+    <!-- REAL CAPS -->
     <div class="section">
-      <div class="sec-title">LOSS <em>CAPS</em></div>
-
+      <div class="sec-title">REAL LOSS <em>CAPS</em></div>
       <div class="field">
         <div class="field-lbl">Daily Loss Cap <span class="field-hint">USD</span></div>
         <input type="number" class="field-input" id="dailyCap" placeholder="200" min="0" oninput="markUnsaved()" />
       </div>
-
       <div class="field">
         <div class="field-lbl">Weekly Loss Cap <span class="field-hint">USD</span></div>
         <input type="number" class="field-input" id="weeklyCap" placeholder="500" min="0" oninput="markUnsaved()" />
       </div>
-
       <div class="field">
         <div class="field-lbl">Max Bets Per Day</div>
         <input type="number" class="field-input" id="maxBets" placeholder="5" min="1" oninput="markUnsaved()" />
       </div>
-
       <div class="field">
         <div class="field-lbl">Max Unit Size Per Bet <span class="field-hint">units</span></div>
-        <input type="number" class="field-input" id="maxUnitSize" placeholder="2" min="1" oninput="markUnsaved()" />
+        <input type="number" class="field-input" id="maxUnitSize" placeholder="2" min="1" step="0.25" oninput="markUnsaved()" />
+      </div>
+    </div>
+
+    <!-- SIMULATION BANKROLL -->
+    <div class="section">
+      <div class="sec-title">SIMULATION <span class="sim-badge">SIM</span></div>
+      <div class="field">
+        <div class="field-lbl">Sim Bankroll <span class="field-hint">Fake USD</span></div>
+        <input type="number" class="field-input" id="simBankroll" placeholder="10000" min="0" oninput="markUnsaved()" />
+      </div>
+      <div class="field">
+        <div class="field-lbl">Sim Unit Size <span class="field-hint">per bet</span></div>
+        <input type="number" class="field-input" id="simUnitSize" placeholder="100" min="1" oninput="markUnsaved()" />
+      </div>
+      <div class="field">
+        <div class="field-lbl">Sim Daily Cap <span class="field-hint">max per day</span></div>
+        <input type="number" class="field-input" id="simDailyCap" placeholder="500" min="0" oninput="markUnsaved()" />
+      </div>
+      <div class="notif-row" style="border-top:1px solid var(--border); margin-top:10px;">
+        <div class="notif-info">
+          <div class="notif-name">Auto-Grade Sim Results</div>
+          <div class="notif-desc">Grade sim bets when ESPN posts final scores</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="simAutoGrade" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
       </div>
     </div>
 
@@ -259,36 +322,24 @@
         </div>
         <input type="range" class="slider" id="minConf" min="0" max="90" value="50"
           oninput="updateSlider('minConf','confDisplay', this.value+'%'); markUnsaved();" />
-        <div class="slider-hint">Picks below this confidence % are hidden from Today's Picks</div>
-      </div>
-
-      <div class="slider-field">
-        <div class="slider-head">
-          <span class="slider-lbl">Min Algorithm Consensus</span>
-          <span class="slider-val" id="consDisplay">13 / 25</span>
-        </div>
-        <input type="range" class="slider" id="minCons" min="1" max="25" value="13"
-          oninput="updateSlider('minCons','consDisplay', this.value+' / 25'); markUnsaved();" />
-        <div class="slider-hint">Picks with fewer than this many algo votes are hidden</div>
+        <div class="slider-hint">Picks below this confidence are hidden from Today's Picks</div>
       </div>
 
       <div class="slider-field">
         <div class="slider-head">
           <span class="slider-lbl">Auto-Bet Threshold</span>
-          <span class="slider-val" id="autoDisplay">65%</span>
+          <span class="slider-val" id="autoDisplay">70%</span>
         </div>
-        <input type="range" class="slider" id="autoThreshold" min="40" max="90" value="65"
+        <input type="range" class="slider" id="autoThreshold" min="40" max="90" value="70"
           oninput="updateSlider('autoThreshold','autoDisplay', this.value+'%'); markUnsaved();" />
         <div class="slider-hint">Auto mode only queues picks at or above this confidence</div>
       </div>
     </div>
 
-    <!-- SPORTS -->
+    <!-- SPORTS TRACKING -->
     <div class="section">
       <div class="sec-title">SPORTS <em>TRACKING</em></div>
-      <div class="sport-grid" id="sportGrid">
-        <!-- Populated by JS -->
-      </div>
+      <div class="sport-grid" id="sportGrid"></div>
     </div>
 
     <!-- NOTIFICATIONS -->
@@ -298,7 +349,7 @@
       <div class="notif-row">
         <div class="notif-info">
           <div class="notif-name">Steam Move Alert</div>
-          <div class="notif-desc">Notify when a steam move is detected on any active game</div>
+          <div class="notif-desc">Notify when a steam move is detected</div>
         </div>
         <label class="toggle">
           <input type="checkbox" id="notifSteam" onchange="markUnsaved()" />
@@ -309,7 +360,7 @@
       <div class="notif-row">
         <div class="notif-info">
           <div class="notif-name">New Pick Generated</div>
-          <div class="notif-desc">Alert when algorithms produce a new high-confidence pick</div>
+          <div class="notif-desc">Alert when a new high-confidence pick is produced</div>
         </div>
         <label class="toggle">
           <input type="checkbox" id="notifPick" onchange="markUnsaved()" />
@@ -331,7 +382,7 @@
       <div class="notif-row">
         <div class="notif-info">
           <div class="notif-name">Result Posted</div>
-          <div class="notif-desc">Notify when a game result is logged and pick is scored</div>
+          <div class="notif-desc">Notify when a game result is logged</div>
         </div>
         <label class="toggle">
           <input type="checkbox" id="notifResult" onchange="markUnsaved()" />
@@ -341,11 +392,11 @@
 
       <div class="notif-row">
         <div class="notif-info">
-          <div class="notif-name">Line Movement Alert</div>
-          <div class="notif-desc">Alert on significant line moves on picks you've approved</div>
+          <div class="notif-name">Claude Veto Alert</div>
+          <div class="notif-desc">Notify when Claude vetoes a model pick</div>
         </div>
         <label class="toggle">
-          <input type="checkbox" id="notifLine" onchange="markUnsaved()" />
+          <input type="checkbox" id="notifVeto" onchange="markUnsaved()" />
           <div class="toggle-track"></div><div class="toggle-thumb"></div>
         </label>
       </div>
@@ -383,43 +434,11 @@
     </div>
 
     <!-- DANGER ZONE -->
-
-    <!-- SIMULATION SETTINGS -->
-    <div class="section">
-      <div class="sec-title">SIMULATION <em>MODE</em></div>
-
-      <div class="field">
-        <div class="field-lbl">Simulation Bankroll <span class="field-hint">Fake USD</span></div>
-        <input type="number" class="field-input" id="simBankroll" placeholder="10000" min="0" oninput="markUnsaved()" />
-      </div>
-
-      <div class="field">
-        <div class="field-lbl">Simulation Unit Size <span class="field-hint">per bet</span></div>
-        <input type="number" class="field-input" id="simUnitSize" placeholder="100" min="1" oninput="markUnsaved()" />
-      </div>
-
-      <div class="field">
-        <div class="field-lbl">Simulation Daily Cap <span class="field-hint">max per day</span></div>
-        <input type="number" class="field-input" id="simDailyCap" placeholder="500" min="0" oninput="markUnsaved()" />
-      </div>
-
-      <div class="anon-row" style="margin-top:10px;">
-        <div class="anon-info">
-          <div class="anon-name">Auto-Grade Results</div>
-          <div class="anon-desc">Automatically grade simulation bets when ESPN posts final scores</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="simAutoGrade" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <button onclick="resetSimulation()" style="display:block;width:100%;margin-top:14px;background:none;border:1px solid var(--gold-dim);color:var(--gold);font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:12px;cursor:pointer;transition:all 0.2s;">Reset Simulation Bankroll</button>
-    </div>
     <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
-      <button class="danger-btn" onclick="clearSession()">Clear Session Bet Log</button>
+      <button class="danger-btn" onclick="resetSimBankroll()">Reset Simulation Bankroll</button>
+      <button class="danger-btn" onclick="resetLearning()">Reset Learning Loop Timestamp</button>
       <button class="danger-btn" onclick="resetAll()">Reset All Settings to Default</button>
     </div>
 
@@ -458,6 +477,24 @@
             </label>
           </div>`;
       }).join('');
+    }
+
+    // ── DECISION MODE ──
+    function setDecisionMode(mode) {
+      localStorage.setItem('edge_decision_mode', mode);
+      document.getElementById('dcMath').classList.toggle('active', mode === 'math_only');
+      document.getElementById('dcAi').classList.toggle('active', mode === 'ai_assisted');
+      markSaved();
+      showToast(mode === 'ai_assisted' ? 'AI-Assisted mode set' : 'Deterministic mode set',
+                mode === 'ai_assisted' ? 'blue' : '');
+    }
+
+    // ── PORTFOLIO ──
+    function setPortfolio(p) {
+      localStorage.setItem('edge_active_portfolio', p);
+      document.getElementById('pfReal').classList.toggle('active', p === 'real');
+      document.getElementById('pfSim').classList.toggle('active', p === 'sim');
+      markSaved();
     }
 
     // ── UNIT TYPE ──
@@ -501,18 +538,24 @@
 
     // ── SAVE ALL ──
     function saveAll() {
-      const set = (k, v) => { if (v !== '' && v !== null) localStorage.setItem(k, v); };
+      const set = (k, v) => { if (v !== '' && v !== null && v !== undefined) localStorage.setItem(k, v); };
 
-      set('edge_bankroll',      document.getElementById('bankroll').value);
-      set('edge_unit_type',     unitType);
-      set('edge_unit_size',     document.getElementById('unitSize').value);
-      set('edge_daily_cap',     document.getElementById('dailyCap').value);
-      set('edge_weekly_cap',    document.getElementById('weeklyCap').value);
-      set('edge_max_bets',      document.getElementById('maxBets').value);
-      set('edge_max_unit_size', document.getElementById('maxUnitSize').value);
-      set('edge_min_conf',      document.getElementById('minConf').value);
-      set('edge_min_cons',      document.getElementById('minCons').value);
-      set('edge_auto_threshold',document.getElementById('autoThreshold').value);
+      set('edge_bankroll',       document.getElementById('bankroll').value);
+      set('edge_unit_type',      unitType);
+      set('edge_unit_size',      document.getElementById('unitSize').value);
+      set('edge_daily_cap',      document.getElementById('dailyCap').value);
+      set('edge_weekly_cap',     document.getElementById('weeklyCap').value);
+      set('edge_max_bets',       document.getElementById('maxBets').value);
+      set('edge_max_unit_size',  document.getElementById('maxUnitSize').value);
+      set('edge_min_conf',       document.getElementById('minConf').value);
+      set('edge_auto_threshold', document.getElementById('autoThreshold').value);
+
+      // Simulation
+      set('edge_sim_bankroll',   document.getElementById('simBankroll').value);
+      set('edge_sim_unit_size',  document.getElementById('simUnitSize').value);
+      set('edge_sim_daily_cap',  document.getElementById('simDailyCap').value);
+      const sg = document.getElementById('simAutoGrade');
+      if (sg) localStorage.setItem('edge_sim_auto_grade', sg.checked);
 
       // Sports
       SPORTS.forEach(s => {
@@ -521,23 +564,14 @@
       });
 
       // Notifications
-      ['notifSteam','notifPick','notifCap','notifResult','notifLine'].forEach(id => {
+      ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
         const el = document.getElementById(id);
         if (el) localStorage.setItem('edge_' + id, el.checked);
       });
 
-      // Simulation settings
-      set('edge_sim_bankroll',  document.getElementById('simBankroll').value);
-      set('edge_sim_unit_size', document.getElementById('simUnitSize').value);
-      set('edge_sim_daily_cap', document.getElementById('simDailyCap').value);
-      const sgEl = document.getElementById('simAutoGrade');
-      if (sgEl) localStorage.setItem('edge_sim_auto_grade', sgEl.checked);
-
-      // Sync to Supabase settings table if connected
       syncToSupabase();
-
       markSaved();
-      showToast('Settings Saved');
+      showToast('Settings saved');
     }
 
     // ── SUPABASE SYNC ──
@@ -558,19 +592,19 @@
         min_cons:       localStorage.getItem('edge_min_cons'),
         auto_threshold: localStorage.getItem('edge_auto_threshold'),
         theme:          localStorage.getItem('edge_theme'),
-        updated_at:     new Date().toISOString()
+        updated_at:     new Date().toISOString(),
       };
 
       try {
         await fetch(`${url}/rest/v1/settings?id=eq.1`, {
           method: 'PATCH',
           headers: {
-            'apikey': key,
-            'Authorization': `Bearer ${key}`,
+            apikey: key,
+            Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates'
+            Prefer: 'resolution=merge-duplicates',
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
         });
       } catch {}
     }
@@ -579,39 +613,35 @@
     function loadAll() {
       const get = (k, d) => localStorage.getItem(k) || d;
 
-      document.getElementById('bankroll').value     = get('edge_bankroll', '');
-      document.getElementById('unitSize').value     = get('edge_unit_size', '');
-      document.getElementById('dailyCap').value     = get('edge_daily_cap', '');
-      document.getElementById('weeklyCap').value    = get('edge_weekly_cap', '');
-      document.getElementById('maxBets').value      = get('edge_max_bets', '');
-      document.getElementById('maxUnitSize').value  = get('edge_max_unit_size', '');
+      document.getElementById('bankroll').value    = get('edge_bankroll', '');
+      document.getElementById('unitSize').value    = get('edge_unit_size', '');
+      document.getElementById('dailyCap').value    = get('edge_daily_cap', '');
+      document.getElementById('weeklyCap').value   = get('edge_weekly_cap', '');
+      document.getElementById('maxBets').value     = get('edge_max_bets', '');
+      document.getElementById('maxUnitSize').value = get('edge_max_unit_size', '');
 
       const minConf = get('edge_min_conf', '50');
       document.getElementById('minConf').value = minConf;
       document.getElementById('confDisplay').textContent = minConf + '%';
 
-      const minCons = get('edge_min_cons', '13');
-      document.getElementById('minCons').value = minCons;
-      document.getElementById('consDisplay').textContent = minCons + ' / 25';
-
-      const autoT = get('edge_auto_threshold', '65');
+      const autoT = get('edge_auto_threshold', '70');
       document.getElementById('autoThreshold').value = autoT;
       document.getElementById('autoDisplay').textContent = autoT + '%';
 
       setUnitType(get('edge_unit_type', 'flat'));
 
-      // Simulation settings
+      // Simulation
       const simBankroll = document.getElementById('simBankroll');
       const simUnitSize = document.getElementById('simUnitSize');
       const simDailyCap = document.getElementById('simDailyCap');
       const simAutoGrade = document.getElementById('simAutoGrade');
-      if (simBankroll)  simBankroll.value  = get('edge_sim_bankroll', '10000');
-      if (simUnitSize)  simUnitSize.value  = get('edge_sim_unit_size', '100');
-      if (simDailyCap)  simDailyCap.value  = get('edge_sim_daily_cap', '500');
-      if (simAutoGrade) simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') === 'true';
+      if (simBankroll)   simBankroll.value = get('edge_sim_bankroll', '10000');
+      if (simUnitSize)   simUnitSize.value = get('edge_sim_unit_size', '100');
+      if (simDailyCap)   simDailyCap.value = get('edge_sim_daily_cap', '500');
+      if (simAutoGrade)  simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') === 'true';
 
       // Notifications
-      ['notifSteam','notifPick','notifCap','notifResult','notifLine'].forEach(id => {
+      ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.checked = localStorage.getItem('edge_' + id) === 'true';
       });
@@ -621,14 +651,24 @@
       document.querySelectorAll('.theme-card').forEach(c => {
         c.classList.toggle('active', c.dataset.theme === theme);
       });
+
+      // Decision mode
+      const dm = get('edge_decision_mode', 'math_only');
+      document.getElementById('dcMath').classList.toggle('active', dm === 'math_only');
+      document.getElementById('dcAi').classList.toggle('active', dm === 'ai_assisted');
+
+      // Portfolio
+      const pf = get('edge_active_portfolio', 'real');
+      document.getElementById('pfReal').classList.toggle('active', pf === 'real');
+      document.getElementById('pfSim').classList.toggle('active', pf === 'sim');
     }
 
     // ── TOAST ──
-    function showToast(msg) {
+    function showToast(msg, color) {
       const t = document.getElementById('toast');
       t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2200);
+      t.className = 'toast show' + (color ? ' ' + color : '');
+      setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2200);
     }
 
     // ── DANGER ZONE ──
@@ -639,29 +679,30 @@
       showToast('Cap usage reset');
     }
 
-    function clearSession() {
-      localStorage.removeItem('edge_session_bet_log');
-      showToast('Session log cleared');
+    function resetSimBankroll() {
+      const initial = localStorage.getItem('edge_sim_bankroll') || '10000';
+      localStorage.setItem('edge_sim_bankroll', initial);
+      localStorage.removeItem('edge_sim_state');
+      localStorage.removeItem('edge_sim_daily_used');
+      showToast('Simulation bankroll reset', 'blue');
+    }
+
+    function resetLearning() {
+      localStorage.removeItem('edge_learning_last_run');
+      showToast('Learning timestamp cleared');
     }
 
     function resetAll() {
-      const keys = ['edge_bankroll','edge_unit_type','edge_unit_size','edge_daily_cap','edge_weekly_cap',
-        'edge_max_bets','edge_max_unit_size','edge_min_conf','edge_min_cons','edge_auto_threshold',
-        'edge_theme','edge_daily_used','edge_weekly_used','edge_bets_used'];
+      const keys = [
+        'edge_bankroll','edge_unit_type','edge_unit_size','edge_daily_cap','edge_weekly_cap',
+        'edge_max_bets','edge_max_unit_size','edge_min_conf','edge_auto_threshold',
+        'edge_theme','edge_daily_used','edge_weekly_used','edge_bets_used',
+        'edge_sim_bankroll','edge_sim_unit_size','edge_sim_daily_cap','edge_sim_auto_grade',
+        'edge_decision_mode','edge_active_portfolio','edge_betting_mode',
+      ];
       keys.forEach(k => localStorage.removeItem(k));
       loadAll();
       showToast('Settings reset');
-    }
-
-    // ── SIMULATION RESET ──
-    function resetSimulation() {
-      if (typeof EDGE_SIM !== 'undefined') {
-        EDGE_SIM.reset();
-        showToast('Simulation bankroll reset');
-      } else {
-        localStorage.removeItem('edge_sim_state');
-        showToast('Simulation reset');
-      }
     }
 
     // ── INIT ──
