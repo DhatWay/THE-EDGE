@@ -1,6 +1,7 @@
 // ============================================================
-// EDGE — GOVERNOR v2.2
-// Honest confidence · data-availability caps · no amplifier
+// EDGE — GOVERNOR v2.3
+// Spread-implied probability fallback when ML missing
+// Realistic thresholds · no over-capping
 // ============================================================
 
 const EDGE_GOVERNOR = (() => {
@@ -21,10 +22,10 @@ const EDGE_GOVERNOR = (() => {
     NBA:   { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
     MLB:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
     NHL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    NCAAF: { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    NCAAB: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NCAAF: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NCAAB: { bet2u: 64, bet1u: 56, lean: 46, minEdge2u: 0.026, minEdge1u: 0.016, minEdgeLean: 0.008 },
     MLS:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    DEFAULT: { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    DEFAULT: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
   };
 
   const SHRINKAGE = {
@@ -37,8 +38,7 @@ const EDGE_GOVERNOR = (() => {
     NCAAF: 0.605, NCAAB: 0.640, MLS: 0.600, DEFAULT: 0.570,
   };
 
-  // Hard cap — nothing exceeds this. Real elite models rarely top 75%.
-  const MAX_CONFIDENCE = 78;
+  const MAX_CONFIDENCE = 82;
 
   let CALIBRATION = {};
 
@@ -61,6 +61,18 @@ const EDGE_GOVERNOR = (() => {
     return STATIC_WEIGHTS[sport] || STATIC_WEIGHTS.DEFAULT;
   }
 
+  // ── Spread → implied home win prob (fallback when ML missing) ──
+  function spreadToImpliedProb(homeSpread, sport) {
+    if (typeof homeSpread !== 'number') return null;
+    // Home spread negative = home favored. Per point ≈ 2.5-3% shift.
+    const perPoint = {
+      NFL: 0.028, NCAAF: 0.028, NBA: 0.032, NCAAB: 0.032,
+      MLB: 0.040, NHL: 0.035, MLS: 0.040,
+    }[sport] || 0.030;
+    // homeSpread = -7 means home favored by 7 → prob 0.5 + 7*perPoint
+    return clamp(0.5 + (-homeSpread * perPoint), 0.10, 0.90);
+  }
+
   function run(familyOutputs, prior, options = {}) {
     if (!Array.isArray(familyOutputs) || familyOutputs.length === 0) {
       return emptyResult('No family outputs');
@@ -72,7 +84,6 @@ const EDGE_GOVERNOR = (() => {
     const shrinkage = options.shrinkage ?? (SHRINKAGE[sport] ?? SHRINKAGE.DEFAULT);
     const homeBaseline = HOME_BASELINE[sport] ?? HOME_BASELINE.DEFAULT;
 
-    // ── LAYER 1: Force vectors ──
     const breakdown = [];
     let sumAbsForces = 0;
     let netForce = 0;
@@ -114,13 +125,9 @@ const EDGE_GOVERNOR = (() => {
       ? clamp(Math.abs(netForce) / sumAbsForces, 0, 1)
       : 0;
 
-    // ── LAYER 2: Raw confidence (natural range) ──
     const rawConfidence = Math.abs(F_norm) * 100;
-
-    // ── LAYER 3: Coherence adjustment ──
     const coherenceAdjusted = rawConfidence * (0.65 + agreementIndex * 0.35);
 
-    // ── LAYER 4: Conflict penalty ──
     const yesFams = breakdown.filter(b => b.vote === 'yes');
     const noFams  = breakdown.filter(b => b.vote === 'no');
     const topYesConf = yesFams.length ? Math.max(...yesFams.map(b => b.confidence)) : 0;
@@ -130,43 +137,41 @@ const EDGE_GOVERNOR = (() => {
 
     const conflictAdjusted = Math.max(coherenceAdjusted - conflictPenalty, 0);
 
-    // ── LAYER 5: Bayesian posterior ──
-    const marketImpliedHome = prior?.market?.home_ml
-      ? americanToImplied(prior.market.home_ml)
-      : homeBaseline;
+    // ── Market implied probability (ML preferred, spread fallback) ──
+    let marketImpliedHome;
+    let marketSource;
+
+    if (prior?.market?.home_ml) {
+      marketImpliedHome = americanToImplied(prior.market.home_ml);
+      marketSource = 'moneyline';
+    } else if (typeof prior?.market?.current_spread === 'number') {
+      marketImpliedHome = spreadToImpliedProb(prior.market.current_spread, sport);
+      marketSource = 'spread';
+    } else {
+      marketImpliedHome = homeBaseline;
+      marketSource = 'baseline';
+    }
 
     const modelHomeProb = 0.5 + (F_norm / 2);
     const posteriorHomeProb = (1 - shrinkage) * modelHomeProb + shrinkage * marketImpliedHome;
     const posteriorConfidence = Math.abs(posteriorHomeProb - 0.5) * 200;
 
-    // ── LAYER 6: Blend without amplifier ──
-    // Honest blend. If signals are weak, confidence is low. No fiction.
     const combined = (conflictAdjusted * 0.75) + (posteriorConfidence * 0.25);
 
-    // ── LAYER 7: Data-availability penalty ──
-    // Missing market/context data means we can't be as sure.
+    // ── Data-availability caps (soft now) ──
     const dataCaps = [];
     let cap = 100;
 
-    if (prior?.market?.home_ml == null) {
-      cap = Math.min(cap, 60);
-      dataCaps.push('no ML');
-    }
     if (prior?.market?.current_spread == null) {
-      cap = Math.min(cap, 55);
+      cap = Math.min(cap, 60);
       dataCaps.push('no spread');
     }
-    const hasLineHistory = !!(prior?.market?.open_spread && prior?.market?.current_spread && prior.market.open_spread !== prior.market.current_spread);
+    const hasLineHistory = !!(prior?.market?.open_spread
+      && prior?.market?.current_spread
+      && prior.market.open_spread !== prior.market.current_spread);
     if (!hasLineHistory) {
-      cap = Math.min(cap, 72);
+      cap = Math.min(cap, 78);
       dataCaps.push('no line movement');
-    }
-    if (!options.weatherAvailable) {
-      // Only penalize outdoor sports
-      if (['NFL','MLB','NCAAF','MLS'].includes(sport)) {
-        cap = Math.min(cap, 75);
-        dataCaps.push('no weather');
-      }
     }
 
     const capped = Math.min(combined, cap);
@@ -176,7 +181,6 @@ const EDGE_GOVERNOR = (() => {
     const weightedEdge = weightForEdge > 0 ? edgeWeightedSum / weightForEdge : 0;
     const direction = F_norm > 0 ? 'home' : 'away';
 
-    // ── LAYER 8: Decision ──
     const absEdge = Math.abs(weightedEdge);
     let decision = 'PASS';
     let units = 0;
@@ -191,7 +195,12 @@ const EDGE_GOVERNOR = (() => {
     }
 
     const kellyInput = buildKellyInput({
-      posteriorHomeProb, marketHomeML: prior?.market?.home_ml, direction, units,
+      posteriorHomeProb,
+      marketHomeML: prior?.market?.home_ml,
+      spread: prior?.market?.current_spread,
+      sport,
+      direction,
+      units,
     });
 
     return {
@@ -203,6 +212,7 @@ const EDGE_GOVERNOR = (() => {
       combined_pre_cap: round(combined, 1),
       data_cap: cap,
       data_caps: dataCaps,
+      market_source: marketSource,
       calibrated: Object.keys(CALIBRATION).length > 0,
 
       agreement_index: round(agreementIndex, 3),
@@ -244,22 +254,36 @@ const EDGE_GOVERNOR = (() => {
     return round(confidence, 1);
   }
 
-  function buildKellyInput({ posteriorHomeProb, marketHomeML, direction, units }) {
-    if (!marketHomeML) return { available: false, reason: 'No market ML' };
+  function buildKellyInput({ posteriorHomeProb, marketHomeML, spread, sport, direction, units }) {
     const ourProb = direction === 'home' ? posteriorHomeProb : (1 - posteriorHomeProb);
-    const marketProb = direction === 'home'
-      ? americanToImplied(marketHomeML)
-      : 1 - americanToImplied(marketHomeML);
-    const decimal = direction === 'home'
-      ? americanToDecimal(marketHomeML)
-      : americanToDecimal(-marketHomeML);
+
+    let marketProb;
+    let decimal;
+    let source;
+
+    if (marketHomeML) {
+      const marketHome = americanToImplied(marketHomeML);
+      marketProb = direction === 'home' ? marketHome : (1 - marketHome);
+      decimal = direction === 'home' ? americanToDecimal(marketHomeML) : americanToDecimal(-marketHomeML);
+      source = 'ml';
+    } else if (typeof spread === 'number') {
+      const homeImplied = spreadToImpliedProb(spread, sport);
+      marketProb = direction === 'home' ? homeImplied : (1 - homeImplied);
+      decimal = 1.91; // -110 standard
+      source = 'spread';
+    } else {
+      return { available: false, reason: 'No market data' };
+    }
+
     const b = decimal - 1;
     const edge = ourProb - marketProb;
     const kellyRaw = b > 0 ? (b * ourProb - (1 - ourProb)) / b : 0;
     const kellyFractional = Math.max(kellyRaw * 0.25, 0);
     const kellyUnits = Math.min(kellyFractional * 100 / 5, 5);
+
     return {
       available: true,
+      source,
       our_prob: round(ourProb, 4),
       market_prob: round(marketProb, 4),
       edge: round(edge, 4),
@@ -285,7 +309,7 @@ const EDGE_GOVERNOR = (() => {
     return {
       consensus_score: 0, confidence: 0, raw_confidence: 0, coherence_adjusted: 0,
       posterior_confidence: 0, combined_pre_cap: 0, data_cap: 100, data_caps: [],
-      calibrated: false, agreement_index: 0, conflict_penalty: 0,
+      market_source: 'none', calibrated: false, agreement_index: 0, conflict_penalty: 0,
       shrinkage: 0, edge: 0, direction: 'none', recommended_side: 'pass',
       decision: 'PASS', units: 0,
       model_home_prob: 0.5, market_home_prob: 0.5, posterior_home_prob: 0.5,
@@ -304,6 +328,7 @@ const EDGE_GOVERNOR = (() => {
   return {
     run, setCalibration, getDynamicWeights,
     STATIC_WEIGHTS, SPORT_THRESHOLDS, SHRINKAGE, HOME_BASELINE, MAX_CONFIDENCE,
+    spreadToImpliedProb,
   };
 
 })();
