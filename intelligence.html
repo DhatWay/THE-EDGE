@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+    main { padding-top: 60px; }
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px,12vw,72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    /* TABS */
+    .tab-strip { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--bg2); scrollbar-width: none; position: sticky; top: 60px; z-index: 40; }
+    .tab-strip::-webkit-scrollbar { display: none; }
+    .tab { flex-shrink: 0; background: none; border: none; border-bottom: 3px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 14px 18px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+    .tab:hover:not(.active) { color: var(--text-mid); }
+
+    /* PANEL */
+    .panel { display: none; padding: 16px 20px 28px; }
+    .panel.active { display: block; }
+
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin: 18px 0 12px; }
+    .sec-title:first-child { margin-top: 0; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+
+    /* STAT STRIP */
+    .stat-strip { display: grid; grid-template-columns: repeat(4,1fr); gap: 0; border: 1px solid var(--border); background: var(--surface); margin-bottom: 12px; }
+    .ss-cell { padding: 12px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .ss-cell:last-child { border-right: none; }
+    .ss-val { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .ss-val.gold { color: var(--gold); }
+    .ss-val.green { color: var(--green); }
+    .ss-val.red { color: var(--red); }
+    .ss-val.blue { color: var(--blue); }
+    .ss-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+
+    /* SNAPSHOT TILES */
+    .snapshot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .snap-tile { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; transition: border-color 0.2s; }
+    .snap-tile:hover { border-color: var(--border-bright); }
+    .snap-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    .snap-sport { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: var(--gold); }
+    .snap-count { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); }
+    .snap-row { display: flex; justify-content: space-between; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1px; color: var(--text-mid); padding: 3px 0; border-top: 1px solid rgba(201,168,76,0.06); }
+    .snap-row:first-of-type { border-top: none; padding-top: 0; }
+    .snap-row b { color: var(--text); }
+
+    /* TABLE */
+    .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; min-width: 640px; }
+    thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 10px 10px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; cursor: pointer; user-select: none; }
+    thead th:hover { color: var(--text-mid); }
+    thead th.sorted { color: var(--gold); }
+    thead th.sorted::after { content: ' ▾'; }
+    thead th.sorted.asc::after { content: ' ▴'; }
+    tbody tr { border-bottom: 1px solid rgba(201,168,76,0.05); transition: background 0.15s; }
+    tbody tr:hover { background: rgba(201,168,76,0.04); }
+    tbody td { padding: 11px 10px; font-size: 13px; color: var(--text-mid); white-space: nowrap; }
+
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .mode-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; }
+    .mode-tag.math { border-color: var(--gold-dim); color: var(--gold); }
+    .mode-tag.ai   { border-color: rgba(74,144,217,0.5); color: var(--blue); }
+    .decision-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; }
+    .decision-tag.bet2u { border-color: var(--gold); color: var(--gold); }
+    .decision-tag.bet1u { border-color: var(--green); color: var(--green); }
+    .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
+    .decision-tag.pass  { border-color: var(--border); color: var(--text-dim); }
+    .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
+
+    .bold { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .conf-bar { display: inline-block; width: 44px; height: 3px; background: var(--bg4); vertical-align: middle; margin-right: 6px; }
+    .conf-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); }
+    .res { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; }
+    .res.w { color: var(--green); } .res.l { color: var(--red); } .res.p { color: var(--text-dim); }
+    .res.pending { color: var(--text-dim); font-size: 11px; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1px; }
+    .pnl { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; }
+    .pnl.pos { color: var(--green); } .pnl.neg { color: var(--red); } .pnl.neu { color: var(--text-dim); }
+
+    /* FILTER BAR */
+    .filter-bar { display: flex; gap: 8px; padding: 10px 0 12px; overflow-x: auto; scrollbar-width: none; }
+    .filter-bar::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+
+    /* FAMILY GRID */
+    .family-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .family-mini { background: var(--surface); border: 1px solid var(--border); padding: 12px 12px; }
+    .family-mini-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+    .family-mini-val { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .family-mini-val.green { color: var(--green); }
+    .family-mini-val.red { color: var(--red); }
+    .family-mini-val.gold { color: var(--gold); }
+    .family-mini-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 3px; }
+
+    /* WIN/LOSS SPLITS */
+    .split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .split-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; }
+    .split-card-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+    .split-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid rgba(201,168,76,0.06); }
+    .split-row:first-of-type { border-top: none; padding-top: 0; }
+    .split-key { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .split-val { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; }
+    .split-val.pos { color: var(--green); }
+    .split-val.neg { color: var(--red); }
+    .split-val.neu { color: var(--text-dim); }
+
+    /* TREND */
+    .trend-grid { display: flex; flex-direction: column; gap: 8px; }
+    .trend-card { background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .trend-left { flex: 1; }
+    .trend-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .trend-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+    .trend-val { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; }
+    .trend-val.up { color: var(--green); }
+    .trend-val.dn { color: var(--red); }
+    .trend-val.flat { color: var(--text-dim); }
+
+    /* LINE FEED */
+    .line-feed { display: flex; flex-direction: column; gap: 6px; }
+    .feed-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 10px 12px; }
+    .feed-sport { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); flex-shrink: 0; }
+    .feed-matchup { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .feed-line { font-family: 'Bebas Neue', sans-serif; font-size: 15px; color: var(--text-mid); letter-spacing: 1px; }
+    .feed-arrow { font-size: 12px; }
+    .feed-arrow.up { color: var(--red); }
+    .feed-arrow.dn { color: var(--green); }
+    .feed-arrow.flat { color: var(--text-dim); opacity: 0.4; }
+    .feed-flag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; padding: 2px 6px; border: 1px solid; }
+    .feed-flag.steam { border-color: rgba(231,76,60,0.4); color: var(--red); }
+    .feed-flag.rlm { border-color: rgba(201,168,76,0.4); color: var(--gold); }
+    .feed-flag.sharp { border-color: rgba(39,174,96,0.4); color: var(--green); }
+
+    /* MODE COMPARE */
+    .mode-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    .mc-card { background: var(--surface); border: 2px solid var(--border); padding: 16px 14px; }
+    .mc-card.math { border-color: var(--gold); }
+    .mc-card.ai { border-color: var(--blue); }
+    .mc-card-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+    .mc-card-val { font-family: 'Bebas Neue', sans-serif; font-size: 32px; letter-spacing: 2px; line-height: 1; }
+    .mc-card.math .mc-card-val { color: var(--gold); }
+    .mc-card.ai .mc-card-val { color: var(--blue); }
+    .mc-card-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+    /* EMPTY */
+    .empty-note { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 24px; text-align: center; background: var(--surface); border: 1px solid var(--border); }
+
+    /* REFRESH */
+    .refresh-btn { display: block; width: 100%; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; padding: 11px; cursor: pointer; transition: opacity 0.2s; margin-bottom: 12px; }
+    .refresh-btn:hover { opacity: 0.85; }
+    .refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.red { background: var(--red); color: #fff; }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="intelligence.html" class="active"><span class="ico">▦</span> Intelligence</a>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Master Spreadsheet</div>
+      <div class="page-title">INTELLI<em>GENCE</em></div>
+    </div>
+
+    <div class="tab-strip" id="tabStrip">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="picks">All Picks</button>
+      <button class="tab" data-tab="sports">By Sport</button>
+      <button class="tab" data-tab="families">Families</button>
+      <button class="tab" data-tab="power">Power Ratings</button>
+      <button class="tab" data-tab="lines">Line Feed</button>
+      <button class="tab" data-tab="trends">Trends</button>
+      <button class="tab" data-tab="modes">Mode Compare</button>
+    </div>
+
+    <!-- OVERVIEW -->
+    <div class="panel active" data-panel="overview">
+      <button class="refresh-btn" onclick="loadAll()">↻ Refresh Data</button>
+
+      <div class="sec-title">SNAPSHOT</div>
+      <div class="stat-strip">
+        <div class="ss-cell"><div class="ss-val gold" id="ovTotalPicks">—</div><div class="ss-lbl">Total Picks</div></div>
+        <div class="ss-cell"><div class="ss-val green" id="ovRecord">—</div><div class="ss-lbl">W-L-P</div></div>
+        <div class="ss-cell"><div class="ss-val" id="ovUnits">—</div><div class="ss-lbl">Net Units</div></div>
+        <div class="ss-cell"><div class="ss-val" id="ovRoi">—</div><div class="ss-lbl">ROI</div></div>
+      </div>
+
+      <div class="sec-title">MODE <em>SPLIT</em></div>
+      <div class="stat-strip">
+        <div class="ss-cell"><div class="ss-val gold" id="ovMathCount">—</div><div class="ss-lbl">Math Picks</div></div>
+        <div class="ss-cell"><div class="ss-val gold" id="ovMathRoi">—</div><div class="ss-lbl">Math ROI</div></div>
+        <div class="ss-cell"><div class="ss-val blue" id="ovAiCount">—</div><div class="ss-lbl">AI Picks</div></div>
+        <div class="ss-cell"><div class="ss-val blue" id="ovAiRoi">—</div><div class="ss-lbl">AI ROI</div></div>
+      </div>
+
+      <div class="sec-title">TODAY'S <em>GAMES</em></div>
+      <div class="snapshot-grid" id="snapshotGrid">
+        <div class="empty-note">No games loaded</div>
+      </div>
+
+      <div class="sec-title">RECENT <em>PICKS</em></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Sport</th><th>Mode</th><th>Matchup</th><th>Side</th><th>Conf</th><th>Result</th><th>P&L</th>
+            </tr>
+          </thead>
+          <tbody id="ovRecentBody">
+            <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ALL PICKS -->
+    <div class="panel" data-panel="picks">
+      <div class="filter-bar" id="picksFilters">
+        <button class="fchip active" data-f="all">All</button>
+        <button class="fchip" data-f="math_only">Math Only</button>
+        <button class="fchip" data-f="ai_assisted">AI Only</button>
+        <button class="fchip" data-f="BET_2U">BET 2U</button>
+        <button class="fchip" data-f="BET_1U">BET 1U</button>
+        <button class="fchip" data-f="LEAN">Lean</button>
+        <button class="fchip" data-f="VETOED">Vetoed</button>
+        <button class="fchip" data-f="W">Wins</button>
+        <button class="fchip" data-f="L">Losses</button>
+        <button class="fchip" data-f="pending">Pending</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="created_at">Date</th>
+              <th data-sort="sport">Sport</th>
+              <th data-sort="decision_mode">Mode</th>
+              <th data-sort="decision">Decision</th>
+              <th>Matchup</th>
+              <th>Side</th>
+              <th data-sort="confidence">Conf</th>
+              <th data-sort="units">Units</th>
+              <th data-sort="result">Result</th>
+              <th data-sort="pnl">P&L</th>
+            </tr>
+          </thead>
+          <tbody id="allPicksBody">
+            <tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);text-align:right;padding:8px 0;" id="allPicksCount"></div>
+    </div>
+
+    <!-- BY SPORT -->
+    <div class="panel" data-panel="sports">
+      <div class="sec-title">SPORT <em>BREAKDOWN</em></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Sport</th>
+              <th>Picks</th>
+              <th>W-L-P</th>
+              <th>Win %</th>
+              <th>Units</th>
+              <th>ROI</th>
+              <th>Avg Conf</th>
+            </tr>
+          </thead>
+          <tbody id="sportBreakdownBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- FAMILIES -->
+    <div class="panel" data-panel="families">
+      <div class="sec-title">FAMILY <em>PERFORMANCE</em></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Family</th>
+              <th>Sport</th>
+              <th>W-L</th>
+              <th>ROI</th>
+              <th>Weight</th>
+            </tr>
+          </thead>
+          <tbody id="familyPerfBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- POWER RATINGS -->
+    <div class="panel" data-panel="power">
+      <div class="sec-title">TOP <em>RATED</em></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Sport</th><th>Team</th><th>Rating</th><th>Off</th><th>Def</th><th>Record</th><th>Form</th>
+            </tr>
+          </thead>
+          <tbody id="powerBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- LINES -->
+    <div class="panel" data-panel="lines">
+      <div class="sec-title">LINE <em>FEED</em></div>
+      <div class="line-feed" id="lineFeed">
+        <div class="empty-note">No line movement data</div>
+      </div>
+    </div>
+
+    <!-- TRENDS -->
+    <div class="panel" data-panel="trends">
+      <div class="sec-title">TREND <em>SUITE</em></div>
+      <div class="trend-grid" id="trendGrid">
+        <div class="empty-note">Trend analysis populates once picks accumulate</div>
+      </div>
+    </div>
+
+    <!-- MODE COMPARE -->
+    <div class="panel" data-panel="modes">
+      <div class="sec-title">MODE <em>COMPARISON</em></div>
+      <div class="mode-compare" id="modeCompare">
+        <div class="mc-card math">
+          <div class="mc-card-lbl">Deterministic</div>
+          <div class="mc-card-val" id="mcMathRecord">—</div>
+          <div class="mc-card-sub" id="mcMathSub">—</div>
+        </div>
+        <div class="mc-card ai">
+          <div class="mc-card-lbl">AI-Assisted</div>
+          <div class="mc-card-val" id="mcAiRecord">—</div>
+          <div class="mc-card-sub" id="mcAiSub">—</div>
+        </div>
+      </div>
+
+      <div class="sec-title">BY <em>CONFIDENCE</em></div>
+      <div class="family-grid" id="confGrid"></div>
+
+      <div class="sec-title">BY <em>DECISION</em></div>
+      <div class="family-grid" id="decisionGrid"></div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Master Intelligence · Real-time Supabase · © 2026</div>
+    </footer>
+
+  </main>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    // ── TABS ──
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const target = tab.dataset.tab;
+        document.querySelectorAll('.panel').forEach(p => {
+          p.classList.toggle('active', p.dataset.panel === target);
+        });
+      });
+    });
+
+    // ── STATE ──
+    let allPicks = [];
+    let allPower = [];
+    let allWeights = [];
+    let allGames = [];
+    let pickFilter = 'all';
+    let pickSort = { key: 'created_at', dir: -1 };
+
+    // ── FILTERS ──
+    document.querySelectorAll('#picksFilters .fchip').forEach(c => {
+      c.addEventListener('click', () => {
+        document.querySelectorAll('#picksFilters .fchip').forEach(x => x.classList.remove('active'));
+        c.classList.add('active');
+        pickFilter = c.dataset.f;
+        renderAllPicks();
+      });
+    });
+
+    // ── SORT ──
+    document.querySelectorAll('#allPicksBody').forEach(() => {});
+    document.querySelectorAll('[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (pickSort.key === key) pickSort.dir *= -1;
+        else { pickSort.key = key; pickSort.dir = -1; }
+        document.querySelectorAll('[data-sort]').forEach(t => t.classList.remove('sorted', 'asc'));
+        th.classList.add('sorted');
+        if (pickSort.dir === 1) th.classList.add('asc');
+        renderAllPicks();
+      });
+    });
+
+    // ── LOAD ──
+    async function loadAll() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      allGames = (() => { try { return JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch { return []; } })();
+
+      if (!url || !key) {
+        renderAll();
+        return;
+      }
+
+      try {
+        const [picksRes, powerRes, weightsRes] = await Promise.all([
+          fetch(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=1000`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+          fetch(`${url}/rest/v1/power_ratings?select=*&order=overall.desc&limit=100`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+          fetch(`${url}/rest/v1/algorithm_weights?select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+        ]);
+        allPicks = picksRes.ok ? await picksRes.json() : [];
+        allPower = powerRes.ok ? await powerRes.json() : [];
+        allWeights = weightsRes.ok ? await weightsRes.json() : [];
+      } catch (e) {
+        showToast('Load error: ' + e.message, true);
+      }
+
+      renderAll();
+    }
+
+    function renderAll() {
+      renderOverview();
+      renderAllPicks();
+      renderSportBreakdown();
+      renderFamilyPerf();
+      renderPower();
+      renderLineFeed();
+      renderTrends();
+      renderModeCompare();
+    }
+
+    // ── OVERVIEW ──
+    function renderOverview() {
+      const picks = allPicks;
+      const settled = picks.filter(p => p.result);
+      const w = picks.filter(p => p.result === 'W').length;
+      const l = picks.filter(p => p.result === 'L').length;
+      const pu = picks.filter(p => p.result === 'P').length;
+      const units = picks.reduce((s, p) => s + (p.units || 0), 0);
+      const pnl = settled.reduce((s, p) => s + (p.pnl || 0), 0);
+      const roi = units > 0 ? (pnl / units) * 100 : null;
+
+      setText('ovTotalPicks', picks.length);
+      setText('ovRecord', `${w}-${l}-${pu}`);
+      setText('ovUnits', pnl !== 0 ? (pnl > 0 ? '+' : '') + pnl.toFixed(1) + 'u' : '—',
+              pnl > 0 ? 'green' : pnl < 0 ? 'red' : '');
+      setText('ovRoi', roi !== null ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%' : '—',
+              roi > 0 ? 'green' : roi < 0 ? 'red' : '');
+
+      // Mode split
+      const math = picks.filter(p => p.decision_mode === 'math_only');
+      const ai = picks.filter(p => p.decision_mode === 'ai_assisted');
+
+      const mathU = math.reduce((s, p) => s + (p.units || 0), 0);
+      const mathP = math.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+      const aiU = ai.reduce((s, p) => s + (p.units || 0), 0);
+      const aiP = ai.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+
+      setText('ovMathCount', math.length);
+      setText('ovMathRoi', mathU > 0 ? (mathP / mathU * 100).toFixed(1) + '%' : '—');
+      setText('ovAiCount', ai.length);
+      setText('ovAiRoi', aiU > 0 ? (aiP / aiU * 100).toFixed(1) + '%' : '—');
+
+      // Snapshot tiles
+      const snap = document.getElementById('snapshotGrid');
+      if (!allGames.length) {
+        snap.innerHTML = '<div class="empty-note">No games loaded — refresh Matchups</div>';
+      } else {
+        const bySport = {};
+        allGames.forEach(g => {
+          const s = g._sport || g.sport || '?';
+          if (!bySport[s]) bySport[s] = { count: 0, picks: 0, highest: null };
+          bySport[s].count++;
+        });
+        // Count picks per sport
+        picks.slice(0, 200).forEach(p => {
+          if (p.sport && bySport[p.sport]) bySport[p.sport].picks++;
+        });
+        snap.innerHTML = Object.entries(bySport).map(([sport, info]) => `
+          <div class="snap-tile">
+            <div class="snap-head">
+              <span class="snap-sport">${sport}</span>
+              <span class="snap-count">${info.count} games</span>
+            </div>
+            <div class="snap-row"><span>Active picks</span><b>${info.picks}</b></div>
+            <div class="snap-row"><span>Books</span><b>${allGames.filter(g => (g._sport || g.sport) === sport && g.bookmaker_count).length || '—'}</b></div>
+          </div>
+        `).join('');
+      }
+
+      // Recent picks
+      const body = document.getElementById('ovRecentBody');
+      const recent = picks.slice(0, 10);
+      if (!recent.length) {
+        body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No picks logged</td></tr>';
+      } else {
+        body.innerHTML = recent.map(p => pickRow(p)).join('');
+      }
+    }
+
+    function setText(id, val, cls) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = val;
+      el.className = 'ss-val' + (cls ? ' ' + cls : '');
+    }
+
+    function pickRow(p) {
+      const date = p.created_at ? new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+      const res = p.result || 'PENDING';
+      const resCls = p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : p.result === 'P' ? 'p' : 'pending';
+      const pnl = p.pnl;
+      const pnlCls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu';
+      const pnlStr = pnl != null ? (pnl > 0 ? '+' : '') + pnl.toFixed(1) + 'u' : '—';
+      const modeTag = p.decision_mode === 'ai_assisted'
+        ? '<span class="mode-tag ai">AI</span>'
+        : '<span class="mode-tag math">MATH</span>';
+      const conf = Math.round(p.confidence || 0);
+      const confBar = `<span class="conf-bar"><span class="conf-fill" style="width:${conf}%"></span></span>${conf}%`;
+      const matchup = `${p.away_team || '?'} @ ${p.home_team || '?'}`;
+      const side = p.side_team || '—';
+      return `
+        <tr>
+          <td>${date}</td>
+          <td><span class="sport-tag">${p.sport || '—'}</span></td>
+          <td>${modeTag}</td>
+          <td><div class="bold">${matchup}</div></td>
+          <td>${side}</td>
+          <td>${confBar}</td>
+          <td><span class="res ${resCls}">${res}</span></td>
+          <td><span class="pnl ${pnlCls}">${pnlStr}</span></td>
+        </tr>`;
+    }
+
+    // ── ALL PICKS ──
+    function renderAllPicks() {
+      const body = document.getElementById('allPicksBody');
+      const count = document.getElementById('allPicksCount');
+
+      let picks = [...allPicks];
+
+      // Filter
+      if (pickFilter === 'math_only' || pickFilter === 'ai_assisted') {
+        picks = picks.filter(p => p.decision_mode === pickFilter);
+      } else if (['BET_2U','BET_1U','LEAN','VETOED'].includes(pickFilter)) {
+        picks = picks.filter(p => p.decision === pickFilter);
+      } else if (['W','L','P'].includes(pickFilter)) {
+        picks = picks.filter(p => p.result === pickFilter);
+      } else if (pickFilter === 'pending') {
+        picks = picks.filter(p => !p.result);
+      }
+
+      // Sort
+      const { key, dir } = pickSort;
+      picks.sort((a, b) => {
+        const av = a[key] ?? '';
+        const bv = b[key] ?? '';
+        if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+        return av < bv ? -dir : av > bv ? dir : 0;
+      });
+
+      count.textContent = `${picks.length} pick${picks.length === 1 ? '' : 's'}`;
+
+      if (!picks.length) {
+        body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No picks match filter</td></tr>';
+        return;
+      }
+
+      body.innerHTML = picks.slice(0, 300).map(p => {
+        const date = p.created_at ? new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+        const modeTag = p.decision_mode === 'ai_assisted'
+          ? '<span class="mode-tag ai">AI</span>'
+          : '<span class="mode-tag math">MATH</span>';
+        const decTag = p.decision === 'BET_2U' ? '<span class="decision-tag bet2u">2U</span>'
+                    : p.decision === 'BET_1U' ? '<span class="decision-tag bet1u">1U</span>'
+                    : p.decision === 'LEAN' ? '<span class="decision-tag lean">LEAN</span>'
+                    : p.decision === 'VETOED' ? '<span class="decision-tag vetoed">VETO</span>'
+                    : '<span class="decision-tag pass">' + (p.decision || '—') + '</span>';
+        const res = p.result || 'PENDING';
+        const resCls = p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : p.result === 'P' ? 'p' : 'pending';
+        const pnl = p.pnl;
+        const pnlCls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu';
+        const pnlStr = pnl != null ? (pnl > 0 ? '+' : '') + pnl.toFixed(1) + 'u' : '—';
+        const matchup = `${p.away_team || '?'} @ ${p.home_team || '?'}`;
+        const side = p.side_team || '—';
+        const conf = Math.round(p.confidence || 0);
+        return `
+          <tr>
+            <td>${date}</td>
+            <td><span class="sport-tag">${p.sport || '—'}</span></td>
+            <td>${modeTag}</td>
+            <td>${decTag}</td>
+            <td><div class="bold">${matchup}</div></td>
+            <td>${side}</td>
+            <td>${conf}%</td>
+            <td>${p.units || 0}u</td>
+            <td><span class="res ${resCls}">${res}</span></td>
+            <td><span class="pnl ${pnlCls}">${pnlStr}</span></td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── SPORT BREAKDOWN ──
+    function renderSportBreakdown() {
+      const body = document.getElementById('sportBreakdownBody');
+      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+
+      const rows = sports.map(s => {
+        const sp = allPicks.filter(p => p.sport === s);
+        if (!sp.length) return null;
+        const w = sp.filter(p => p.result === 'W').length;
+        const l = sp.filter(p => p.result === 'L').length;
+        const pu = sp.filter(p => p.result === 'P').length;
+        const units = sp.reduce((sum, p) => sum + (p.units || 0), 0);
+        const pnl = sp.filter(p => p.result).reduce((sum, p) => sum + (p.pnl || 0), 0);
+        const roi = units > 0 ? (pnl / units) * 100 : 0;
+        const winPct = (w + l) > 0 ? (w / (w + l)) * 100 : 0;
+        const confs = sp.map(p => p.confidence || 0).filter(c => c > 0);
+        const avgConf = confs.length ? (confs.reduce((a, b) => a + b, 0) / confs.length) : 0;
+        return { s, w, l, pu, units, pnl, roi, winPct, avgConf, total: sp.length };
+      }).filter(Boolean);
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No sport data yet</td></tr>';
+        return;
+      }
+
+      body.innerHTML = rows.map(r => `
+        <tr>
+          <td><span class="sport-tag">${r.s}</span></td>
+          <td>${r.total}</td>
+          <td>${r.w}-${r.l}-${r.pu}</td>
+          <td>${r.winPct.toFixed(1)}%</td>
+          <td><span class="pnl ${r.pnl > 0 ? 'pos' : r.pnl < 0 ? 'neg' : 'neu'}">${r.pnl > 0 ? '+' : ''}${r.pnl.toFixed(1)}u</span></td>
+          <td><span class="pnl ${r.roi > 0 ? 'pos' : r.roi < 0 ? 'neg' : 'neu'}">${r.roi > 0 ? '+' : ''}${r.roi.toFixed(1)}%</span></td>
+          <td>${r.avgConf.toFixed(1)}%</td>
+        </tr>`).join('');
+    }
+
+    // ── FAMILY PERF ──
+    function renderFamilyPerf() {
+      const body = document.getElementById('familyPerfBody');
+      if (!allWeights.length) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No family data yet — run learning loop</td></tr>';
+        return;
+      }
+
+      const familyLabels = {
+        team_quality: 'Team Quality',
+        offense_defense: 'Offense / Defense',
+        coaching: 'Coaching',
+        market: 'Market Intelligence',
+        line_dynamics: 'Line Dynamics',
+        fatigue: 'Fatigue & Recovery',
+        environment: 'Environment',
+        trend: 'Trend & Momentum',
+        injury: 'Injury Impact',
+      };
+
+      const sorted = [...allWeights].sort((a, b) => (b.roi || -999) - (a.roi || -999));
+
+      body.innerHTML = sorted.map(w => {
+        const total = (w.wins || 0) + (w.losses || 0);
+        const roi = w.roi ?? 0;
+        return `
+          <tr>
+            <td><div class="bold">${familyLabels[w.family] || w.family}</div></td>
+            <td><span class="sport-tag">${w.sport}</span></td>
+            <td>${w.wins || 0}-${w.losses || 0}</td>
+            <td><span class="pnl ${roi > 0 ? 'pos' : roi < 0 ? 'neg' : 'neu'}">${(roi * 100).toFixed(1)}%</span></td>
+            <td>${(w.dynamic_weight || w.base_weight || 0).toFixed(1)}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── POWER ──
+    function renderPower() {
+      const body = document.getElementById('powerBody');
+      if (!allPower.length) {
+        body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No power ratings yet</td></tr>';
+        return;
+      }
+
+      body.innerHTML = allPower.slice(0, 50).map((t, i) => {
+        const form = t.last5_form ?? 0;
+        const formCls = form > 2 ? 'pos' : form < -2 ? 'neg' : 'neu';
+        return `
+          <tr>
+            <td>${i + 1}</td>
+            <td><span class="sport-tag">${t.sport}</span></td>
+            <td><div class="bold">${t.team_name}</div></td>
+            <td><span style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--gold);">${t.overall}</span></td>
+            <td>${t.offense}</td>
+            <td>${t.defense}</td>
+            <td>${t.record || '—'}</td>
+            <td><span class="pnl ${formCls}">${form > 0 ? '+' : ''}${form.toFixed(1)}</span></td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── LINE FEED ──
+    function renderLineFeed() {
+      const el = document.getElementById('lineFeed');
+      const games = allGames.filter(g => g.spread != null);
+
+      if (!games.length) {
+        el.innerHTML = '<div class="empty-note">No line movement data — refresh Matchups</div>';
+        return;
+      }
+
+      // Show games with movement or flags, otherwise top 15
+      const sorted = games.slice(0, 20);
+
+      el.innerHTML = sorted.map(g => {
+        const spread = g.spread;
+        const open = g.open_spread;
+        const moved = open != null && spread != null && open !== spread;
+        const arrow = moved ? (spread < open ? '▼' : '▲') : '→';
+        const arrowCls = moved ? (spread < open ? 'dn' : 'up') : 'flat';
+        const flags = [];
+        if (open != null && spread != null) {
+          const diff = Math.abs(spread - open);
+          if (diff >= 2) flags.push('<span class="feed-flag steam">STEAM</span>');
+          else if (diff >= 0.5) flags.push('<span class="feed-flag sharp">SHARP</span>');
+        }
+        const matchup = `${g.away_team || g.away || '?'} @ ${g.home_team || g.home || '?'}`;
+
+        return `
+          <div class="feed-row">
+            <span class="feed-sport">${g._sport || g.sport || '?'}</span>
+            <span class="feed-matchup">${matchup}</span>
+            <span class="feed-line">${open != null ? (open > 0 ? '+' : '') + open : '—'}</span>
+            <span class="feed-arrow ${arrowCls}">${arrow}</span>
+            <span class="feed-line">${spread != null ? (spread > 0 ? '+' : '') + spread : '—'}</span>
+            ${flags.join('')}
+          </div>`;
+      }).join('');
+    }
+
+    // ── TRENDS ──
+    function renderTrends() {
+      const el = document.getElementById('trendGrid');
+
+      // Compute from picks
+      const last10 = allPicks.filter(p => p.result).slice(0, 20);
+      if (last10.length < 5) {
+        el.innerHTML = '<div class="empty-note">Need at least 5 settled picks for trend analysis</div>';
+        return;
+      }
+
+      const w = last10.filter(p => p.result === 'W').length;
+      const l = last10.filter(p => p.result === 'L').length;
+      const recentWpct = (w / (w + l)) * 100;
+
+      // Rolling 5 vs rolling 10
+      const last5 = allPicks.filter(p => p.result).slice(0, 5);
+      const last5W = last5.filter(p => p.result === 'W').length;
+      const last5L = last5.filter(p => p.result === 'L').length;
+      const shortWpct = (last5W + last5L) > 0 ? (last5W / (last5W + last5L)) * 100 : 0;
+
+      const momentum = shortWpct - recentWpct;
+
+      // Streak
+      const streak = computeStreakLabel(allPicks);
+
+      // Avg CLV
+      const clvPicks = allPicks.filter(p => typeof p.clv === 'number');
+      const avgClv = clvPicks.length ? clvPicks.reduce((s, p) => s + p.clv, 0) / clvPicks.length : null;
+
+      const cards = [
+        { name: 'Short-Term Momentum', desc: 'Last 5 vs last 20 win rate', val: momentum, suffix: 'pp', up: momentum > 2, dn: momentum < -2 },
+        { name: 'Recent Win Rate', desc: 'Last 20 picks', val: recentWpct, suffix: '%', up: recentWpct > 55, dn: recentWpct < 45 },
+        { name: 'Current Streak', desc: 'Active W/L run', val: streak.count, suffix: '', label: streak.label, up: streak.res === 'W', dn: streak.res === 'L' },
+        { name: 'Avg CLV', desc: 'Closing line value', val: avgClv, suffix: '', up: avgClv > 0, dn: avgClv < 0 },
+      ];
+
+      el.innerHTML = cards.map(c => {
+        if (c.val === null || c.val === undefined) {
+          return `<div class="trend-card"><div class="trend-left"><div class="trend-name">${c.name}</div><div class="trend-desc">${c.desc}</div></div><div class="trend-val flat">—</div></div>`;
+        }
+        const cls = c.label ? (c.up ? 'up' : c.dn ? 'dn' : 'flat') : (c.up ? 'up' : c.dn ? 'dn' : 'flat');
+        const display = c.label ? c.label : (c.val > 0 ? '+' : '') + c.val.toFixed(1) + c.suffix;
+        return `
+          <div class="trend-card">
+            <div class="trend-left">
+              <div class="trend-name">${c.name}</div>
+              <div class="trend-desc">${c.desc}</div>
+            </div>
+            <div class="trend-val ${cls}">${display}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function computeStreakLabel(picks) {
+      const settled = picks.filter(p => p.result === 'W' || p.result === 'L')
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      if (!settled.length) return { count: 0, label: '—', res: '—' };
+      const res = settled[0].result;
+      let n = 1;
+      for (let i = 1; i < settled.length; i++) {
+        if (settled[i].result === res) n++;
+        else break;
+      }
+      return { count: n, label: res + n, res };
+    }
+
+    // ── MODE COMPARE ──
+    function renderModeCompare() {
+      const math = allPicks.filter(p => p.decision_mode === 'math_only');
+      const ai = allPicks.filter(p => p.decision_mode === 'ai_assisted');
+
+      const mathW = math.filter(p => p.result === 'W').length;
+      const mathL = math.filter(p => p.result === 'L').length;
+      const aiW = ai.filter(p => p.result === 'W').length;
+      const aiL = ai.filter(p => p.result === 'L').length;
+
+      document.getElementById('mcMathRecord').textContent = (mathW + mathL) > 0 ? `${mathW}-${mathL}` : '—';
+      document.getElementById('mcAiRecord').textContent   = (aiW + aiL) > 0 ? `${aiW}-${aiL}` : '—';
+
+      const mathU = math.reduce((s, p) => s + (p.units || 0), 0);
+      const mathP = math.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+      const aiU = ai.reduce((s, p) => s + (p.units || 0), 0);
+      const aiP = ai.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+
+      document.getElementById('mcMathSub').textContent = mathU > 0
+        ? `ROI ${(mathP / mathU * 100).toFixed(1)}% · ${math.length} picks`
+        : `${math.length} picks`;
+      document.getElementById('mcAiSub').textContent = aiU > 0
+        ? `ROI ${(aiP / aiU * 100).toFixed(1)}% · ${ai.length} picks`
+        : `${ai.length} picks`;
+
+      // By confidence
+      const confBuckets = [
+        { lbl: '≥85%', test: c => c >= 85 },
+        { lbl: '75–84%', test: c => c >= 75 && c < 85 },
+        { lbl: '65–74%', test: c => c >= 65 && c < 75 },
+        { lbl: '55–64%', test: c => c >= 55 && c < 65 },
+        { lbl: '<55%', test: c => c < 55 },
+      ];
+
+      document.getElementById('confGrid').innerHTML = confBuckets.map(b => {
+        const matches = allPicks.filter(p => p.result && b.test(p.confidence || 0));
+        const w = matches.filter(p => p.result === 'W').length;
+        const l = matches.filter(p => p.result === 'L').length;
+        const units = matches.reduce((s, p) => s + (p.units || 0), 0);
+        const pnl = matches.reduce((s, p) => s + (p.pnl || 0), 0);
+        const roi = units > 0 ? (pnl / units) * 100 : 0;
+        const cls = roi > 0 ? 'green' : roi < 0 ? 'red' : '';
+        return `
+          <div class="family-mini">
+            <div class="family-mini-lbl">${b.lbl}</div>
+            <div class="family-mini-val ${cls}">${(w + l) > 0 ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%' : '—'}</div>
+            <div class="family-mini-sub">${w}-${l}</div>
+          </div>`;
+      }).join('');
+
+      // By decision
+      const decisions = ['BET_2U', 'BET_1U', 'LEAN', 'VETOED'];
+      document.getElementById('decisionGrid').innerHTML = decisions.map(d => {
+        const matches = allPicks.filter(p => p.decision === d);
+        const settled = matches.filter(p => p.result);
+        const w = matches.filter(p => p.result === 'W').length;
+        const l = matches.filter(p => p.result === 'L').length;
+        const units = matches.reduce((s, p) => s + (p.units || 0), 0);
+        const pnl = settled.reduce((s, p) => s + (p.pnl || 0), 0);
+        const roi = units > 0 ? (pnl / units) * 100 : 0;
+        const cls = roi > 0 ? 'green' : roi < 0 ? 'red' : '';
+        const dLabel = d === 'BET_2U' ? '2U Bets' : d === 'BET_1U' ? '1U Bets' : d === 'LEAN' ? 'Leans' : 'Vetoed';
+        return `
+          <div class="family-mini">
+            <div class="family-mini-lbl">${dLabel}</div>
+            <div class="family-mini-val ${cls}">${(w + l) > 0 ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%' : '—'}</div>
+            <div class="family-mini-sub">${w}-${l} · ${matches.length} total</div>
+          </div>`;
+      }).join('');
+    }
+
+    // ── TOAST ──
+    function showToast(msg, isError) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (isError ? ' red' : '');
+      setTimeout(() => t.className = 'toast', 2400);
+    }
+
+    // ── INIT ──
+    loadAll();
+  </script>
+</body>
+</html>
