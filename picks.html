@@ -51,7 +51,6 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* PORTFOLIO BAR (REAL vs SIM) */
     .portfolio-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
     .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 14px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
     .pf-btn:last-child { border-right: none; }
@@ -62,34 +61,28 @@
     .pf-btn.active.real .pf-val { color: var(--gold); }
     .pf-btn.active.sim .pf-val { color: var(--blue); }
 
-    /* MODE BAR */
     .mode-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
-    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px; }
+    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; }
     .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
     .mode-pill.det { border-color: var(--gold-dim); color: var(--gold); }
     .mode-pill.ai  { border-color: var(--blue); color: var(--blue); }
-    .mode-pill.both { border-color: var(--green); color: var(--green); }
-    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 16px; cursor: pointer; white-space: nowrap; }
+    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
     .run-btn:hover { opacity: 0.85; }
     .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* SUMMARY ROW */
     .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
     .sum-cell { padding: 12px 8px; border-right: 1px solid var(--border); text-align: center; }
     .sum-cell:last-child { border-right: none; }
     .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
     .sum-val.gold { color: var(--gold); }
     .sum-val.green { color: var(--green); }
-    .sum-val.blue { color: var(--blue); }
     .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* FILTER STRIP */
     .filter-strip { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
     .filter-strip::-webkit-scrollbar { display: none; }
     .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
 
-    /* PICK LIST */
     .picks-list { padding: 16px 20px; }
     .pick-card { background: var(--surface); border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
     .pick-card:hover { border-color: var(--border-bright); }
@@ -120,7 +113,6 @@
     .pick-side { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
     .pick-side.away { color: var(--blue); }
 
-    /* METRIC ROW */
     .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); margin-bottom: 12px; }
     .metric-cell { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
     .metric-cell:last-child { border-right: none; }
@@ -131,14 +123,12 @@
     .metric-val.blue  { color: var(--blue); }
     .metric-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* CONSENSUS BAR */
     .cons-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
     .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
     .cons-track { flex: 1; background: var(--bg4); height: 5px; overflow: hidden; }
     .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
     .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
 
-    /* REASON */
     .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 12px; }
     .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
     .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
@@ -146,12 +136,10 @@
     .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
     .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
 
-    /* CLAUDE NOTE */
     .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
     .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
     .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
 
-    /* ACTIONS */
     .pick-actions { display: flex; gap: 0; border-top: 1px solid var(--border); }
     .pick-action-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; }
     .pick-action-btn:last-child { border-right: none; }
@@ -167,7 +155,6 @@
     .pick-action-btn.bet-placed { color: var(--gold); background: var(--gold-glow); }
     .pick-action-btn.sim-placed { color: var(--blue); background: rgba(74,144,217,0.08); }
 
-    /* EMPTY */
     .empty-state { padding: 48px 20px; text-align: center; }
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
@@ -179,7 +166,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* TOAST */
     .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.blue { background: var(--blue); color: #fff; }
@@ -212,7 +198,7 @@
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
@@ -231,7 +217,6 @@
       <div class="page-title">TODAY'S <em>PICKS</em></div>
     </div>
 
-    <!-- PORTFOLIO SWITCHER -->
     <div class="portfolio-bar">
       <button class="pf-btn real active" id="pfReal" onclick="setPortfolio('real')">
         <div class="pf-lbl">Real Bankroll</div>
@@ -243,16 +228,18 @@
       </button>
     </div>
 
-    <!-- MODE BAR -->
     <div class="mode-bar">
       <div class="mode-info">
         <span class="mode-pill" id="modePill">—</span>
         <span id="modeDesc">Deterministic · no AI overlay</span>
       </div>
-      <button class="run-btn" id="runBtn" onclick="runPipeline()">▶ RUN PIPELINE</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="run-btn" id="runBtn" onclick="runPipeline()">▶ RUN</button>
+        <button class="run-btn" id="refreshBtn" onclick="loadPicks()" style="background:none;border:1px solid var(--border);color:var(--text-mid);">↻</button>
+        <button class="run-btn" id="clearBtn" onclick="clearTodaysPicks()" style="background:none;border:1px solid rgba(231,76,60,0.4);color:var(--red);">✕ CLEAR</button>
+      </div>
     </div>
 
-    <!-- SUMMARY -->
     <div class="summary-row">
       <div class="sum-cell">
         <div class="sum-val" id="sumTotal">0</div>
@@ -272,7 +259,6 @@
       </div>
     </div>
 
-    <!-- FILTERS -->
     <div class="filter-strip">
       <button class="fchip active" data-filter="all">All</button>
       <button class="fchip" data-filter="elite">Elite 85+</button>
@@ -285,13 +271,12 @@
       <button class="fchip" data-filter="NHL">NHL</button>
     </div>
 
-    <!-- PICKS -->
     <div class="picks-list" id="picksList">
       <div class="empty-state">
         <div class="empty-icon">✓</div>
         <div class="empty-title">NO PICKS YET</div>
         <div class="empty-sub">
-          Tap RUN PIPELINE to generate picks<br>
+          Tap RUN to generate picks<br>
           from today's matchups
         </div>
         <a href="matchups.html" class="go-btn">Go to Matchups →</a>
@@ -317,12 +302,10 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── STATE ──
     let portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
     let currentFilter = 'all';
     let allPicks = [];
 
-    // ── PORTFOLIO SWITCHER ──
     function setPortfolio(p) {
       portfolio = p;
       localStorage.setItem('edge_active_portfolio', p);
@@ -331,7 +314,6 @@
       renderPicks();
     }
 
-    // ── FILTERS ──
     document.querySelectorAll('.fchip').forEach(chip => {
       chip.addEventListener('click', () => {
         document.querySelectorAll('.fchip').forEach(c => c.classList.remove('active'));
@@ -341,7 +323,6 @@
       });
     });
 
-    // ── BANKROLL DISPLAY ──
     function updateBankrolls() {
       const real = parseFloat(localStorage.getItem('edge_bankroll') || '0');
       const sim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
@@ -349,12 +330,10 @@
       document.getElementById('simBankroll').textContent = '$' + sim.toLocaleString();
     }
 
-    // ── MODE INDICATOR ──
     function updateModeIndicator() {
       const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
       const pill = document.getElementById('modePill');
       const desc = document.getElementById('modeDesc');
-
       if (mode === 'ai_assisted') {
         pill.textContent = 'AI-ASSISTED';
         pill.className = 'mode-pill ai';
@@ -366,62 +345,83 @@
       }
     }
 
-    // ── LOAD PICKS FROM SUPABASE ──
     async function loadPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
-
-      if (!url || !key) {
-        allPicks = [];
-        renderPicks();
-        return;
-      }
+      if (!url || !key) { allPicks = []; renderPicks(); return; }
 
       try {
-        // Only today's picks, both modes
-        const since = new Date(Date.now() - 12 * 3600000).toISOString();
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
         const res = await fetch(
-          `${url}/rest/v1/shadow_picks?select=*&created_at=gte.${since}&order=confidence.desc&limit=50`,
+          `${url}/rest/v1/shadow_picks?select=*&created_at=gte.${todayStart.toISOString()}&order=confidence.desc&limit=100`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         allPicks = await res.json();
-      } catch {
+      } catch (e) {
         allPicks = [];
       }
-
       renderPicks();
     }
 
-    // ── RUN PIPELINE ──
     async function runPipeline() {
       const btn = document.getElementById('runBtn');
       if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'red'); return; }
-
       const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
       if (!games.length) { showToast('No games — refresh Matchups first', 'red'); return; }
 
       btn.disabled = true;
       btn.textContent = 'RUNNING…';
-
       const result = await window.EDGE_ORCHESTRATOR.run({
         games,
-        onProgress: (msg) => { btn.textContent = msg.slice(0, 40); },
+        onProgress: (msg) => { btn.textContent = msg.slice(0, 20); },
       });
-
       btn.disabled = false;
-      btn.textContent = '▶ RUN PIPELINE';
+      btn.textContent = '▶ RUN';
 
       if (result.errors.length) {
         showToast('Error: ' + result.errors[0], 'red');
         return;
       }
-
       await loadPicks();
-      showToast(`✓ ${result.picks.length} pick${result.picks.length === 1 ? '' : 's'} generated`, '');
+      showToast(`✓ ${result.picks.length} pick${result.picks.length === 1 ? '' : 's'}`, '');
     }
 
-    // ── SUMMARY ──
+    async function clearTodaysPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Supabase not connected', 'red'); return; }
+      if (!confirm('Delete all of today\'s picks? Cannot be undone.')) return;
+
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      try {
+        await fetch(
+          `${url}/rest/v1/shadow_picks?created_at=gte.${todayStart.toISOString()}`,
+          {
+            method: 'DELETE',
+            headers: { apikey: key, Authorization: `Bearer ${key}` },
+          }
+        );
+
+        // Clear bet flags
+        const flags = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('edge_bet_sim_') || k.startsWith('edge_bet_real_'))) flags.push(k);
+        }
+        flags.forEach(k => localStorage.removeItem(k));
+
+        allPicks = [];
+        renderPicks();
+        showToast('Today\'s picks cleared', '');
+      } catch (e) {
+        showToast('Clear failed: ' + e.message, 'red');
+      }
+    }
+
     function updateSummary(picks) {
       document.getElementById('sumTotal').textContent = picks.length;
       const totalUnits = picks.reduce((s, p) => s + (p.units || 0), 0);
@@ -438,7 +438,6 @@
         : '—';
     }
 
-    // ── FILTER LOGIC ──
     function applyFilter(picks) {
       if (currentFilter === 'all') return picks;
       if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 85);
@@ -448,7 +447,6 @@
       return picks.filter(p => p.sport === currentFilter);
     }
 
-    // ── TIER ──
     function tier(conf) {
       if (conf >= 85) return 'elite';
       if (conf >= 75) return 'high';
@@ -456,11 +454,9 @@
       return 'lean';
     }
 
-    // ── RENDER ──
     function renderPicks() {
       const filtered = applyFilter(allPicks);
       updateSummary(filtered);
-
       const list = document.getElementById('picksList');
 
       if (!filtered.length) {
@@ -471,7 +467,7 @@
             <div class="empty-sub">
               ${allPicks.length
                 ? 'No picks match current filter'
-                : 'Tap RUN PIPELINE to generate picks'}
+                : 'Tap RUN to generate picks'}
             </div>
             ${!allPicks.length ? '<a href="matchups.html" class="go-btn">Go to Matchups →</a>' : ''}
           </div>`;
@@ -502,12 +498,7 @@
                    : p.decision === 'LEAN' ? 'lean'
                    : 'pass';
 
-      const cardCls = [
-        'pick-card',
-        'tier-' + t,
-        isVetoed ? 'vetoed' : '',
-        isPassed ? 'passed' : '',
-      ].filter(Boolean).join(' ');
+      const cardCls = ['pick-card', 'tier-' + t, isVetoed ? 'vetoed' : '', isPassed ? 'passed' : ''].filter(Boolean).join(' ');
 
       const matchup = `${p.away_team || 'Away'} vs ${p.home_team || 'Home'}`;
       const gameTime = p.commence_time
@@ -517,12 +508,12 @@
 
       const breakdown = p.governor_snapshot?.breakdown || [];
       const familyChips = breakdown.map(b =>
-        `<span class="family-chip ${b.vote}">${b.family.replace('_',' ')} ${b.vote === 'yes' ? '▲' : b.vote === 'no' ? '▼' : '●'}</span>`
+        `<span class="family-chip ${b.vote}">${(b.family || '').replace('_',' ')} ${b.vote === 'yes' ? '▲' : b.vote === 'no' ? '▼' : '●'}</span>`
       ).join('');
 
       const claudeNote = isAi && p.claude_output
         ? `<div class="claude-note">
-            <div class="claude-note-lbl">Claude · ${p.claude_output.decision.toUpperCase()}</div>
+            <div class="claude-note-lbl">Claude · ${(p.claude_output.decision || '').toUpperCase()}</div>
             <div class="claude-note-txt">${p.claude_output.reason || 'No reason provided'}</div>
           </div>`
         : '';
@@ -532,7 +523,6 @@
         sport: p.sport, time: p.commence_time,
       }));
 
-      // Bet state
       const betPlacedReal = localStorage.getItem(`edge_bet_real_${p.id}`) === 'true';
       const betPlacedSim  = localStorage.getItem(`edge_bet_sim_${p.id}`) === 'true';
 
@@ -598,7 +588,7 @@
                 <div class="metric-lbl">Units</div>
               </div>
               <div class="metric-cell">
-                <div class="metric-val">${p.market_spread !== null ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—'}</div>
+                <div class="metric-val">${p.market_spread !== null && p.market_spread !== undefined ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—'}</div>
                 <div class="metric-lbl">Spread</div>
               </div>
             </div>
@@ -624,7 +614,6 @@
         </div>`;
     }
 
-    // ── PLACE BET (REAL OR SIM) ──
     async function placeBet(mode, pickId) {
       const pick = allPicks.find(p => p.id === pickId);
       if (!pick) return;
@@ -634,12 +623,10 @@
       if (mode === 'real') {
         const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
         if (bankroll <= 0) { showToast('Set bankroll in Settings first', 'red'); return; }
-
         const unitType = localStorage.getItem('edge_unit_type') || 'flat';
         const unitSize = unitType === 'pct'
           ? (bankroll * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
           : parseFloat(localStorage.getItem('edge_unit_size') || '50');
-
         const stakeDollars = units * unitSize;
         const dailyCap = parseFloat(localStorage.getItem('edge_daily_cap') || '0');
         const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
@@ -649,26 +636,18 @@
           return;
         }
 
-        // Deduct from bankroll and add to daily used
         localStorage.setItem('edge_bankroll', String(bankroll - stakeDollars));
         localStorage.setItem('edge_daily_used', String(dailyUsed + stakeDollars));
         localStorage.setItem(`edge_bet_real_${pickId}`, 'true');
-
         await logBet('real', pick, units, stakeDollars);
         showToast(`Real bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, '');
       } else {
         const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
         const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
         const stakeDollars = units * simUnitSize;
-
-        if (stakeDollars > simBankroll * 0.05) {
-          showToast('Bet exceeds 5% of sim bankroll', 'red');
-          return;
-        }
-
+        if (stakeDollars > simBankroll * 0.05) { showToast('Bet exceeds 5% of sim bankroll', 'red'); return; }
         localStorage.setItem('edge_sim_bankroll', String(simBankroll - stakeDollars));
         localStorage.setItem(`edge_bet_sim_${pickId}`, 'true');
-
         await logBet('sim', pick, units, stakeDollars);
         showToast(`Sim bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, 'blue');
       }
@@ -680,7 +659,6 @@
     async function undoBet(mode, pickId) {
       const pick = allPicks.find(p => p.id === pickId);
       if (!pick) return;
-
       const units = pick.units || 1;
 
       if (mode === 'real') {
@@ -691,7 +669,6 @@
           : parseFloat(localStorage.getItem('edge_unit_size') || '50');
         const stakeDollars = units * unitSize;
         const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
-
         localStorage.setItem('edge_bankroll', String(bankroll + stakeDollars));
         localStorage.setItem('edge_daily_used', String(Math.max(0, dailyUsed - stakeDollars)));
         localStorage.removeItem(`edge_bet_real_${pickId}`);
@@ -713,7 +690,6 @@
       showToast('Pick skipped', '');
     }
 
-    // ── LOG BET TO SUPABASE ──
     async function logBet(mode, pick, units, stakeDollars) {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -742,8 +718,7 @@
         await fetch(`${url}/rest/v1/bet_log`, {
           method: 'POST',
           headers: {
-            apikey: key,
-            Authorization: `Bearer ${key}`,
+            apikey: key, Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
             Prefer: 'return=minimal',
           },
@@ -752,7 +727,6 @@
       } catch {}
     }
 
-    // ── TOAST ──
     function showToast(msg, color) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -760,7 +734,6 @@
       setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2400);
     }
 
-    // ── INIT ──
     setPortfolio(portfolio);
     updateBankrolls();
     updateModeIndicator();
