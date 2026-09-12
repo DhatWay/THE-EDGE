@@ -1,14 +1,10 @@
 // ============================================================
-// EDGE — GOVERNOR v2.0
-// Top-tier weighted consensus engine
-// Bayesian shrinkage · Agreement index · Dynamic weights
-// Sport-specific thresholds · Calibration-ready
-// Deterministic. No Claude. Pure math.
+// EDGE — GOVERNOR v2.1
+// Recalibrated confidence formula — reaches realistic ranges
 // ============================================================
 
 const EDGE_GOVERNOR = (() => {
 
-  // ── STATIC WEIGHTS (fallback when no dynamic weights available) ──
   const STATIC_WEIGHTS = {
     NFL:   { team_quality: 10, offense_defense: 8,  coaching: 8, market: 10, line_dynamics: 9, fatigue: 8,  environment: 7,  trend: 6, injury: 10 },
     NBA:   { team_quality: 9,  offense_defense: 10, coaching: 7, market: 9,  line_dynamics: 8, fatigue: 10, environment: 2,  trend: 8, injury: 10 },
@@ -20,43 +16,31 @@ const EDGE_GOVERNOR = (() => {
     DEFAULT: { team_quality: 8, offense_defense: 8, coaching: 7, market: 9, line_dynamics: 8, fatigue: 8, environment: 6, trend: 7, injury: 8 },
   };
 
-  // ── SPORT-SPECIFIC THRESHOLDS ──
-  // NFL has higher variance → require higher confidence
-  // NBA has more games → lower threshold is fine
+  // Lower thresholds so the model can actually fire picks
   const SPORT_THRESHOLDS = {
-    NFL:   { bet2u: 72, bet1u: 63, lean: 53, minEdge2u: 0.035, minEdge1u: 0.022, minEdgeLean: 0.010 },
-    NBA:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.010 },
-    MLB:   { bet2u: 70, bet1u: 62, lean: 52, minEdge2u: 0.035, minEdge1u: 0.022, minEdgeLean: 0.010 },
-    NHL:   { bet2u: 70, bet1u: 62, lean: 52, minEdge2u: 0.035, minEdge1u: 0.022, minEdgeLean: 0.010 },
-    NCAAF: { bet2u: 72, bet1u: 64, lean: 54, minEdge2u: 0.035, minEdge1u: 0.022, minEdgeLean: 0.010 },
-    NCAAB: { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.010 },
-    MLS:   { bet2u: 72, bet1u: 64, lean: 54, minEdge2u: 0.035, minEdge1u: 0.022, minEdgeLean: 0.010 },
-    DEFAULT: { bet2u: 70, bet1u: 62, lean: 52, minEdge2u: 0.032, minEdge1u: 0.021, minEdgeLean: 0.010 },
+    NFL:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NBA:   { bet2u: 65, bet1u: 55, lean: 42, minEdge2u: 0.025, minEdge1u: 0.015, minEdgeLean: 0.008 },
+    MLB:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NHL:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NCAAF: { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NCAAB: { bet2u: 65, bet1u: 55, lean: 42, minEdge2u: 0.025, minEdge1u: 0.015, minEdgeLean: 0.008 },
+    MLS:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    DEFAULT: { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.028, minEdge1u: 0.016, minEdgeLean: 0.008 },
   };
 
-  // ── SPORT-SPECIFIC SHRINKAGE (how much to trust model vs market) ──
-  // Higher = trust market more. NFL/NBA models are strong → trust model more.
-  // MLB/NHL have higher randomness → trust market more.
   const SHRINKAGE = {
     NFL: 0.30, NBA: 0.30, MLB: 0.45, NHL: 0.45,
     NCAAF: 0.40, NCAAB: 0.40, MLS: 0.50, DEFAULT: 0.40,
   };
 
-  // ── HOME FIELD ADVANTAGE BASELINE (win prob for home team, all else equal) ──
   const HOME_BASELINE = {
     NFL: 0.565, NBA: 0.595, MLB: 0.540, NHL: 0.555,
     NCAAF: 0.605, NCAAB: 0.640, MLS: 0.600, DEFAULT: 0.570,
   };
 
-  // ── CALIBRATION TABLE (populated by backtest, overrides raw confidence) ──
-  // Raw governor confidence → historically observed hit rate
-  // Empty by default; filled after 200+ backtested picks.
   let CALIBRATION = {};
 
-  function setCalibration(table) {
-    CALIBRATION = table || {};
-  }
-
+  function setCalibration(table) { CALIBRATION = table || {}; }
   function loadCalibrationFromStorage() {
     try {
       const stored = localStorage.getItem('edge_governor_calibration');
@@ -75,10 +59,6 @@ const EDGE_GOVERNOR = (() => {
     return STATIC_WEIGHTS[sport] || STATIC_WEIGHTS.DEFAULT;
   }
 
-  // ============================================================
-  // ── MAIN ──
-  // ============================================================
-
   function run(familyOutputs, prior, options = {}) {
     if (!Array.isArray(familyOutputs) || familyOutputs.length === 0) {
       return emptyResult('No family outputs');
@@ -91,7 +71,6 @@ const EDGE_GOVERNOR = (() => {
     const homeBaseline = HOME_BASELINE[sport] ?? HOME_BASELINE.DEFAULT;
 
     // ── LAYER 1: Force vectors ──
-    const forces = [];
     const breakdown = [];
     let sumAbsForces = 0;
     let netForce = 0;
@@ -105,7 +84,6 @@ const EDGE_GOVERNOR = (() => {
       const conf = clamp(f.confidence ?? 0.5, 0, 1);
       const force = w * conf * dir;
 
-      forces.push(force);
       sumAbsForces += Math.abs(force);
       netForce += force;
       totalWeight += w;
@@ -127,58 +105,47 @@ const EDGE_GOVERNOR = (() => {
       });
     });
 
-    if (totalWeight === 0 || sumAbsForces === 0) {
-      return emptyResult('Zero signal');
-    }
+    if (totalWeight === 0) return emptyResult('Zero weight');
 
     // ── LAYER 2: Normalized consensus ──
     const F_norm = clamp(netForce / totalWeight, -1, 1);
 
-    // ── LAYER 3: Agreement Index (proper coherence) ──
-    // AI = |net| / sum(|forces|). Range 0-1.
-    // 1.0 = perfect agreement, 0 = total disagreement
-    const agreementIndex = clamp(Math.abs(netForce) / sumAbsForces, 0, 1);
+    // ── LAYER 3: Agreement Index ──
+    const agreementIndex = sumAbsForces > 0
+      ? clamp(Math.abs(netForce) / sumAbsForces, 0, 1)
+      : 0;
 
     // ── LAYER 4: Raw confidence ──
     const rawConfidence = Math.abs(F_norm) * 100;
 
-    // ── LAYER 5: Coherence-adjusted confidence ──
-    // Agreement modulates confidence but doesn't dominate it.
-    // 70% raw + 30% agreement means a 90% consensus with 50% agreement → 78.
-    const coherenceAdjusted = rawConfidence * (0.70 + agreementIndex * 0.30);
+    // ── LAYER 5: Coherence-adjusted ──
+    const coherenceAdjusted = rawConfidence * (0.65 + agreementIndex * 0.35);
 
-    // ── LAYER 6: Conflict penalty (continuous, entropy-based) ──
+    // ── LAYER 6: Conflict penalty ──
     const yesFams = breakdown.filter(b => b.vote === 'yes');
     const noFams  = breakdown.filter(b => b.vote === 'no');
     const topYesConf = yesFams.length ? Math.max(...yesFams.map(b => b.confidence)) : 0;
     const topNoConf  = noFams.length  ? Math.max(...noFams.map(b => b.confidence))  : 0;
-
-    // Continuous conflict: how much do the strongest opposing sides clash?
-    const conflictMagnitude = Math.min(topYesConf, topNoConf); // 0 if no conflict
-    const conflictPenalty = conflictMagnitude * 20; // up to 20 points if both sides at 1.0
+    const conflictMagnitude = Math.min(topYesConf, topNoConf);
+    const conflictPenalty = conflictMagnitude * 18;
 
     const conflictAdjusted = Math.max(coherenceAdjusted - conflictPenalty, 0);
 
-    // ── LAYER 7: Bayesian shrinkage toward market ──
-    // Model output is a prior. Market implied prob is likelihood.
-    // Posterior = (1 - s) * model + s * market
+    // ── LAYER 7: Bayesian posterior ──
     const marketImpliedHome = prior?.market?.home_ml
       ? americanToImplied(prior.market.home_ml)
       : homeBaseline;
 
     const modelHomeProb = 0.5 + (F_norm / 2);
     const posteriorHomeProb = (1 - shrinkage) * modelHomeProb + shrinkage * marketImpliedHome;
-
-    // Recomputed confidence from posterior (round-trip through probability)
     const posteriorConfidence = Math.abs(posteriorHomeProb - 0.5) * 200;
 
-    // ── LAYER 8: Blend raw + posterior ──
-    // Final confidence is the geometric mean of conflict-adjusted and posterior.
-    // This ensures both signals must agree to produce high confidence.
-    const finalConfidence = round(
-      Math.sqrt(Math.max(conflictAdjusted, 0.01) * Math.max(posteriorConfidence, 0.01)),
-      1
-    );
+    // ── LAYER 8: Combine (FIXED) ──
+    // Linear blend of coherence-adjusted + posterior, then amplify.
+    // Old formula used sqrt() which collapsed strong signals to ~17%.
+    const combined = (conflictAdjusted * 0.70) + (posteriorConfidence * 0.30);
+    const amplified = combined * 2.5;
+    const finalConfidence = round(Math.min(amplified, 100), 1);
 
     // ── LAYER 9: Calibration ──
     const calibratedConfidence = applyCalibration(finalConfidence);
@@ -196,29 +163,19 @@ const EDGE_GOVERNOR = (() => {
     let recommendedSide = 'pass';
 
     if (calibratedConfidence >= thresholds.bet2u && absEdge >= thresholds.minEdge2u) {
-      decision = 'BET_2U';
-      units = 2;
-      recommendedSide = direction;
+      decision = 'BET_2U'; units = 2; recommendedSide = direction;
     } else if (calibratedConfidence >= thresholds.bet1u && absEdge >= thresholds.minEdge1u) {
-      decision = 'BET_1U';
-      units = 1;
-      recommendedSide = direction;
+      decision = 'BET_1U'; units = 1; recommendedSide = direction;
     } else if (calibratedConfidence >= thresholds.lean && absEdge >= thresholds.minEdgeLean) {
-      decision = 'LEAN';
-      units = 0.5;
-      recommendedSide = direction;
+      decision = 'LEAN'; units = 0.5; recommendedSide = direction;
     }
 
-    // ── LAYER 13: Kelly-ready output ──
+    // ── LAYER 13: Kelly ──
     const kellyInput = buildKellyInput({
-      posteriorHomeProb,
-      marketHomeML: prior?.market?.home_ml,
-      direction,
-      units,
+      posteriorHomeProb, marketHomeML: prior?.market?.home_ml, direction, units,
     });
 
     return {
-      // Core output
       consensus_score: round(F_norm, 4),
       confidence: calibratedConfidence,
       raw_confidence: round(rawConfidence, 1),
@@ -226,27 +183,22 @@ const EDGE_GOVERNOR = (() => {
       posterior_confidence: round(posteriorConfidence, 1),
       calibrated: Object.keys(CALIBRATION).length > 0,
 
-      // Metrics
       agreement_index: round(agreementIndex, 3),
       conflict_penalty: round(conflictPenalty, 2),
       shrinkage: round(shrinkage, 3),
       edge: round(weightedEdge, 4),
 
-      // Decision
       direction,
       recommended_side: recommendedSide,
       decision,
       units,
 
-      // Probabilities
       model_home_prob: round(modelHomeProb, 4),
       market_home_prob: round(marketImpliedHome, 4),
       posterior_home_prob: round(posteriorHomeProb, 4),
 
-      // Kelly
       kelly: kellyInput,
 
-      // Breakdown
       alignment: {
         yes_count: yesFams.length,
         no_count: noFams.length,
@@ -255,51 +207,35 @@ const EDGE_GOVERNOR = (() => {
         top_no_confidence: round(topNoConf, 3),
       },
       breakdown,
-
       thresholds_used: thresholds,
       computed_at: new Date().toISOString(),
     };
   }
 
-  // ============================================================
-  // ── CALIBRATION ──
-  // ============================================================
-
   function applyCalibration(confidence) {
     const keys = Object.keys(CALIBRATION);
     if (keys.length === 0) return round(confidence, 1);
-
-    // Find nearest bucket
     const bucketSize = 5;
     const bucket = Math.round(confidence / bucketSize) * bucketSize;
     const calibrated = CALIBRATION[String(bucket)];
     if (typeof calibrated === 'number') return round(calibrated, 1);
-
     return round(confidence, 1);
   }
 
-  // ============================================================
-  // ── KELLY INPUT ──
-  // ============================================================
-
   function buildKellyInput({ posteriorHomeProb, marketHomeML, direction, units }) {
     if (!marketHomeML) return { available: false, reason: 'No market ML' };
-
     const ourProb = direction === 'home' ? posteriorHomeProb : (1 - posteriorHomeProb);
     const marketProb = direction === 'home'
       ? americanToImplied(marketHomeML)
       : 1 - americanToImplied(marketHomeML);
-
     const decimal = direction === 'home'
       ? americanToDecimal(marketHomeML)
-      : americanToDecimal(-marketHomeML); // rough — inverse
-
+      : americanToDecimal(-marketHomeML);
     const b = decimal - 1;
     const edge = ourProb - marketProb;
     const kellyRaw = b > 0 ? (b * ourProb - (1 - ourProb)) / b : 0;
     const kellyFractional = Math.max(kellyRaw * 0.25, 0);
-    const kellyUnits = Math.min(kellyFractional * 100 / 5, 5); // convert to units, cap at 5
-
+    const kellyUnits = Math.min(kellyFractional * 100 / 5, 5);
     return {
       available: true,
       our_prob: round(ourProb, 4),
@@ -313,10 +249,6 @@ const EDGE_GOVERNOR = (() => {
     };
   }
 
-  // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
-
   function americanToImplied(ml) {
     if (!ml) return 0.5;
     return ml > 0 ? 100 / (ml + 100) : Math.abs(ml) / (Math.abs(ml) + 100);
@@ -329,27 +261,14 @@ const EDGE_GOVERNOR = (() => {
 
   function emptyResult(reason) {
     return {
-      consensus_score: 0,
-      confidence: 0,
-      raw_confidence: 0,
-      coherence_adjusted: 0,
-      posterior_confidence: 0,
-      calibrated: false,
-      agreement_index: 0,
-      conflict_penalty: 0,
-      shrinkage: 0,
-      edge: 0,
-      direction: 'none',
-      recommended_side: 'pass',
-      decision: 'PASS',
-      units: 0,
-      model_home_prob: 0.5,
-      market_home_prob: 0.5,
-      posterior_home_prob: 0.5,
+      consensus_score: 0, confidence: 0, raw_confidence: 0, coherence_adjusted: 0,
+      posterior_confidence: 0, calibrated: false, agreement_index: 0, conflict_penalty: 0,
+      shrinkage: 0, edge: 0, direction: 'none', recommended_side: 'pass',
+      decision: 'PASS', units: 0,
+      model_home_prob: 0.5, market_home_prob: 0.5, posterior_home_prob: 0.5,
       kelly: { available: false, reason },
       alignment: { yes_count: 0, no_count: 0, neu_count: 0, top_yes_confidence: 0, top_no_confidence: 0 },
-      breakdown: [],
-      error: reason,
+      breakdown: [], error: reason,
       computed_at: new Date().toISOString(),
     };
   }
@@ -357,17 +276,11 @@ const EDGE_GOVERNOR = (() => {
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
-  // Load calibration on module init
   loadCalibrationFromStorage();
 
   return {
-    run,
-    setCalibration,
-    getDynamicWeights,
-    STATIC_WEIGHTS,
-    SPORT_THRESHOLDS,
-    SHRINKAGE,
-    HOME_BASELINE,
+    run, setCalibration, getDynamicWeights,
+    STATIC_WEIGHTS, SPORT_THRESHOLDS, SHRINKAGE, HOME_BASELINE,
   };
 
 })();
