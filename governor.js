@@ -1,6 +1,6 @@
 // ============================================================
-// EDGE — GOVERNOR v2.1
-// Recalibrated confidence formula — reaches realistic ranges
+// EDGE — GOVERNOR v2.2
+// Honest confidence · data-availability caps · no amplifier
 // ============================================================
 
 const EDGE_GOVERNOR = (() => {
@@ -16,16 +16,15 @@ const EDGE_GOVERNOR = (() => {
     DEFAULT: { team_quality: 8, offense_defense: 8, coaching: 7, market: 9, line_dynamics: 8, fatigue: 8, environment: 6, trend: 7, injury: 8 },
   };
 
-  // Lower thresholds so the model can actually fire picks
   const SPORT_THRESHOLDS = {
-    NFL:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    NBA:   { bet2u: 65, bet1u: 55, lean: 42, minEdge2u: 0.025, minEdge1u: 0.015, minEdgeLean: 0.008 },
-    MLB:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    NHL:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    NCAAF: { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    NCAAB: { bet2u: 65, bet1u: 55, lean: 42, minEdge2u: 0.025, minEdge1u: 0.015, minEdgeLean: 0.008 },
-    MLS:   { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.030, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    DEFAULT: { bet2u: 68, bet1u: 58, lean: 45, minEdge2u: 0.028, minEdge1u: 0.016, minEdgeLean: 0.008 },
+    NFL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
+    NBA:   { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    MLB:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
+    NHL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
+    NCAAF: { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
+    NCAAB: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    MLS:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
+    DEFAULT: { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
   };
 
   const SHRINKAGE = {
@@ -37,6 +36,9 @@ const EDGE_GOVERNOR = (() => {
     NFL: 0.565, NBA: 0.595, MLB: 0.540, NHL: 0.555,
     NCAAF: 0.605, NCAAB: 0.640, MLS: 0.600, DEFAULT: 0.570,
   };
+
+  // Hard cap — nothing exceeds this. Real elite models rarely top 75%.
+  const MAX_CONFIDENCE = 78;
 
   let CALIBRATION = {};
 
@@ -107,31 +109,28 @@ const EDGE_GOVERNOR = (() => {
 
     if (totalWeight === 0) return emptyResult('Zero weight');
 
-    // ── LAYER 2: Normalized consensus ──
     const F_norm = clamp(netForce / totalWeight, -1, 1);
-
-    // ── LAYER 3: Agreement Index ──
     const agreementIndex = sumAbsForces > 0
       ? clamp(Math.abs(netForce) / sumAbsForces, 0, 1)
       : 0;
 
-    // ── LAYER 4: Raw confidence ──
+    // ── LAYER 2: Raw confidence (natural range) ──
     const rawConfidence = Math.abs(F_norm) * 100;
 
-    // ── LAYER 5: Coherence-adjusted ──
+    // ── LAYER 3: Coherence adjustment ──
     const coherenceAdjusted = rawConfidence * (0.65 + agreementIndex * 0.35);
 
-    // ── LAYER 6: Conflict penalty ──
+    // ── LAYER 4: Conflict penalty ──
     const yesFams = breakdown.filter(b => b.vote === 'yes');
     const noFams  = breakdown.filter(b => b.vote === 'no');
     const topYesConf = yesFams.length ? Math.max(...yesFams.map(b => b.confidence)) : 0;
     const topNoConf  = noFams.length  ? Math.max(...noFams.map(b => b.confidence))  : 0;
     const conflictMagnitude = Math.min(topYesConf, topNoConf);
-    const conflictPenalty = conflictMagnitude * 18;
+    const conflictPenalty = conflictMagnitude * 15;
 
     const conflictAdjusted = Math.max(coherenceAdjusted - conflictPenalty, 0);
 
-    // ── LAYER 7: Bayesian posterior ──
+    // ── LAYER 5: Bayesian posterior ──
     const marketImpliedHome = prior?.market?.home_ml
       ? americanToImplied(prior.market.home_ml)
       : homeBaseline;
@@ -140,23 +139,44 @@ const EDGE_GOVERNOR = (() => {
     const posteriorHomeProb = (1 - shrinkage) * modelHomeProb + shrinkage * marketImpliedHome;
     const posteriorConfidence = Math.abs(posteriorHomeProb - 0.5) * 200;
 
-    // ── LAYER 8: Combine (FIXED) ──
-    // Linear blend of coherence-adjusted + posterior, then amplify.
-    // Old formula used sqrt() which collapsed strong signals to ~17%.
-    const combined = (conflictAdjusted * 0.70) + (posteriorConfidence * 0.30);
-    const amplified = combined * 2.5;
-    const finalConfidence = round(Math.min(amplified, 100), 1);
+    // ── LAYER 6: Blend without amplifier ──
+    // Honest blend. If signals are weak, confidence is low. No fiction.
+    const combined = (conflictAdjusted * 0.75) + (posteriorConfidence * 0.25);
 
-    // ── LAYER 9: Calibration ──
+    // ── LAYER 7: Data-availability penalty ──
+    // Missing market/context data means we can't be as sure.
+    const dataCaps = [];
+    let cap = 100;
+
+    if (prior?.market?.home_ml == null) {
+      cap = Math.min(cap, 60);
+      dataCaps.push('no ML');
+    }
+    if (prior?.market?.current_spread == null) {
+      cap = Math.min(cap, 55);
+      dataCaps.push('no spread');
+    }
+    const hasLineHistory = !!(prior?.market?.open_spread && prior?.market?.current_spread && prior.market.open_spread !== prior.market.current_spread);
+    if (!hasLineHistory) {
+      cap = Math.min(cap, 72);
+      dataCaps.push('no line movement');
+    }
+    if (!options.weatherAvailable) {
+      // Only penalize outdoor sports
+      if (['NFL','MLB','NCAAF','MLS'].includes(sport)) {
+        cap = Math.min(cap, 75);
+        dataCaps.push('no weather');
+      }
+    }
+
+    const capped = Math.min(combined, cap);
+    const finalConfidence = round(Math.min(capped, MAX_CONFIDENCE), 1);
     const calibratedConfidence = applyCalibration(finalConfidence);
 
-    // ── LAYER 10: Weighted edge ──
     const weightedEdge = weightForEdge > 0 ? edgeWeightedSum / weightForEdge : 0;
-
-    // ── LAYER 11: Direction ──
     const direction = F_norm > 0 ? 'home' : 'away';
 
-    // ── LAYER 12: Decision ──
+    // ── LAYER 8: Decision ──
     const absEdge = Math.abs(weightedEdge);
     let decision = 'PASS';
     let units = 0;
@@ -170,7 +190,6 @@ const EDGE_GOVERNOR = (() => {
       decision = 'LEAN'; units = 0.5; recommendedSide = direction;
     }
 
-    // ── LAYER 13: Kelly ──
     const kellyInput = buildKellyInput({
       posteriorHomeProb, marketHomeML: prior?.market?.home_ml, direction, units,
     });
@@ -181,6 +200,9 @@ const EDGE_GOVERNOR = (() => {
       raw_confidence: round(rawConfidence, 1),
       coherence_adjusted: round(coherenceAdjusted, 1),
       posterior_confidence: round(posteriorConfidence, 1),
+      combined_pre_cap: round(combined, 1),
+      data_cap: cap,
+      data_caps: dataCaps,
       calibrated: Object.keys(CALIBRATION).length > 0,
 
       agreement_index: round(agreementIndex, 3),
@@ -262,7 +284,8 @@ const EDGE_GOVERNOR = (() => {
   function emptyResult(reason) {
     return {
       consensus_score: 0, confidence: 0, raw_confidence: 0, coherence_adjusted: 0,
-      posterior_confidence: 0, calibrated: false, agreement_index: 0, conflict_penalty: 0,
+      posterior_confidence: 0, combined_pre_cap: 0, data_cap: 100, data_caps: [],
+      calibrated: false, agreement_index: 0, conflict_penalty: 0,
       shrinkage: 0, edge: 0, direction: 'none', recommended_side: 'pass',
       decision: 'PASS', units: 0,
       model_home_prob: 0.5, market_home_prob: 0.5, posterior_home_prob: 0.5,
@@ -280,7 +303,7 @@ const EDGE_GOVERNOR = (() => {
 
   return {
     run, setCalibration, getDynamicWeights,
-    STATIC_WEIGHTS, SPORT_THRESHOLDS, SHRINKAGE, HOME_BASELINE,
+    STATIC_WEIGHTS, SPORT_THRESHOLDS, SHRINKAGE, HOME_BASELINE, MAX_CONFIDENCE,
   };
 
 })();
