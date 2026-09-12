@@ -7,32 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -51,9 +44,7 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
@@ -61,55 +52,34 @@
     .page-title em { color: var(--gold); font-style: normal; }
 
     /* ALERT STRIP */
-    .alert-strip {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 20px;
-      background: var(--bg2);
-      border-bottom: 1px solid var(--border);
-    }
-    .alert-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; gap: 8px; }
-    .alert-pill {
-      display: flex; align-items: center; gap: 6px;
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
-      padding: 5px 11px; border: 1px solid;
-    }
+    .alert-strip { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
+    .alert-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .alert-pill { display: flex; align-items: center; gap: 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; padding: 5px 11px; border: 1px solid; cursor: pointer; }
     .alert-pill.steam { border-color: rgba(231,76,60,0.4); color: var(--red); background: rgba(231,76,60,0.06); }
     .alert-pill.rlm   { border-color: rgba(201,168,76,0.4); color: var(--gold); background: rgba(201,168,76,0.07); }
     .alert-pill.sharp { border-color: rgba(39,174,96,0.4); color: var(--green); background: rgba(39,174,96,0.06); }
+    .alert-pill.inactive { opacity: 0.4; }
     .alert-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: blink 1.6s infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
     .refresh-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; padding: 6px 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .refresh-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* FILTER TABS */
-    .filter-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .filter-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
     .filter-tabs::-webkit-scrollbar { display: none; }
     .ftab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 12px 16px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .ftab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
     /* LINE CARDS */
     .lines-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
-
-    .line-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      overflow: hidden;
-      transition: border-color 0.2s;
-    }
+    .line-card { background: var(--surface); border: 1px solid var(--border); overflow: hidden; transition: border-color 0.2s; }
     .line-card:hover { border-color: var(--border-bright); }
     .line-card.has-steam { border-left: 3px solid var(--red); }
     .line-card.has-rlm   { border-left: 3px solid var(--gold); }
     .line-card.has-sharp { border-left: 3px solid var(--green); }
 
-    /* CARD TOP */
-    .lc-top {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px 6px;
-    }
+    .lc-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px; gap: 8px; flex-wrap: wrap; }
     .lc-meta { display: flex; align-items: center; gap: 8px; }
     .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
     .lc-time { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); }
@@ -119,20 +89,10 @@
     .flag.rlm   { border-color: rgba(201,168,76,0.4); color: var(--gold); }
     .flag.sharp { border-color: rgba(39,174,96,0.4); color: var(--green); }
 
-    /* MATCHUP */
     .lc-matchup { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; padding: 4px 14px 10px; }
 
-    /* LINE COMPARISON */
-    .lc-lines {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      border-top: 1px solid var(--border);
-    }
-    .lc-cell {
-      padding: 10px 10px;
-      border-right: 1px solid var(--border);
-      text-align: center;
-    }
+    .lc-lines { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 1px solid var(--border); }
+    .lc-cell { padding: 10px 10px; border-right: 1px solid var(--border); text-align: center; }
     .lc-cell:last-child { border-right: none; }
     .lc-cell-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
 
@@ -145,27 +105,18 @@
     .line-current { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--text); }
     .line-current.moved { color: var(--gold); }
 
-    /* DIRECTION ROW */
-    .lc-direction {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 14px;
-      border-top: 1px solid var(--border);
-      background: var(--bg2);
-    }
-    .direction-label { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
-    .direction-bar-wrap { flex: 1; margin: 0 12px; }
-    .direction-track { background: var(--bg4); height: 4px; position: relative; }
+    .lc-direction { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-top: 1px solid var(--border); background: var(--bg2); gap: 10px; }
+    .direction-label { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .direction-bar-wrap { flex: 1; min-width: 80px; }
+    .direction-track { background: var(--bg4); height: 4px; position: relative; overflow: hidden; }
     .direction-public { position: absolute; left: 0; top: 0; height: 100%; background: var(--text-dim); transition: width 0.6s ease; }
     .direction-sharp  { position: absolute; right: 0; top: 0; height: 100%; background: var(--green); transition: width 0.6s ease; }
     .direction-vals { display: flex; justify-content: space-between; margin-top: 4px; }
     .direction-val { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; color: var(--text-dim); }
     .direction-val.sharp-val { color: var(--green); }
 
-    /* CARD ACTIONS */
     .lc-actions { display: flex; border-top: 1px solid var(--border); }
-    .lc-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 10px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+    .lc-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 10px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; transition: all 0.2s; }
     .lc-btn:last-child { border-right: none; }
     .lc-btn:hover { color: var(--gold); background: var(--gold-glow); }
     .lc-btn.gold { color: var(--gold); }
@@ -225,18 +176,16 @@
       <div class="page-title">LINE <em>MOVEMENT</em></div>
     </div>
 
-    <!-- ALERT STRIP -->
     <div class="alert-strip">
       <div class="alert-info">
-        <div class="alert-pill steam"><span class="alert-dot"></span> <span id="steamCount">0</span> Steam</div>
-        <div class="alert-pill rlm"><span class="alert-dot"></span> <span id="rlmCount">0</span> RLM</div>
-        <div class="alert-pill sharp"><span class="alert-dot"></span> <span id="sharpCount">0</span> Sharp</div>
+        <div class="alert-pill steam" data-jump="steam" onclick="jumpToFilter('steam')"><span class="alert-dot"></span> <span id="steamCount">0</span> Steam</div>
+        <div class="alert-pill rlm" data-jump="rlm" onclick="jumpToFilter('rlm')"><span class="alert-dot"></span> <span id="rlmCount">0</span> RLM</div>
+        <div class="alert-pill sharp" data-jump="sharp" onclick="jumpToFilter('sharp')"><span class="alert-dot"></span> <span id="sharpCount">0</span> Sharp</div>
       </div>
-      <button class="refresh-btn" onclick="fetchLines()">↻ Refresh</button>
+      <button class="refresh-btn" id="refreshBtn" onclick="fetchLines({force:true})">↻ Refresh</button>
     </div>
 
-    <!-- FILTER TABS -->
-    <div class="filter-tabs">
+    <div class="filter-tabs" id="filterTabs">
       <button class="ftab active" data-filter="all">All Games</button>
       <button class="ftab" data-filter="steam">Steam Moves</button>
       <button class="ftab" data-filter="rlm">Rev. Line Move</button>
@@ -247,17 +196,11 @@
       <button class="ftab" data-filter="NHL">NHL</button>
     </div>
 
-    <!-- LINE CARDS -->
     <div class="lines-list" id="linesList">
       <div class="empty-state">
         <div class="empty-icon">→</div>
-        <div class="empty-title">NO LINE DATA</div>
-        <div class="empty-sub">
-          Connect The Odds API in Admin<br>
-          to track line movement, steam moves,<br>
-          reverse line movement, and sharp action
-        </div>
-        <a href="admin.html" class="go-btn">Go to Admin →</a>
+        <div class="empty-title">LOADING</div>
+        <div class="empty-sub">Checking for line movement data…</div>
       </div>
     </div>
 
@@ -280,10 +223,12 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── FILTER TABS ──
+    // ── STATE ──
     let currentFilter = 'all';
     let allLines = [];
+    const CACHE_TTL_MS = 5 * 60 * 1000;
 
+    // ── FILTER TABS ──
     document.querySelectorAll('.ftab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.ftab').forEach(t => t.classList.remove('active'));
@@ -293,74 +238,109 @@
       });
     });
 
-    // ── FETCH FROM ODDS API + SUPABASE LINE HISTORY ──
-    async function fetchLines() {
+    function jumpToFilter(filter) {
+      const tab = document.querySelector(`.ftab[data-filter="${filter}"]`);
+      if (tab) tab.click();
+    }
+
+    // ── FETCH LINES ──
+    async function fetchLines(opts = {}) {
+      const force = opts.force === true;
       const oddsKey = localStorage.getItem('edge_odds_api_key');
-      const sbUrl   = localStorage.getItem('edge_supabase_url');
-      const sbKey   = localStorage.getItem('edge_supabase_key');
+      const sbUrl = localStorage.getItem('edge_supabase_url');
+      const sbKey = localStorage.getItem('edge_supabase_key');
 
       if (!oddsKey) { renderLines(); return; }
 
-      const sports = [
-        { key: 'americanfootball_nfl', label: 'NFL' },
-        { key: 'basketball_nba',       label: 'NBA' },
-        { key: 'baseball_mlb',         label: 'MLB' },
-        { key: 'icehockey_nhl',        label: 'NHL' },
-        { key: 'americanfootball_ncaaf', label: 'NCAAF' },
-        { key: 'basketball_ncaab',     label: 'NCAAB' },
-        { key: 'soccer_usa_mls',       label: 'MLS' },
-      ];
-
-      // Fetch current lines
-      const current = [];
-      for (const s of sports) {
+      // Serve cache if fresh and not forced
+      if (!force) {
         try {
-          const res = await fetch(
-            `https://api.the-odds-api.com/v4/sports/${s.key}/odds/?apiKey=${oddsKey}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
-          );
-          if (!res.ok) continue;
-          const data = await res.json();
-          data.forEach(g => { g._sport = s.label; current.push(g); });
-        } catch {}
-      }
-
-      // Load historical snapshots from Supabase to calculate movement
-      let history = {};
-      if (sbUrl && sbKey) {
-        try {
-          const res = await fetch(`${sbUrl}/rest/v1/line_history?select=*&order=created_at.desc`, {
-            headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
-          });
-          if (res.ok) {
-            const rows = await res.json();
-            rows.forEach(r => { if (!history[r.game_id]) history[r.game_id] = r; });
+          const cached = JSON.parse(localStorage.getItem('edge_lines_cache') || 'null');
+          if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+            allLines = cached.data;
+            updateAlertCounts();
+            renderLines();
+            return;
           }
         } catch {}
       }
 
-      // Build line objects with open vs current
+      document.getElementById('refreshBtn').disabled = true;
+
+      const sports = [
+        { key: 'americanfootball_nfl',   label: 'NFL' },
+        { key: 'basketball_nba',         label: 'NBA' },
+        { key: 'baseball_mlb',           label: 'MLB' },
+        { key: 'icehockey_nhl',          label: 'NHL' },
+        { key: 'americanfootball_ncaaf', label: 'NCAAF' },
+        { key: 'basketball_ncaab',       label: 'NCAAB' },
+        { key: 'soccer_usa_mls',         label: 'MLS' },
+      ];
+
+      const current = [];
+      let failedSports = 0;
+
+      for (const s of sports) {
+        try {
+          const res = await fetch(
+            `https://api.the-odds-api.com/v4/sports/${s.key}/odds/?apiKey=${oddsKey}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`,
+            { cache: 'no-store' }
+          );
+          if (!res.ok) { failedSports++; continue; }
+          const data = await res.json();
+          data.forEach(g => { g._sport = s.label; current.push(g); });
+        } catch { failedSports++; }
+      }
+
+      // Load line history from Supabase
+      let history = {};
+      if (sbUrl && sbKey) {
+        try {
+          const gameIds = current.map(g => g.id).filter(Boolean);
+          if (gameIds.length) {
+            const inList = gameIds.map(id => `"${id}"`).join(',');
+            const res = await fetch(
+              `${sbUrl}/rest/v1/line_history?select=*&game_id=in.(${inList})&order=created_at.asc`,
+              { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
+            );
+            if (res.ok) {
+              const rows = await res.json();
+              rows.forEach(r => {
+                if (!history[r.game_id]) history[r.game_id] = { open: r, latest: r };
+                else history[r.game_id].latest = r;
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // Build line objects
       allLines = current.map(g => {
-        const hist = history[g.id] || null;
         const bk = g.bookmakers?.[0];
         const spreadMkt = bk?.markets?.find(m => m.key === 'spreads');
         const totalMkt  = bk?.markets?.find(m => m.key === 'totals');
         const h2hMkt    = bk?.markets?.find(m => m.key === 'h2h');
 
-        const currentSpread = spreadMkt?.outcomes?.[0]?.point ?? null;
+        const currentSpread = spreadMkt?.outcomes?.find(o => o.name === g.home_team)?.point ?? null;
         const currentTotal  = totalMkt?.outcomes?.find(o => o.name === 'Over')?.point ?? null;
         const currentML     = h2hMkt?.outcomes?.find(o => o.name === g.home_team)?.price ?? null;
 
-        const openSpread = hist?.spread ?? currentSpread;
-        const openTotal  = hist?.total  ?? currentTotal;
+        const hist = history[g.id];
+        const openSpread = hist?.open?.spread ?? currentSpread;
+        const openTotal  = hist?.open?.total  ?? currentTotal;
+        const publicPct  = hist?.latest?.public_pct ?? hist?.open?.public_pct ?? null;
+        const sharpPct   = hist?.latest?.sharp_pct  ?? hist?.open?.sharp_pct  ?? null;
 
         const spreadMoved = currentSpread !== null && openSpread !== null && currentSpread !== openSpread;
         const totalMoved  = currentTotal  !== null && openTotal  !== null && currentTotal  !== openTotal;
+        const spreadDiff  = spreadMoved ? Math.abs(currentSpread - openSpread) : 0;
 
-        // Detect flags
-        const spreadDiff = spreadMoved ? Math.abs(currentSpread - openSpread) : 0;
-        const isSteam    = spreadDiff >= 2;
-        const isRLM      = spreadMoved && hist?.public_pct && hist.public_pct > 60 && currentSpread > openSpread;
-        const isSharp    = spreadMoved && !isSteam && spreadDiff >= 0.5;
+        // Steam move: rapid, large spread movement
+        const isSteam = spreadDiff >= 2;
+        // RLM: public heavily on home, but line moved away from home
+        const isRLM = spreadMoved && publicPct != null && publicPct > 60 && currentSpread > openSpread;
+        // Sharp: spread moved 0.5-2 pts, less dramatic than steam
+        const isSharp = spreadMoved && !isSteam && spreadDiff >= 0.5;
 
         return {
           id: g.id,
@@ -373,55 +353,76 @@
           currentML,
           spreadMoved, totalMoved, spreadDiff,
           isSteam, isRLM, isSharp,
-          publicPct: hist?.public_pct ?? null,
-          sharpPct:  hist?.sharp_pct  ?? null,
+          publicPct, sharpPct,
           bookmaker: bk?.title || '—',
+          bookmaker_count: g.bookmakers?.length || 1,
         };
       });
 
+      // Save current snapshot to line_history
+      if (sbUrl && sbKey) saveSnapshots(allLines, sbUrl, sbKey);
+
+      // Cache locally
+      try {
+        localStorage.setItem('edge_lines_cache', JSON.stringify({
+          ts: Date.now(),
+          data: allLines,
+        }));
+      } catch {}
+
       updateAlertCounts();
       renderLines();
-
-      // Save current snapshot to Supabase line_history
-      if (sbUrl && sbKey) saveSnapshot(allLines, sbUrl, sbKey);
+      document.getElementById('refreshBtn').disabled = false;
     }
 
-    async function saveSnapshot(lines, url, key) {
+    // ── SAVE SNAPSHOTS ──
+    async function saveSnapshots(lines, url, key) {
+      if (!lines.length) return;
       const rows = lines.map(l => ({
         game_id: l.id,
         sport: l.sport,
         home: l.home,
         away: l.away,
         spread: l.currentSpread,
-        total:  l.currentTotal,
-        ml:     l.currentML,
-        created_at: new Date().toISOString()
+        total: l.currentTotal,
+        ml: l.currentML,
       }));
       try {
         await fetch(`${url}/rest/v1/line_history`, {
           method: 'POST',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(rows)
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(rows),
         });
       } catch {}
     }
 
+    // ── ALERT COUNTS ──
     function updateAlertCounts() {
       document.getElementById('steamCount').textContent = allLines.filter(l => l.isSteam).length;
       document.getElementById('rlmCount').textContent   = allLines.filter(l => l.isRLM).length;
       document.getElementById('sharpCount').textContent = allLines.filter(l => l.isSharp).length;
     }
 
+    // ── FORMATTERS ──
     function fmtSpread(v) {
       if (v === null || v === undefined) return '—';
       return (v > 0 ? '+' : '') + v;
     }
-
     function fmtTotal(v) {
       if (v === null || v === undefined) return '—';
       return 'O/U ' + v;
     }
+    function fmtPct(v) {
+      if (v === null || v === undefined) return '—';
+      return v + '%';
+    }
 
+    // ── RENDER ──
     function renderLines() {
       const list = document.getElementById('linesList');
 
@@ -441,106 +442,110 @@
             <div class="empty-sub">
               ${allLines.length > 0
                 ? 'No games match current filter'
-                : 'Connect The Odds API in Admin\nto track line movement and sharp action'}
+                : 'Connect The Odds API in Admin<br>to track line movement and sharp action'}
             </div>
             ${allLines.length === 0 ? '<a href="admin.html" class="go-btn">Go to Admin →</a>' : ''}
           </div>`;
         return;
       }
 
-      list.innerHTML = filtered.map(l => {
-        const flags = [
-          l.isSteam ? '<span class="flag steam">STEAM</span>' : '',
-          l.isRLM   ? '<span class="flag rlm">RLM</span>'     : '',
-          l.isSharp ? '<span class="flag sharp">SHARP</span>' : '',
-        ].filter(Boolean).join('');
+      list.innerHTML = filtered.map(buildLineCard).join('');
+    }
 
-        const cardCls = l.isSteam ? 'has-steam' : l.isRLM ? 'has-rlm' : l.isSharp ? 'has-sharp' : '';
+    function buildLineCard(l) {
+      const flags = [
+        l.isSteam ? '<span class="flag steam">STEAM</span>' : '',
+        l.isRLM   ? '<span class="flag rlm">RLM</span>'     : '',
+        l.isSharp ? '<span class="flag sharp">SHARP</span>' : '',
+      ].filter(Boolean).join('');
 
-        const spreadArrow = l.spreadMoved
-          ? (l.currentSpread < l.openSpread
-            ? '<span class="line-arrow moved-sharp">▼</span>'
-            : '<span class="line-arrow moved-public">▲</span>')
-          : '<span class="line-arrow flat">→</span>';
+      const cardCls = l.isSteam ? 'has-steam' : l.isRLM ? 'has-rlm' : l.isSharp ? 'has-sharp' : '';
 
-        const totalArrow = l.totalMoved
-          ? (l.currentTotal > l.openTotal
-            ? '<span class="line-arrow moved-public">▲</span>'
-            : '<span class="line-arrow moved-sharp">▼</span>')
-          : '<span class="line-arrow flat">→</span>';
+      const spreadArrow = l.spreadMoved
+        ? (l.currentSpread < l.openSpread
+          ? '<span class="line-arrow moved-sharp">▼</span>'
+          : '<span class="line-arrow moved-public">▲</span>')
+        : '<span class="line-arrow flat">→</span>';
 
-        const gameTime = l.time
-          ? new Date(l.time).toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' · ' +
-            new Date(l.time).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })
-          : '—';
+      const totalArrow = l.totalMoved
+        ? (l.currentTotal > l.openTotal
+          ? '<span class="line-arrow moved-public">▲</span>'
+          : '<span class="line-arrow moved-sharp">▼</span>')
+        : '<span class="line-arrow flat">→</span>';
 
-        const pubPct   = l.publicPct ?? '—';
-        const sharpPct = l.sharpPct  ?? '—';
-        const pubWidth = typeof l.publicPct === 'number' ? l.publicPct : 50;
-        const shWidth  = typeof l.sharpPct  === 'number' ? l.sharpPct  : 50;
+      const gameTime = l.time
+        ? new Date(l.time).toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' · ' +
+          new Date(l.time).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })
+        : '—';
 
-        const enc = encodeURIComponent(JSON.stringify({ id: l.id, home: l.home, away: l.away, sport: l.sport, time: l.time }));
+      const pubPct = l.publicPct ?? 50;
+      const shPct  = l.sharpPct  ?? (100 - pubPct);
 
-        return `
-          <div class="line-card ${cardCls}">
-            <div class="lc-top">
-              <div class="lc-meta">
-                <span class="sport-tag">${l.sport}</span>
-                <span class="lc-time">${gameTime}</span>
-              </div>
-              <div class="lc-flags">${flags}</div>
+      const enc = encodeURIComponent(JSON.stringify({
+        id: l.id, home: l.home, away: l.away, sport: l.sport, time: l.time,
+      }));
+
+      return `
+        <div class="line-card ${cardCls}">
+          <div class="lc-top">
+            <div class="lc-meta">
+              <span class="sport-tag">${l.sport}</span>
+              <span class="lc-time">${gameTime}</span>
             </div>
+            <div class="lc-flags">${flags}</div>
+          </div>
 
-            <div class="lc-matchup">${l.away} vs ${l.home}</div>
+          <div class="lc-matchup">${l.away} @ ${l.home}</div>
 
-            <div class="lc-lines">
-              <div class="lc-cell">
-                <div class="lc-cell-lbl">Spread</div>
-                <div class="line-compare">
-                  <span class="line-open">${fmtSpread(l.openSpread)}</span>
-                  ${spreadArrow}
-                  <span class="line-current ${l.spreadMoved ? 'moved' : ''}">${fmtSpread(l.currentSpread)}</span>
-                </div>
-              </div>
-              <div class="lc-cell">
-                <div class="lc-cell-lbl">Total</div>
-                <div class="line-compare">
-                  <span class="line-open">${fmtTotal(l.openTotal)}</span>
-                  ${totalArrow}
-                  <span class="line-current ${l.totalMoved ? 'moved' : ''}">${fmtTotal(l.currentTotal)}</span>
-                </div>
-              </div>
-              <div class="lc-cell">
-                <div class="lc-cell-lbl">Movement</div>
-                <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:1px;color:${l.spreadDiff >= 2 ? 'var(--red)' : l.spreadDiff >= 0.5 ? 'var(--gold)' : 'var(--text-dim)'};">
-                  ${l.spreadDiff > 0 ? l.spreadDiff.toFixed(1) + ' pts' : 'FLAT'}
-                </div>
+          <div class="lc-lines">
+            <div class="lc-cell">
+              <div class="lc-cell-lbl">Spread</div>
+              <div class="line-compare">
+                <span class="line-open">${fmtSpread(l.openSpread)}</span>
+                ${spreadArrow}
+                <span class="line-current ${l.spreadMoved ? 'moved' : ''}">${fmtSpread(l.currentSpread)}</span>
               </div>
             </div>
-
-            <div class="lc-direction">
-              <span class="direction-label">Public ${pubPct}%</span>
-              <div class="direction-bar-wrap">
-                <div class="direction-track">
-                  <div class="direction-public" style="width:${pubWidth}%"></div>
-                  <div class="direction-sharp" style="width:${100 - pubWidth}%"></div>
-                </div>
+            <div class="lc-cell">
+              <div class="lc-cell-lbl">Total</div>
+              <div class="line-compare">
+                <span class="line-open">${fmtTotal(l.openTotal)}</span>
+                ${totalArrow}
+                <span class="line-current ${l.totalMoved ? 'moved' : ''}">${fmtTotal(l.currentTotal)}</span>
               </div>
-              <span class="direction-label sharp-val">Sharp ${sharpPct}%</span>
             </div>
+            <div class="lc-cell">
+              <div class="lc-cell-lbl">Movement</div>
+              <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:1px;color:${l.spreadDiff >= 2 ? 'var(--red)' : l.spreadDiff >= 0.5 ? 'var(--gold)' : 'var(--text-dim)'};">
+                ${l.spreadDiff > 0 ? l.spreadDiff.toFixed(1) + ' pts' : 'FLAT'}
+              </div>
+            </div>
+          </div>
 
-            <div class="lc-actions">
-              <a href="analysis.html?game=${enc}" class="lc-btn gold">◎ Analysis</a>
-              <a href="picks.html" class="lc-btn">✓ Picks</a>
-              <a href="matchups.html" class="lc-btn">⚡ Game</a>
+          <div class="lc-direction">
+            <span class="direction-label">Public ${fmtPct(l.publicPct)}</span>
+            <div class="direction-bar-wrap">
+              <div class="direction-track">
+                <div class="direction-public" style="width:${pubPct}%"></div>
+                <div class="direction-sharp" style="width:${shPct}%"></div>
+              </div>
             </div>
-          </div>`;
-      }).join('');
+            <span class="direction-label sharp-val">Sharp ${fmtPct(l.sharpPct)}</span>
+          </div>
+
+          <div class="lc-actions">
+            <a href="analysis.html?game=${enc}" class="lc-btn gold">◎ Analysis</a>
+            <a href="picks.html" class="lc-btn">✓ Picks</a>
+            <a href="matchups.html" class="lc-btn">⚡ Game</a>
+          </div>
+        </div>`;
     }
 
     // ── AUTO REFRESH ──
     function scheduleRefresh() {
-      setTimeout(() => { fetchLines(); scheduleRefresh(); }, 30000);
+      setTimeout(() => {
+        fetchLines().then(scheduleRefresh);
+      }, 60000); // every 60s
     }
 
     // ── INIT ──
