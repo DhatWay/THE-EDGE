@@ -1,6 +1,6 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v3.0
-// Scoreboard-only. Full-season game logs. No standings parser.
+// EDGE — POWER RATINGS ENGINE v3.1
+// Sample-size regression · corrected scales · real distribution
 // ============================================================
 
 const EDGE_POWER = (() => {
@@ -18,14 +18,17 @@ const EDGE_POWER = (() => {
     MLS:   'soccer/usa.1',
   };
 
+  // avgPF/avgPA = realistic league averages
+  // scale = margin points corresponding to 25 rating points (larger = more forgiving)
+  // k = regression constant for Bayesian shrinkage (higher k = stronger pull to 50)
   const SPORT_CONFIG = {
-    NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 14 },
-    NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 12 },
-    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 2  },
-    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 1.5 },
-    NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 16 },
-    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 12 },
-    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1  },
+    NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22, k: 8  },
+    NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 18, k: 15 },
+    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 3,  k: 20 },
+    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 2,  k: 15 },
+    NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 32, k: 6  },
+    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 20, k: 10 },
+    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1.2, k: 15 },
   };
 
   const COACHING_WEIGHTS = {
@@ -36,7 +39,6 @@ const EDGE_POWER = (() => {
     DEFAULT: { halftime: 0.8, close: 0.5, maxAdj: 2.5 },
   };
 
-  // Date ranges — how far back to pull games for current-season ratings
   const LOOKBACK_DAYS = 150;
 
   return {
@@ -53,10 +55,6 @@ const EDGE_POWER = (() => {
     ESPN_MAP,
   };
 
-  // ============================================================
-  // ── MAIN ──
-  // ============================================================
-
   async function computeAllTeamRatings() {
     const results = { teams: {}, coaching: {}, errors: [], counts: {} };
 
@@ -71,7 +69,6 @@ const EDGE_POWER = (() => {
         const events = await fetchGamesInRange(path, startStr, endStr);
         if (!events.length) { results.counts[sport] = 0; continue; }
 
-        // Aggregate per-team game logs
         const teamMap = new Map();
 
         events.forEach(e => {
@@ -118,14 +115,9 @@ const EDGE_POWER = (() => {
       map.set(teamName, {
         team_id: String(teamObj?.id || teamName),
         abbr: teamObj?.abbreviation || teamName.slice(0, 3).toUpperCase(),
-        games: 0,
-        pf: 0,
-        pa: 0,
-        wins: 0,
-        losses: 0,
+        games: 0, pf: 0, pa: 0, wins: 0, losses: 0,
         homeW: 0, homeL: 0, awayW: 0, awayL: 0,
-        margins: [],
-        closeGames: 0, closeWins: 0,
+        margins: [], closeGames: 0, closeWins: 0,
       });
     }
     const t = map.get(teamName);
@@ -152,30 +144,42 @@ const EDGE_POWER = (() => {
     const avgPA = state.pa / games;
     const avgMOV = (state.pf - state.pa) / games;
 
-    const pyth = avgPA > 0
+    // Pythagorean raw (before shrinkage)
+    const pythRaw = avgPA > 0
       ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
       : 0.5;
 
-    const offense = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 50, 0, 100);
-    const defense = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 50, 0, 100);
+    // Offense/defense raw (before shrinkage)
+    const offenseRaw = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 25, 0, 100);
+    const defenseRaw = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 25, 0, 100);
+    const movRaw = clamp(50 + (avgMOV / cfg.scale) * 25, 0, 100);
+
+    // ── Bayesian shrinkage toward 50 for small samples ──
+    // weight = games / (games + k). At k=6, a 2-game team gets 25% real weight.
+    const realWeight = games / (games + cfg.k);
+
+    const offense = clamp(50 + (offenseRaw - 50) * realWeight, 0, 100);
+    const defense = clamp(50 + (defenseRaw - 50) * realWeight, 0, 100);
+    const mov = clamp(50 + (movRaw - 50) * realWeight, 0, 100);
+    const pyth = 0.5 + (pythRaw - 0.5) * realWeight;
 
     const winPct = state.wins / games;
-    const elo = 1500 + (winPct - 0.5) * 400 + avgMOV * 8;
+    const elo = 1500 + (winPct - 0.5) * 200 + avgMOV * 4;
 
     // Recent form (last 5 margins)
     const recent = state.margins.slice(-5);
     const formWeights = [0.10, 0.15, 0.20, 0.25, 0.30];
     let formScore = 0;
     recent.forEach((m, i) => {
-      formScore += formWeights[i] * (m / cfg.scale) * 5;
+      formScore += formWeights[i] * (m / cfg.scale) * 3;
     });
-    formScore = clamp(formScore, -20, 20);
+    formScore = clamp(formScore * realWeight, -20, 20);
 
     const overall = round(
       (pyth * 100 * 0.45) +
       (offense * 0.20) +
       (defense * 0.20) +
-      (clamp(50 + (avgMOV / cfg.scale) * 50, 0, 100) * 0.15),
+      (mov * 0.15),
       1
     );
 
@@ -200,6 +204,7 @@ const EDGE_POWER = (() => {
         avgPF: round(avgPF, 2),
         avgPA: round(avgPA, 2),
         avgMOV: round(avgMOV, 2),
+        realWeight: round(realWeight, 3),
       },
     };
   }
@@ -207,8 +212,10 @@ const EDGE_POWER = (() => {
   function buildCoaching(sport, teamName, state) {
     const cfg = COACHING_WEIGHTS[sport] || COACHING_WEIGHTS.DEFAULT;
     const closeWinPct = state.closeGames > 0 ? state.closeWins / state.closeGames : 0.5;
-    const closeComponent = closeWinPct * 100 * 0.6;
-    const halves = 0;
+    // Shrink close-game record toward 0.5 for small samples
+    const realWeight = state.closeGames / (state.closeGames + 4);
+    const closeShrunk = 0.5 + (closeWinPct - 0.5) * realWeight;
+    const closeComponent = closeShrunk * 100 * 0.6;
     const halftimeComponent = 50 * 0.4;
     const overall = round(closeComponent + halftimeComponent, 1);
 
@@ -222,9 +229,9 @@ const EDGE_POWER = (() => {
       ats_as_favorite: null,
       ats_as_underdog: null,
       halftime_adjustment: 0,
-      close_game_record: round(closeWinPct, 3),
+      close_game_record: round(closeShrunk, 3),
       primetime_record: null,
-      raw_stats: { closeGames: state.closeGames, closeWins: state.closeWins, halves },
+      raw_stats: { closeGames: state.closeGames, closeWins: state.closeWins, halves: 0 },
       max_adjustment: cfg.maxAdj,
     };
   }
@@ -265,10 +272,6 @@ const EDGE_POWER = (() => {
     return buildCoaching(sport, teamName, state);
   }
 
-  // ============================================================
-  // ── ESPN FETCH ──
-  // ============================================================
-
   async function fetchGamesInRange(path, start, end) {
     const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${start}-${end}&limit=1000`;
     try {
@@ -288,10 +291,6 @@ const EDGE_POWER = (() => {
     } catch { return null; }
   }
 
-  // ============================================================
-  // ── DEFENSE MATCHUP ──
-  // ============================================================
-
   function computeDefenseMatchup(sport, homePower, awayPower) {
     if (!homePower || !awayPower) {
       return {
@@ -305,8 +304,8 @@ const EDGE_POWER = (() => {
     const differential = homeOffVsAwayDef - awayOffVsHomeDef;
 
     const conversion = {
-      NFL: 0.08, NBA: 0.10, MLB: 0.03, NHL: 0.02,
-      NCAAF: 0.09, NCAAB: 0.10, MLS: 0.02,
+      NFL: 0.06, NBA: 0.08, MLB: 0.02, NHL: 0.015,
+      NCAAF: 0.07, NCAAB: 0.08, MLS: 0.02,
     }[sport] || 0.05;
 
     const adjustment = round(differential * conversion, 2);
@@ -321,10 +320,6 @@ const EDGE_POWER = (() => {
     };
   }
 
-  // ============================================================
-  // ── GAME PRIOR ──
-  // ============================================================
-
   async function computeGamePrior(game, options = {}) {
     const { homeStats, awayStats, market } = options;
     if (!homeStats || !awayStats) throw new Error('computeGamePrior requires homeStats and awayStats');
@@ -335,7 +330,7 @@ const EDGE_POWER = (() => {
     const ratingDelta = homeStats.overall - awayStats.overall;
     const spreadConv = {
       NFL: -0.28, NBA: -0.28, MLB: -0.08, NHL: -0.05,
-      NCAAF: -0.32, NCAAB: -0.28, MLS: -0.05,
+      NCAAF: -0.30, NCAAB: -0.28, MLS: -0.05,
     }[sport] || -0.28;
 
     const modelSpread = round(ratingDelta * spreadConv, 2);
@@ -382,10 +377,6 @@ const EDGE_POWER = (() => {
     };
   }
 
-  // ============================================================
-  // ── PERSIST ──
-  // ============================================================
-
   async function persistRatings(results) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -395,7 +386,6 @@ const EDGE_POWER = (() => {
     const coachRows = Object.values(results.coaching);
 
     try {
-      // Delete and re-insert (clean slate) — avoids stale rows from broken runs
       await fetch(`${url}/rest/v1/power_ratings?sport=not.is.null`, {
         method: 'DELETE',
         headers: { apikey: key, Authorization: `Bearer ${key}` },
@@ -429,10 +419,6 @@ const EDGE_POWER = (() => {
       }
     } catch {}
   }
-
-  // ============================================================
-  // ── LOOKUPS ──
-  // ============================================================
 
   async function getPowerRating(sport, teamName) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
