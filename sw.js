@@ -9,6 +9,7 @@ const STATIC = [
   '/THE-EDGE/algorithms.html',
   '/THE-EDGE/power.html',
   '/THE-EDGE/lines.html',
+  '/THE-EDGE/intelligence.html',
   '/THE-EDGE/history.html',
   '/THE-EDGE/performance.html',
   '/THE-EDGE/betting.html',
