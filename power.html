@@ -7,9 +7,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
   <script src="engine.js"></script>
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -18,13 +23,14 @@
       --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
       --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
       --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
     .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
-    .logo-sub { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
     .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
     .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
     .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
@@ -46,14 +52,14 @@
     .page-title em { color: var(--gold); font-style: normal; }
 
     /* ENGINE BAR */
-    .engine-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); gap: 10px; }
-    .engine-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); flex: 1; }
+    .engine-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
+    .engine-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); flex: 1; min-width: 180px; }
     .engine-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; padding: 9px 20px; cursor: pointer; white-space: nowrap; transition: opacity 0.2s; }
     .engine-btn:hover { opacity: 0.85; }
     .engine-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* SPORT TABS */
-    .sport-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .sport-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
     .sport-tabs::-webkit-scrollbar { display: none; }
     .tab-btn { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px 18px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
@@ -83,10 +89,10 @@
     .cat-row { background: var(--surface); border: 1px solid var(--border); padding: 10px 14px; }
     .cat-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
     .cat-compare { display: flex; align-items: center; gap: 8px; }
-    .cat-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; width: 36px; }
+    .cat-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; width: 52px; }
     .cat-val.a { color: var(--gold); text-align: right; }
     .cat-val.b { color: var(--text-mid); }
-    .cat-track { flex: 1; background: var(--bg4); height: 5px; position: relative; }
+    .cat-track { flex: 1; background: var(--bg4); height: 5px; position: relative; overflow: hidden; }
     .cat-fill-a { position: absolute; right: 0; top: 0; height: 100%; background: var(--gold); transition: width 0.8s ease; }
     .cat-fill-b { position: absolute; left: 0; top: 0; height: 100%; background: var(--text-dim); transition: width 0.8s ease; opacity: 0.5; }
     .edge-banner { background: var(--gold-glow); border: 1px solid var(--border-bright); padding: 12px 14px; text-align: center; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
@@ -94,11 +100,12 @@
 
     /* RATINGS TABLE */
     .ratings-section { padding: 16px 20px; }
-    .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+    .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text); }
     .sec-title em { color: var(--gold); font-style: normal; }
     .sec-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
-    .ratings-table { width: 100%; border-collapse: collapse; }
+    .table-wrap { overflow-x: auto; }
+    .ratings-table { width: 100%; border-collapse: collapse; min-width: 520px; }
     .ratings-table thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 8px 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
     .ratings-table thead th:not(:nth-child(2)) { text-align: center; }
     .ratings-table tbody tr { border-bottom: 1px solid rgba(201,168,76,0.05); transition: background 0.15s; cursor: pointer; }
@@ -108,15 +115,17 @@
     .rank-num { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text-dim); }
     .rank-num.top3 { color: var(--gold); }
     .team-cell { display: flex; align-items: center; gap: 10px; }
-    .team-abbr-box { width: 34px; height: 34px; background: var(--bg4); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 1px; color: var(--text-mid); flex-shrink: 0; }
+    .team-abbr-box { width: 36px; height: 36px; background: var(--bg4); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 1px; color: var(--text-mid); flex-shrink: 0; }
     .team-full { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); line-height: 1.2; }
     .team-record { font-size: 10px; color: var(--text-dim); }
     .rating-score { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 1px; color: var(--gold); }
-    .delta { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1px; font-weight: 700; }
-    .delta.up { color: var(--green); } .delta.dn { color: var(--red); } .delta.flat { color: var(--text-dim); }
     .off-score { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; color: var(--green); }
     .def-score { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; color: var(--text-mid); }
-    .rating-bar-track { background: var(--bg4); height: 3px; width: 44px; display: inline-block; vertical-align: middle; }
+    .form-pill { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; padding: 2px 8px; border: 1px solid; }
+    .form-pill.pos { color: var(--green); border-color: rgba(39,174,96,0.4); }
+    .form-pill.neg { color: var(--red); border-color: rgba(231,76,60,0.35); }
+    .form-pill.neu { color: var(--text-dim); border-color: var(--border); }
+    .rating-bar-track { background: var(--bg4); height: 3px; width: 60px; display: inline-block; vertical-align: middle; }
     .rating-bar-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); }
     .tier-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .tier-dot.elite { background: var(--gold); box-shadow: 0 0 4px var(--gold); }
@@ -129,8 +138,9 @@
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
     .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
-    .go-btn { display: inline-block; margin-top: 18px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 22px; text-decoration: none; transition: all 0.2s; }
+    .go-btn { display: inline-block; margin-top: 18px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 22px; text-decoration: none; transition: all 0.2s; cursor: pointer; background: none; }
     .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
@@ -178,14 +188,12 @@
       <div class="page-title">POWER <em>RATINGS</em></div>
     </div>
 
-    <!-- ENGINE BAR -->
     <div class="engine-bar">
-      <div class="engine-status" id="engineStatus">Ready — tap to calculate ratings</div>
-      <button class="engine-btn" id="engineBtn" onclick="runPowerEngine()">▲ CALCULATE</button>
+      <div class="engine-status" id="engineStatus">Loading…</div>
+      <button class="engine-btn" id="engineBtn" onclick="runPowerEngine()">▲ RECOMPUTE</button>
     </div>
 
-    <!-- SPORT TABS -->
-    <div class="sport-tabs">
+    <div class="sport-tabs" id="sportTabs">
       <button class="tab-btn active" data-sport="NFL">NFL</button>
       <button class="tab-btn" data-sport="NBA">NBA</button>
       <button class="tab-btn" data-sport="MLB">MLB</button>
@@ -195,7 +203,6 @@
       <button class="tab-btn" data-sport="MLS">MLS</button>
     </div>
 
-    <!-- HEAD-TO-HEAD COMPARE -->
     <div class="compare-section">
       <div class="compare-lbl">Head-to-Head Compare</div>
       <div class="compare-row">
@@ -206,7 +213,6 @@
       </div>
     </div>
 
-    <!-- COMPARE RESULT -->
     <div class="compare-result" id="compareResult">
       <div class="compare-cards" id="compareCards"></div>
       <div class="cat-bars" id="compareBars"></div>
@@ -214,7 +220,6 @@
       <div class="spread-suggest" id="spreadSuggest"></div>
     </div>
 
-    <!-- RATINGS TABLE -->
     <div class="ratings-section">
       <div class="sec-head">
         <div class="sec-title">TEAM <em>RANKINGS</em></div>
@@ -225,9 +230,8 @@
           <div class="empty-icon">▲</div>
           <div class="empty-title">NO RATINGS YET</div>
           <div class="empty-sub">
-            Tap CALCULATE to run the power<br>
-            ratings engine across all teams<br>
-            using ESPN + Sportradar data
+            Tap RECOMPUTE to run the power<br>
+            ratings engine across all teams
           </div>
         </div>
       </div>
@@ -235,7 +239,7 @@
 
     <footer>
       <div class="foot-logo">EDGE</div>
-      <div class="foot-txt">Power Ratings Engine · ESPN + Sportradar · Supabase · © 2026</div>
+      <div class="foot-txt">Power Ratings · ESPN + Supabase · © 2026</div>
     </footer>
 
   </main>
@@ -254,7 +258,8 @@
 
     // ── STATE ──
     let currentSport = 'NFL';
-    let allRatings   = {};
+    let allRatings = {};   // { NFL: [...], NBA: [...] }
+    let allCoaching = {};  // { NFL: { 'Team Name': {...} } }
 
     // ── SPORT TABS ──
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -268,327 +273,142 @@
       });
     });
 
-    // ── ESPN SPORT MAP ──
-    const ESPN_MAP = {
-      NFL:   'football/nfl',
-      NBA:   'basketball/nba',
-      MLB:   'baseball/mlb',
-      NHL:   'hockey/nhl',
-      NCAAF: 'football/college-football',
-      NCAAB: 'basketball/mens-college-basketball',
-      MLS:   'soccer/usa.1',
-    };
+    // ── LOAD FROM SUPABASE ──
+    async function loadFromSupabase() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return false;
 
-    // Sport-specific scoring thresholds for normalization
-    const SPORT_CONFIG = {
-      NFL:   { avgPF: 24,  avgPA: 24,  pyExp: 2.37, scale: 35 },
-      NBA:   { avgPF: 113, avgPA: 113, pyExp: 13.91, scale: 20 },
-      MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83, scale: 8  },
-      NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,  scale: 5  },
-      NCAAF: { avgPF: 28,  avgPA: 28,  pyExp: 2.37, scale: 40 },
-      NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10,   scale: 20 },
-      MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,  scale: 4  },
-    };
+      try {
+        const [tRes, cRes] = await Promise.all([
+          fetch(`${url}/rest/v1/power_ratings?select=*&order=overall.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          }),
+          fetch(`${url}/rest/v1/coaching_ratings?select=*`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          }),
+        ]);
 
-    // ── POWER RATINGS ENGINE ──
+        if (!tRes.ok) return false;
+
+        const teams = await tRes.json();
+        const coaches = cRes.ok ? await cRes.json() : [];
+
+        if (!teams.length) return false;
+
+        allRatings = {};
+        teams.forEach(t => {
+          if (!allRatings[t.sport]) allRatings[t.sport] = [];
+          allRatings[t.sport].push(t);
+        });
+
+        allCoaching = {};
+        coaches.forEach(c => {
+          if (!allCoaching[c.sport]) allCoaching[c.sport] = {};
+          allCoaching[c.sport][c.team_name] = c;
+        });
+
+        const latest = teams[0]?.updated_at;
+        if (latest) {
+          document.getElementById('lastUpdated').textContent =
+            'Updated ' + new Date(latest).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        document.getElementById('engineStatus').textContent = `${teams.length} teams loaded from Supabase`;
+        return true;
+      } catch { return false; }
+    }
+
+    // ── RUN POWER ENGINE ──
     async function runPowerEngine() {
       const btn = document.getElementById('engineBtn');
       const status = document.getElementById('engineStatus');
       btn.disabled = true;
-      btn.textContent = 'CALCULATING...';
+      btn.textContent = 'CALCULATING…';
 
-      const sports = Object.keys(ESPN_MAP);
-      allRatings = {};
-
-      for (const sport of sports) {
-        status.textContent = `Calculating ${sport} power ratings...`;
-        try {
-          const teams = await calculateSportRatings(sport);
-          if (teams.length > 0) {
-            allRatings[sport] = teams;
-            await saveRatingsToSupabase(sport, teams);
-          }
-        } catch (e) {
-          console.error(`Power ratings error for ${sport}:`, e);
-        }
-      }
-
-      document.getElementById('lastUpdated').textContent =
-        'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
-        ' · ' + new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-      renderRatings();
-      populateCompareSelects();
-      btn.disabled = false;
-      btn.textContent = '▲ CALCULATE';
-      status.textContent = `✓ Ratings calculated — ${Object.values(allRatings).flat().length} teams`;
-    }
-
-    async function calculateSportRatings(sport) {
-      const path = ESPN_MAP[sport];
-      const cfg  = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
-
-      // Fetch scoreboard for recent results
-      const sbRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
-      if (!sbRes.ok) return [];
-      const sbData = await sbRes.json();
-
-      // Fetch standings for records
-      let standings = [];
       try {
-        const stRes = await fetch(`https://site.api.espn.com/apis/v2/sports/${path}/standings`);
-        if (stRes.ok) {
-          const stData = await stRes.json();
-          standings = stData.children?.flatMap(c => c.standings?.entries || []) || [];
-        }
-      } catch {}
+        const result = await EDGE_POWER.computeAllTeamRatings();
 
-      // Build team map from scoreboard events
-      const teamMap = {};
-      const events  = sbData.events || [];
+        const teamsCount = Object.keys(result.teams || {}).length;
+        const coachesCount = Object.keys(result.coaching || {}).length;
 
-      events.forEach(e => {
-        const comp = e.competitions?.[0];
-        if (!comp) return;
-        comp.competitors?.forEach(c => {
-          const name  = c.team?.displayName;
-          const abbr  = c.team?.abbreviation;
-          const id    = c.team?.id;
-          if (!name)  return;
-          if (!teamMap[name]) {
-            teamMap[name] = {
-              name, abbr: abbr || name.slice(0,3).toUpperCase(), id,
-              sport, pf: 0, pa: 0, games: 0,
-              wins: 0, losses: 0, homeW: 0, homeL: 0, awayW: 0, awayL: 0,
-              lastScores: [], movTotal: 0,
-            };
-          }
-          const t     = teamMap[name];
-          const score = parseInt(c.score || 0);
-          const opp   = comp.competitors?.find(x => x.team?.displayName !== name);
-          const oppScore = parseInt(opp?.score || 0);
-          if (!score && !oppScore) return;
-
-          t.pf    += score;
-          t.pa    += oppScore;
-          t.games += 1;
-          t.lastScores.push({ pf: score, pa: oppScore, isHome: c.homeAway === 'home' });
-          t.movTotal += (score - oppScore);
-          const won = score > oppScore;
-          if (won) t.wins++; else t.losses++;
-          if (c.homeAway === 'home') { won ? t.homeW++ : t.homeL++; }
-          else { won ? t.awayW++ : t.awayL++; }
-        });
-      });
-
-      // Merge standing records
-      standings.forEach(s => {
-        const name = s.team?.displayName;
-        if (name && teamMap[name]) {
-          const stats = s.stats || [];
-          const getStat = k => parseFloat(stats.find(x => x.name === k)?.value || 0);
-          teamMap[name].wins   = getStat('wins')   || teamMap[name].wins;
-          teamMap[name].losses = getStat('losses') || teamMap[name].losses;
-        }
-      });
-
-      // Also try to fetch Sportradar data
-      const srKey = localStorage.getItem('edge_sportradar_key');
-
-      const teams = Object.values(teamMap).filter(t => t.games >= 2);
-      if (!teams.length) return [];
-
-      // ── CALCULATE COMPOSITE RATING ──
-      const rated = teams.map(t => {
-        const avgPF = t.pf / t.games;
-        const avgPA = t.pa / t.games;
-        const avgMOV = t.movTotal / t.games;
-
-        // 1. Pythagorean Win % (most predictive metric)
-        const pyth = avgPA > 0
-          ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
-          : 0.5;
-
-        // 2. Offensive Rating — points scored vs league avg (normalized 0-100)
-        const offRating = Math.min(Math.max(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 50, 0), 100);
-
-        // 3. Defensive Rating — points allowed vs league avg (inverted)
-        const defRating = Math.min(Math.max(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 50, 0), 100);
-
-        // 4. MOV Rating — adjusted margin of victory
-        const movRating = Math.min(Math.max(50 + (avgMOV / cfg.scale) * 50, 0), 100);
-
-        // 5. Win % Rating
-        const totalGames = t.wins + t.losses;
-        const winPct = totalGames > 0 ? t.wins / totalGames : 0.5;
-        const winRating = winPct * 100;
-
-        // 6. Home/Away performance differential
-        const homeGames = t.homeW + t.homeL;
-        const awayGames = t.awayW + t.awayL;
-        const homePct = homeGames > 0 ? t.homeW / homeGames : 0.5;
-        const awayPct = awayGames > 0 ? t.awayW / awayGames : 0.5;
-        // Teams that perform well on road get a boost
-        const consistencyBonus = awayPct > 0.5 ? (awayPct - 0.5) * 10 : 0;
-
-        // ── COMPOSITE: Weighted average ──
-        // Pythagorean is the gold standard predictor
-        const composite = (
-          pyth * 100 * 0.35 +    // 35% Pythagorean expectation
-          offRating    * 0.20 +  // 20% Offensive output
-          defRating    * 0.20 +  // 20% Defensive output
-          movRating    * 0.15 +  // 15% Margin of victory
-          winRating    * 0.10    // 10% Actual win %
-        ) + consistencyBonus;
-
-        const rating = Math.min(Math.max(Math.round(composite * 10) / 10, 0), 100);
-
-        // Tier classification
-        const tier = rating >= 75 ? 'elite' : rating >= 60 ? 'above' : rating >= 45 ? 'avg' : 'below';
-        const tierLabel = rating >= 75 ? 'ELITE' : rating >= 60 ? 'ABOVE AVG' : rating >= 45 ? 'AVERAGE' : 'BELOW AVG';
-
-        return {
-          team:    t.name,
-          abbr:    t.abbr,
-          sport:   t.sport,
-          rating:  Math.round(rating * 10) / 10,
-          offense: Math.round(offRating * 10) / 10,
-          defense: Math.round(defRating * 10) / 10,
-          mov:     Math.round(movRating * 10) / 10,
-          pyth:    Math.round(pyth * 1000) / 10, // as %
-          win_pct: Math.round(winPct * 1000) / 10,
-          record:  `${t.wins}-${t.losses}`,
-          games:   t.games,
-          avg_pf:  Math.round(avgPF * 10) / 10,
-          avg_pa:  Math.round(avgPA * 10) / 10,
-          avg_mov: Math.round(avgMOV * 10) / 10,
-          tier,
-          tier_label: tierLabel,
-          delta:   0, // calculated on save vs previous
-          updated_at: new Date().toISOString(),
-        };
-      });
-
-      // Sort by rating descending
-      rated.sort((a, b) => b.rating - a.rating);
-
-      // Load previous ratings to calculate weekly delta
-      const prev = await loadPreviousRatings(sport);
-      rated.forEach(t => {
-        const p = prev.find(x => x.team === t.team);
-        t.delta = p ? Math.round((t.rating - p.rating) * 10) / 10 : 0;
-      });
-
-      return rated;
-    }
-
-    async function loadPreviousRatings(sport) {
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) return [];
-      try {
-        const res = await fetch(`${url}/rest/v1/power_ratings?sport=eq.${sport}&select=team,rating&order=rating.desc`, {
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
-        });
-        return res.ok ? await res.json() : [];
-      } catch { return []; }
-    }
-
-    async function saveRatingsToSupabase(sport, teams) {
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) return;
-      try {
-        // Delete old ratings for this sport then insert new
-        await fetch(`${url}/rest/v1/power_ratings?sport=eq.${sport}`, {
-          method: 'DELETE',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
-        });
-        await fetch(`${url}/rest/v1/power_ratings`, {
-          method: 'POST',
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-          body: JSON.stringify(teams.map((t, i) => ({ ...t, rank: i + 1 })))
-        });
-      } catch {}
-    }
-
-    // ── LOAD FROM SUPABASE (if already calculated) ──
-    async function loadRatings() {
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) return;
-      try {
-        const res = await fetch(`${url}/rest/v1/power_ratings?select=*&order=rating.desc`, {
-          headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data.length) return;
+        // Rebuild local indexes from fresh result
         allRatings = {};
-        data.forEach(row => {
-          if (!allRatings[row.sport]) allRatings[row.sport] = [];
-          allRatings[row.sport].push(row);
+        Object.values(result.teams || {}).forEach(t => {
+          if (!allRatings[t.sport]) allRatings[t.sport] = [];
+          allRatings[t.sport].push(t);
         });
-        const latest = data[0]?.updated_at;
-        if (latest) {
-          document.getElementById('lastUpdated').textContent =
-            'Updated ' + new Date(latest).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        }
+        Object.values(allRatings).forEach(arr => arr.sort((a, b) => b.overall - a.overall));
+
+        allCoaching = {};
+        Object.values(result.coaching || {}).forEach(c => {
+          if (!allCoaching[c.sport]) allCoaching[c.sport] = {};
+          allCoaching[c.sport][c.team_name] = c;
+        });
+
+        const now = new Date();
+        document.getElementById('lastUpdated').textContent =
+          'Updated ' + now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        status.textContent = `✓ ${teamsCount} teams · ${coachesCount} coaches rated`;
         renderRatings();
         populateCompareSelects();
-        document.getElementById('engineStatus').textContent = `${data.length} teams loaded from Supabase`;
-      } catch {}
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+      }
+
+      btn.disabled = false;
+      btn.textContent = '▲ RECOMPUTE';
     }
 
     // ── RENDER TABLE ──
     function renderRatings() {
       const container = document.getElementById('ratingsContainer');
       const teams = allRatings[currentSport] || [];
+
       if (!teams.length) {
         container.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">▲</div>
-            <div class="empty-title">NO RATINGS YET</div>
-            <div class="empty-sub">Tap CALCULATE to run the power<br>ratings engine for ${currentSport}</div>
+            <div class="empty-title">NO RATINGS</div>
+            <div class="empty-sub">Tap RECOMPUTE to run the<br>ratings engine for ${currentSport}</div>
           </div>`;
         return;
       }
 
       const rows = teams.map((t, i) => {
         const rank = i + 1;
-        const delta = t.delta || 0;
-        const deltaStr = delta > 0 ? `▲${delta}` : delta < 0 ? `▼${Math.abs(delta)}` : '—';
-        const deltaCls = delta > 0 ? 'up' : delta < 0 ? 'dn' : 'flat';
-        const barW = Math.round((t.rating / 100) * 100);
-        const tier = t.tier || 'avg';
+        const tier = t.overall >= 75 ? 'elite' : t.overall >= 60 ? 'above' : t.overall >= 45 ? 'avg' : 'below';
+        const barW = Math.min(Math.round(t.overall), 100);
+        const form = t.last5_form ?? 0;
+        const formCls = form > 2 ? 'pos' : form < -2 ? 'neg' : 'neu';
+        const formStr = form > 0 ? '+' + form.toFixed(1) : form.toFixed(1);
 
         return `
-          <tr onclick="selectForCompare('${t.team.replace(/'/g,"\\'")}')">
+          <tr onclick="quickSelect('${escapeHtml(t.team_name)}')">
             <td><span class="rank-num ${rank <= 3 ? 'top3' : ''}">${rank}</span></td>
             <td>
               <div class="team-cell">
-                <div class="team-abbr-box">${(t.abbr || t.team.slice(0,3)).toUpperCase()}</div>
+                <div class="team-abbr-box">${(t.abbr || t.team_name.slice(0,3)).toUpperCase()}</div>
                 <div>
-                  <div class="team-full">${t.team}</div>
-                  <div class="team-record">${t.record || '—'} · ${t.avg_pf || '—'} PF · ${t.avg_pa || '—'} PA</div>
+                  <div class="team-full">${escapeHtml(t.team_name)}</div>
+                  <div class="team-record">${t.record || '—'} · ${t.raw_stats?.avgPF ?? '—'} PF · ${t.raw_stats?.avgPA ?? '—'} PA</div>
                 </div>
               </div>
             </td>
-            <td><span class="rating-score">${t.rating}</span></td>
+            <td><span class="rating-score">${t.overall}</span></td>
             <td><span class="tier-dot ${tier}"></span></td>
-            <td><span class="off-score">${t.offense || '—'}</span></td>
-            <td><span class="def-score">${t.defense || '—'}</span></td>
-            <td><span class="delta ${deltaCls}">${deltaStr}</span></td>
+            <td><span class="off-score">${t.offense}</span></td>
+            <td><span class="def-score">${t.defense}</span></td>
+            <td><span class="form-pill ${formCls}">${formStr}</span></td>
             <td>
-              <div class="rating-bar-track">
-                <div class="rating-bar-fill" style="width:${barW}%"></div>
-              </div>
+              <div class="rating-bar-track"><div class="rating-bar-fill" style="width:${barW}%"></div></div>
             </td>
           </tr>`;
       }).join('');
 
       container.innerHTML = `
-        <div style="overflow-x:auto;">
+        <div class="table-wrap">
           <table class="ratings-table">
             <thead>
               <tr>
@@ -598,7 +418,7 @@
                 <th>Tier</th>
                 <th>OFF</th>
                 <th>DEF</th>
-                <th>Δ</th>
+                <th>Form</th>
                 <th>Bar</th>
               </tr>
             </thead>
@@ -607,7 +427,7 @@
         </div>`;
     }
 
-    // ── COMPARE SELECTS ──
+    // ── COMPARE ──
     function populateCompareSelects() {
       const teams = allRatings[currentSport] || [];
       ['teamA','teamB'].forEach(id => {
@@ -616,8 +436,8 @@
         sel.innerHTML = `<option value="">Select team</option>`;
         teams.forEach(t => {
           const opt = document.createElement('option');
-          opt.value = t.team;
-          opt.textContent = t.team;
+          opt.value = t.team_name;
+          opt.textContent = t.team_name;
           sel.appendChild(opt);
         });
         if (prev) sel.value = prev;
@@ -625,95 +445,109 @@
     }
 
     let lastSelected = null;
-    function selectForCompare(team) {
-      if (!lastSelected) { document.getElementById('teamA').value = team; lastSelected = team; }
-      else { document.getElementById('teamB').value = team; lastSelected = null; }
+    function quickSelect(team) {
+      if (!lastSelected) {
+        document.getElementById('teamA').value = team;
+        lastSelected = team;
+      } else {
+        document.getElementById('teamB').value = team;
+        lastSelected = null;
+      }
     }
 
-    function getTierClass(rating) {
-      return rating >= 75 ? 'elite' : rating >= 60 ? 'above' : rating >= 45 ? 'avg' : 'below';
-    }
-
-    function getTierLabel(rating) {
-      return rating >= 75 ? 'ELITE' : rating >= 60 ? 'ABOVE AVG' : rating >= 45 ? 'AVERAGE' : 'BELOW AVG';
-    }
-
-    // ── RUN COMPARE ──
     function runCompare() {
       const nameA = document.getElementById('teamA').value;
       const nameB = document.getElementById('teamB').value;
       if (!nameA || !nameB || nameA === nameB) return;
-      const teams = allRatings[currentSport] || [];
-      const a = teams.find(t => t.team === nameA);
-      const b = teams.find(t => t.team === nameB);
-      const rankA = teams.findIndex(t => t.team === nameA) + 1;
-      const rankB = teams.findIndex(t => t.team === nameB) + 1;
-      const result = document.getElementById('compareResult');
 
+      const teams = allRatings[currentSport] || [];
+      const a = teams.find(t => t.team_name === nameA);
+      const b = teams.find(t => t.team_name === nameB);
+      const result = document.getElementById('compareResult');
       if (!a || !b) {
         result.classList.add('show');
-        document.getElementById('compareCards').innerHTML = `<div style="grid-column:span 2;text-align:center;padding:20px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;letter-spacing:2px;font-size:12px;text-transform:uppercase;">Calculate ratings first</div>`;
+        document.getElementById('compareCards').innerHTML =
+          '<div style="grid-column:span 2;text-align:center;padding:20px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;letter-spacing:2px;font-size:12px;text-transform:uppercase;">Team not found</div>';
         return;
       }
 
-      const tierA = getTierClass(a.rating);
-      const tierB = getTierClass(b.rating);
+      const rankA = teams.findIndex(t => t.team_name === nameA) + 1;
+      const rankB = teams.findIndex(t => t.team_name === nameB) + 1;
+      const tierA = a.overall >= 75 ? 'elite' : a.overall >= 60 ? 'above' : a.overall >= 45 ? 'avg' : 'below';
+      const tierB = b.overall >= 75 ? 'elite' : b.overall >= 60 ? 'above' : b.overall >= 45 ? 'avg' : 'below';
 
       document.getElementById('compareCards').innerHTML = `
-        <div class="cmp-card" style="${a.rating >= b.rating ? 'border-color:var(--border-bright)' : ''}">
+        <div class="cmp-card" style="${a.overall >= b.overall ? 'border-color:var(--border-bright)' : ''}">
           <div class="cmp-team">${a.abbr || nameA.slice(0,3).toUpperCase()}</div>
-          <div class="cmp-score">${a.rating}</div>
+          <div class="cmp-score">${a.overall}</div>
           <div class="cmp-rank">Rank #${rankA} · ${a.record || '—'}</div>
-          <span class="cmp-tier ${tierA}">${getTierLabel(a.rating)}</span>
+          <span class="cmp-tier ${tierA}">${tierA.toUpperCase()}</span>
         </div>
-        <div class="cmp-card" style="${b.rating >= a.rating ? 'border-color:var(--border-bright)' : ''}">
+        <div class="cmp-card" style="${b.overall >= a.overall ? 'border-color:var(--border-bright)' : ''}">
           <div class="cmp-team">${b.abbr || nameB.slice(0,3).toUpperCase()}</div>
-          <div class="cmp-score">${b.rating}</div>
+          <div class="cmp-score">${b.overall}</div>
           <div class="cmp-rank">Rank #${rankB} · ${b.record || '—'}</div>
-          <span class="cmp-tier ${tierB}">${getTierLabel(b.rating)}</span>
+          <span class="cmp-tier ${tierB}">${tierB.toUpperCase()}</span>
         </div>`;
 
       const cats = [
-        { lbl: 'Overall Rating', valA: a.rating,  valB: b.rating  },
-        { lbl: 'Offense',        valA: a.offense, valB: b.offense },
-        { lbl: 'Defense',        valA: a.defense, valB: b.defense },
-        { lbl: 'Pythagorean %',  valA: a.pyth,    valB: b.pyth    },
-        { lbl: 'Avg MOV',        valA: a.avg_mov, valB: b.avg_mov },
+        { lbl: 'Overall Rating', valA: a.overall,  valB: b.overall },
+        { lbl: 'Offense',        valA: a.offense,  valB: b.offense },
+        { lbl: 'Defense',        valA: a.defense,  valB: b.defense },
+        { lbl: 'Pythagorean %',  valA: Math.round((a.pythagorean || 0) * 100), valB: Math.round((b.pythagorean || 0) * 100) },
+        { lbl: 'Avg Margin',     valA: a.raw_stats?.avgMOV || 0, valB: b.raw_stats?.avgMOV || 0 },
+        { lbl: 'Recent Form',    valA: a.last5_form || 0, valB: b.last5_form || 0 },
       ];
 
       document.getElementById('compareBars').innerHTML = cats.map(c => {
-        const maxVal = Math.max(Math.abs(c.valA || 0), Math.abs(c.valB || 0), 1);
-        const wA = Math.min(((c.valA || 0) / 100) * 100, 100);
-        const wB = Math.min(((c.valB || 0) / 100) * 100, 100);
+        const maxV = Math.max(Math.abs(c.valA || 0), Math.abs(c.valB || 0), 1);
+        const wA = Math.min((Math.abs(c.valA || 0) / maxV) * 100, 100);
+        const wB = Math.min((Math.abs(c.valB || 0) / maxV) * 100, 100);
         return `
           <div class="cat-row">
             <div class="cat-lbl">${c.lbl}</div>
             <div class="cat-compare">
-              <span class="cat-val a">${c.valA ?? '—'}</span>
+              <span class="cat-val a">${fmtNum(c.valA)}</span>
               <div class="cat-track">
                 <div class="cat-fill-a" style="width:${wA}%"></div>
                 <div class="cat-fill-b" style="width:${wB}%"></div>
               </div>
-              <span class="cat-val b">${c.valB ?? '—'}</span>
+              <span class="cat-val b">${fmtNum(c.valB)}</span>
             </div>
           </div>`;
       }).join('');
 
-      const edge = a.rating > b.rating ? nameA : nameB;
-      const diff = Math.abs((a.rating || 0) - (b.rating || 0)).toFixed(1);
-      const ratingDiff = Math.abs(a.rating - b.rating);
-      // Convert rating diff to implied spread (approx 3 points per 10 rating diff in NFL)
-      const impliedSpread = (ratingDiff / 10 * 3).toFixed(1);
+      const edge = a.overall > b.overall ? nameA : nameB;
+      const diff = Math.abs(a.overall - b.overall).toFixed(1);
+      const spreadConv = { NFL: 0.20, NBA: 0.20, MLB: 0.06, NHL: 0.04, NCAAF: 0.24, NCAAB: 0.20, MLS: 0.04 }[currentSport] || 0.20;
+      const impliedSpread = (Math.abs(a.overall - b.overall) * spreadConv).toFixed(1);
 
-      document.getElementById('edgeBanner').textContent = `EDGE: ${edge} · ${diff} rating point advantage`;
+      document.getElementById('edgeBanner').textContent = `EDGE: ${edge} · ${diff} rating advantage`;
       document.getElementById('spreadSuggest').textContent =
-        `Implied spread: ${edge} -${impliedSpread} (based on rating differential)`;
+        `Implied spread: ${edge} -${impliedSpread}`;
 
       result.classList.add('show');
     }
 
+    function fmtNum(v) {
+      if (v === null || v === undefined) return '—';
+      return typeof v === 'number' ? (v > 0 && v < 100 ? v.toFixed(1) : v) : v;
+    }
+
+    function escapeHtml(s) {
+      if (typeof s !== 'string') return '';
+      return s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+
     // ── INIT ──
-    loadRatings();
+    (async () => {
+      const loaded = await loadFromSupabase();
+      if (!loaded) {
+        document.getElementById('engineStatus').textContent = 'No ratings in Supabase — tap RECOMPUTE';
+      }
+      renderRatings();
+      populateCompareSelects();
+    })();
   </script>
 </body>
 </html>
