@@ -1,4 +1,4 @@
-const CACHE = 'edge-v2';
+const CACHE = 'edge-v3';
 const STATIC = [
   '/',
   '/THE-EDGE/',
