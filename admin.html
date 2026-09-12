@@ -79,7 +79,6 @@
     .key-saved.set { color: var(--green); }
     .key-saved.unset { color: var(--text-dim); }
 
-    /* PIPELINE PANEL */
     .pipeline-panel { background: var(--surface); border: 1px solid var(--border-bright); padding: 18px 16px; margin-bottom: 12px; }
     .pipeline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
     .pipeline-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--text); }
@@ -98,7 +97,6 @@
     .pipeline-log { background: var(--bg4); border: 1px solid var(--border); padding: 12px 14px; font-family: 'Barlow', monospace; font-size: 11px; color: var(--text-mid); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
     .pipeline-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 8px; }
 
-    /* RESULT ENTRY */
     .result-form { display: flex; flex-direction: column; gap: 10px; }
     .form-row { display: flex; gap: 8px; }
     .form-input { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 14px; padding: 10px 12px; }
@@ -108,7 +106,6 @@
     .submit-btn { width: 100%; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; padding: 14px; cursor: pointer; transition: opacity 0.2s; }
     .submit-btn:hover { opacity: 0.85; }
 
-    /* RAW DATA */
     .raw-tabs { display: flex; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
     .raw-tabs::-webkit-scrollbar { display: none; }
     .raw-tab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 14px; cursor: pointer; transition: all 0.2s; }
@@ -117,7 +114,6 @@
     .raw-fetch-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 8px 16px; cursor: pointer; margin-top: 8px; transition: all 0.2s; width: 100%; }
     .raw-fetch-btn:hover { border-color: var(--gold); color: var(--gold); }
 
-    /* DANGER */
     .danger-btn { display: block; width: 100%; background: none; border: 1px solid rgba(231,76,60,0.3); color: var(--red); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px; cursor: pointer; text-align: center; transition: all 0.2s; margin-bottom: 8px; }
     .danger-btn:hover { background: rgba(231,76,60,0.08); border-color: var(--red); }
 
@@ -158,6 +154,7 @@
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
     <div class="drawer-section">Records</div>
+    <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
@@ -175,7 +172,6 @@
       <div class="page-title">ADMIN <em>PANEL</em></div>
     </div>
 
-    <!-- PIPELINE CONTROL -->
     <div class="section">
       <div class="sec-title">PIPELINE <em>CONTROL</em></div>
 
@@ -222,7 +218,6 @@
       </div>
     </div>
 
-    <!-- CONNECTION STATUS -->
     <div class="section">
       <div class="sec-title">CONNECTION <em>STATUS</em></div>
       <div class="conn-grid">
@@ -249,7 +244,6 @@
       </div>
     </div>
 
-    <!-- SUPABASE -->
     <div class="section">
       <div class="sec-title">SUPA<em>BASE</em></div>
       <div class="key-block">
@@ -263,14 +257,13 @@
       <div class="key-block">
         <div class="key-lbl">Publishable / Anon Key</div>
         <div class="key-row">
-          <input type="password" class="key-input" id="supabaseKey" placeholder="sb_publishable_..." />
+          <input type="password" class="key-input" id="supabaseKey" placeholder="eyJhbGci..." />
           <button class="key-save-btn" onclick="saveKey('edge_supabase_key','supabaseKey')">SAVE</button>
         </div>
         <div class="key-saved" id="savedSupabaseKey"></div>
       </div>
     </div>
 
-    <!-- ODDS API -->
     <div class="section">
       <div class="sec-title">THE ODDS <em>API</em></div>
       <div class="key-block">
@@ -283,7 +276,6 @@
       </div>
     </div>
 
-    <!-- ESPN API -->
     <div class="section">
       <div class="sec-title">ESPN <em>API</em></div>
       <div class="key-block">
@@ -296,7 +288,6 @@
       </div>
     </div>
 
-    <!-- CLAUDE API -->
     <div class="section">
       <div class="sec-title">CLAUDE <em>API</em></div>
       <div class="key-block">
@@ -312,7 +303,6 @@
       </div>
     </div>
 
-    <!-- SPORTSBOOK -->
     <div class="section">
       <div class="sec-title">SPORTSBOOK <em>API</em></div>
       <div class="key-block">
@@ -338,7 +328,6 @@
       </div>
     </div>
 
-    <!-- RESULT ENTRY -->
     <div class="section">
       <div class="sec-title">ENTER <em>RESULT</em></div>
       <div class="result-form">
@@ -367,7 +356,6 @@
       </div>
     </div>
 
-    <!-- RAW DATA -->
     <div class="section">
       <div class="sec-title">RAW <em>API DATA</em></div>
       <div class="raw-tabs">
@@ -382,7 +370,6 @@
       <button class="raw-fetch-btn" onclick="fetchRaw()">↓ Fetch Raw Data</button>
     </div>
 
-    <!-- DANGER -->
     <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="clearAllKeys()">Remove All API Keys</button>
@@ -845,15 +832,12 @@
     function init() {
       document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
 
-      // Default Supabase — only set if not already present
-      if (!localStorage.getItem('edge_supabase_url'))
-        localStorage.setItem('edge_supabase_url', 'https://YOUR-PROJECT.supabase.co');
-      if (!localStorage.getItem('edge_supabase_key'))
-        localStorage.setItem('edge_supabase_key', 'YOUR-PUBLISHABLE-KEY');
+      // Force-set Supabase credentials on every load
+      localStorage.setItem('edge_supabase_url', 'https://flzxqnfuyasjfjqdygmd.supabase.co');
+      localStorage.setItem('edge_supabase_key', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsenhxbmZ1eWFzamZqcWR5Z21kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzA1MzQsImV4cCI6MjEwNDc0NjUzNH0.JOCzzDOjk7Z1H8jnE-zMFauJ0qo4E3QDSbliObQSDNQ');
 
-      // Default Odds API key
-      if (!localStorage.getItem('edge_odds_api_key'))
-        localStorage.setItem('edge_odds_api_key', 'd7917ce937da1ade2eed49848494841c');
+      // Force-set Odds API key
+      localStorage.setItem('edge_odds_api_key', 'd7917ce937da1ade2eed49848494841c');
 
       loadSavedIndicators();
       checkConnections();
