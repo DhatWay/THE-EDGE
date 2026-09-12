@@ -1,10 +1,7 @@
 // ============================================================
-// EDGE — ORCHESTRATOR v1.0
-// Wires the full pipeline end to end.
-// Physics always runs. Claude is optional overlay.
-// Deterministic mode: physics only.
-// AI-assisted mode: physics + Claude batch review.
-// Logs every pick to shadow_picks for learning loop.
+// EDGE — ORCHESTRATOR v2.0
+// Full pipeline: priors → algos → governor → physics → persist
+// Includes auto-sim-bet placement
 // ============================================================
 
 const EDGE_ORCHESTRATOR = (() => {
@@ -15,11 +12,8 @@ const EDGE_ORCHESTRATOR = (() => {
   };
 
   const DEFAULT_MODE = MODES.DETERMINISTIC;
-
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
-
-  // ── CONCURRENCY LIMIT ──
   const MAX_PARALLEL_GAMES = 6;
 
   // ============================================================
@@ -49,10 +43,11 @@ const EDGE_ORCHESTRATOR = (() => {
       picks: [],
       errors: [],
       metrics: {},
+      persisted: 0,
+      auto_placed: 0,
     };
 
     try {
-      // ── STAGE 1: Load games ──
       log('Stage 1/7 · Loading games');
       const gameList = games || loadTodaysGames();
       if (!gameList.length) {
@@ -62,32 +57,26 @@ const EDGE_ORCHESTRATOR = (() => {
       }
       summary.stages.games_loaded = gameList.length;
 
-      // ── STAGE 2: Power ratings (from cache or compute) ──
       log('Stage 2/7 · Power ratings');
       const powerIndex = await loadPowerIndex();
       summary.stages.teams_rated = Object.keys(powerIndex.teams).length;
 
-      // ── STAGE 3: Compute priors ──
       log('Stage 3/7 · Computing game priors');
       const priors = await buildPriors(gameList, powerIndex);
       summary.stages.priors_built = priors.length;
 
-      // ── STAGE 4: Run algorithms per game ──
       log('Stage 4/7 · Running algorithms');
       const algoResults = await runAlgorithmsParallel(priors, context, MAX_PARALLEL_GAMES, log);
       summary.stages.algo_runs = algoResults.length;
 
-      // ── STAGE 5: Governor ──
       log('Stage 5/7 · Governor consensus');
       const governorResults = runGovernor(algoResults);
       summary.stages.governor_runs = governorResults.length;
 
-      // ── STAGE 6: Physics (always runs) ──
       log('Stage 6/7 · Physics decision layer');
       const physicsResults = runPhysics(governorResults);
       summary.stages.physics_picks = physicsResults.filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED').length;
 
-      // ── STAGE 7: Claude (AI-assisted only) ──
       let finalResults = physicsResults;
       let claudeReviews = [];
 
@@ -98,16 +87,13 @@ const EDGE_ORCHESTRATOR = (() => {
         finalResults = applyClaudeReviews(physicsResults, claudeReviews);
 
         const cacheRead = claudeReviews.reduce((s, r) => s + (r.usage?.cache_read_input_tokens || 0), 0);
-        const cacheWrite = claudeReviews.reduce((s, r) => s + (r.usage?.cache_creation_input_tokens || 0), 0);
         summary.metrics.claude_calls = 1;
         summary.metrics.claude_cache_read_tokens = cacheRead;
-        summary.metrics.claude_cache_write_tokens = cacheWrite;
       } else {
         log('Stage 7/7 · Skipped (deterministic mode)');
         summary.metrics.claude_calls = 0;
       }
 
-      // ── FILTER + RANK ──
       const picks = finalResults
         .filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED')
         .filter(p => p.confidence >= minConfidence)
@@ -123,7 +109,26 @@ const EDGE_ORCHESTRATOR = (() => {
       // ── PERSIST ──
       if (persist && picks.length) {
         log('Persisting shadow picks');
-        await persistShadowPicks(picks, priors, mode, runId);
+        const persistResult = await persistShadowPicks(picks, priors, mode, runId);
+
+        if (persistResult.ok) {
+          log(`  ✓ ${persistResult.count} rows written`);
+          summary.persisted = persistResult.count;
+        } else {
+          log(`  ✗ Persist failed: ${persistResult.status || ''} ${persistResult.reason || ''}`);
+          summary.errors.push('Persist: ' + (persistResult.reason || 'unknown'));
+        }
+
+        // ── AUTO-SIM-BET ──
+        const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
+        const bettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
+
+        if (portfolio === 'sim' || bettingMode === 'auto') {
+          log(`Auto-placing sim bets (portfolio=${portfolio}, mode=${bettingMode})`);
+          const placed = autoPlaceSimBets(picks, portfolio);
+          log(`  ✓ ${placed} sim bets placed`);
+          summary.auto_placed = placed;
+        }
       }
 
       summary.completed_at = new Date().toISOString();
@@ -145,7 +150,6 @@ const EDGE_ORCHESTRATOR = (() => {
   // ============================================================
 
   async function loadPowerIndex() {
-    // Try Supabase first
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
     if (url && key) {
@@ -166,8 +170,6 @@ const EDGE_ORCHESTRATOR = (() => {
         }
       } catch {}
     }
-
-    // Fallback: compute fresh
     const fresh = await EDGE_POWER.computeAllTeamRatings();
     return { teams: fresh.teams, coaching: fresh.coaching };
   }
@@ -189,7 +191,6 @@ const EDGE_ORCHESTRATOR = (() => {
 
       if (!homeStats || !awayStats) continue;
 
-      // Attach coaching to power object for algorithms
       const homeCoach = powerIndex.coaching[homeKey];
       const awayCoach = powerIndex.coaching[awayKey];
 
@@ -210,16 +211,14 @@ const EDGE_ORCHESTRATOR = (() => {
         });
         prior._raw_game = game;
         priors.push(prior);
-      } catch (e) {
-        // Skip malformed games silently
-      }
+      } catch (e) {}
     }
 
     return priors;
   }
 
   // ============================================================
-  // ── STAGE 4: ALGORITHMS (parallel, throttled) ──
+  // ── STAGE 4: ALGORITHMS ──
   // ============================================================
 
   async function runAlgorithmsParallel(priors, context, concurrency, log) {
@@ -250,42 +249,29 @@ const EDGE_ORCHESTRATOR = (() => {
 
   function buildGameContext(prior, sharedContext) {
     const ctx = { ...sharedContext };
-    const game = prior._raw_game || {};
 
-    // Line history keyed by game id
     if (sharedContext.lineHistoryByGame?.[prior.game_id]) {
       ctx.lineHistory = sharedContext.lineHistoryByGame[prior.game_id];
     }
-
-    // Weather
     if (sharedContext.weatherByGame?.[prior.game_id]) {
       ctx.weather = sharedContext.weatherByGame[prior.game_id];
     }
-
-    // Injuries
     if (sharedContext.injuriesByGame?.[prior.game_id]) {
       const inj = sharedContext.injuriesByGame[prior.game_id];
       ctx.homeInjuries = inj.home || [];
       ctx.awayInjuries = inj.away || [];
     }
-
-    // Rest days
     if (sharedContext.restByTeam) {
       ctx.homeRestDays = sharedContext.restByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
       ctx.awayRestDays = sharedContext.restByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
     }
-
-    // Travel
     if (sharedContext.travelByGame?.[prior.game_id]) {
       ctx.travelMiles = sharedContext.travelByGame[prior.game_id].miles ?? null;
       ctx.timezoneShift = sharedContext.travelByGame[prior.game_id].timezones ?? null;
     }
-
-    // Hours to game (for steam detection)
     if (prior.commence_time) {
       ctx.hoursToGame = Math.max(0, (new Date(prior.commence_time) - Date.now()) / 3600000);
     }
-
     return ctx;
   }
 
@@ -348,7 +334,6 @@ const EDGE_ORCHESTRATOR = (() => {
 
   function applyClaudeReviews(physicsResults, claudeReviews) {
     const reviewById = new Map(claudeReviews.map(r => [r.pick_id, r]));
-
     return physicsResults.map(p => {
       const review = reviewById.get(p.pick_id);
       if (!review) return p;
@@ -363,7 +348,7 @@ const EDGE_ORCHESTRATOR = (() => {
   async function persistShadowPicks(picks, priors, mode, runId) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
-    if (!url || !key) return;
+    if (!url || !key) return { ok: false, reason: 'Supabase not connected' };
 
     const priorById = new Map(priors.map(p => [p.game_id, p]));
 
@@ -407,7 +392,7 @@ const EDGE_ORCHESTRATOR = (() => {
     });
 
     try {
-      await fetch(`${url}/rest/v1/shadow_picks`, {
+      const res = await fetch(`${url}/rest/v1/shadow_picks`, {
         method: 'POST',
         headers: {
           apikey: key,
@@ -417,7 +402,121 @@ const EDGE_ORCHESTRATOR = (() => {
         },
         body: JSON.stringify(rows),
       });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        return { ok: false, status: res.status, reason: txt.slice(0, 200) };
+      }
+      return { ok: true, count: rows.length };
+    } catch (e) {
+      return { ok: false, reason: e.message };
+    }
+  }
+
+  // ============================================================
+  // ── AUTO-PLACE SIM BETS ──
+  // ============================================================
+
+  function autoPlaceSimBets(picks, portfolio) {
+    if (!picks.length) return 0;
+
+    const isSim = portfolio === 'sim';
+    let placed = 0;
+
+    const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
+    const unitSizeKey = isSim ? 'edge_sim_unit_size' : 'edge_unit_size';
+    let bankroll = parseFloat(localStorage.getItem(bankrollKey) || (isSim ? '10000' : '0'));
+    const unitSize = parseFloat(localStorage.getItem(unitSizeKey) || (isSim ? '100' : '50'));
+
+    if (bankroll <= 0 || unitSize <= 0) return 0;
+
+    const dailyCapKey = isSim ? 'edge_sim_daily_cap' : 'edge_daily_cap';
+    const dailyUsedKey = isSim ? 'edge_sim_daily_used' : 'edge_daily_used';
+    const dailyCap = parseFloat(localStorage.getItem(dailyCapKey) || '0');
+    let dailyUsed = parseFloat(localStorage.getItem(dailyUsedKey) || '0');
+
+    const placedBets = [];
+
+    for (const pick of picks) {
+      const flagKey = isSim ? `edge_bet_sim_${pick.pick_id}` : `edge_bet_real_${pick.pick_id}`;
+      if (localStorage.getItem(flagKey) === 'true') continue;
+
+      const units = pick.units || 1;
+      const stake = units * unitSize;
+
+      if (dailyCap > 0 && dailyUsed + stake > dailyCap) continue;
+      if (stake > bankroll * 0.05) continue;
+      if (stake > bankroll) continue;
+
+      bankroll -= stake;
+      dailyUsed += stake;
+
+      localStorage.setItem(flagKey, 'true');
+      placedBets.push({
+        pick_id: pick.pick_id,
+        game_id: pick.game_id,
+        sport: pick.sport,
+        matchup: `${pick.market_snapshot?.away || ''} vs ${pick.market_snapshot?.home || ''}`,
+        pick_label: pick.side_label?.team || pick.direction,
+        units,
+        stake,
+        odds: pick.market_snapshot?.home_ml || -110,
+        confidence: pick.confidence,
+        edge: pick.edge,
+      });
+      placed++;
+    }
+
+    localStorage.setItem(bankrollKey, String(bankroll));
+    localStorage.setItem(dailyUsedKey, String(dailyUsed));
+
+    try {
+      const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
+      placedBets.forEach(b => {
+        log.unshift({
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          matchup: b.matchup,
+          pick: b.pick_label,
+          type: b.units + 'u',
+          units: b.units,
+          status: 'pending',
+        });
+      });
+      localStorage.setItem('edge_session_bet_log', JSON.stringify(log.slice(0, 100)));
     } catch {}
+
+    const sbUrl = SUPABASE_URL();
+    const sbKey = SUPABASE_KEY();
+    if (sbUrl && sbKey && placedBets.length) {
+      const rows = placedBets.map(b => ({
+        mode: isSim ? 'sim' : 'real',
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        sport: b.sport,
+        matchup: b.matchup,
+        pick_label: b.pick_label,
+        pick_type: 'HOME',
+        line: '',
+        odds: b.odds,
+        confidence: b.confidence,
+        edge: b.edge,
+        units: b.units,
+        amount: b.stake,
+        status: 'pending',
+        game_id: b.game_id,
+      }));
+      fetch(`${sbUrl}/rest/v1/bet_log`, {
+        method: 'POST',
+        headers: {
+          apikey: sbKey,
+          Authorization: `Bearer ${sbKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(rows),
+      }).catch(() => {});
+    }
+
+    return placed;
   }
 
   // ============================================================
@@ -449,9 +548,6 @@ const EDGE_ORCHESTRATOR = (() => {
       if (typeof onProgress === 'function') onProgress(msg);
     };
   }
-
-  // ============================================================
-  // ── PUBLIC API ──
 
   return {
     run,
