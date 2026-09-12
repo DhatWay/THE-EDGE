@@ -1,6 +1,6 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v3.1
-// Sample-size regression · corrected scales · real distribution
+// EDGE — POWER RATINGS ENGINE v3.2
+// Season-aware: skips out-of-season sports entirely
 // ============================================================
 
 const EDGE_POWER = (() => {
@@ -18,9 +18,18 @@ const EDGE_POWER = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // avgPF/avgPA = realistic league averages
-  // scale = margin points corresponding to 25 rating points (larger = more forgiving)
-  // k = regression constant for Bayesian shrinkage (higher k = stronger pull to 50)
+  // ── SEASON WINDOWS (month/day ranges) ──
+  // Only sports whose window contains today get computed.
+  const SEASON_WINDOWS = {
+    NFL:   { start: [9, 1],   end: [2, 15]  },   // Sep 1 → Feb 15
+    NBA:   { start: [10, 15], end: [6, 30]  },   // Oct 15 → Jun 30
+    MLB:   { start: [3, 20],  end: [11, 5]  },   // Mar 20 → Nov 5
+    NHL:   { start: [10, 1],  end: [6, 30]  },   // Oct 1 → Jun 30
+    NCAAF: { start: [8, 15],  end: [1, 15]  },   // Aug 15 → Jan 15
+    NCAAB: { start: [11, 1],  end: [4, 10]  },   // Nov 1 → Apr 10
+    MLS:   { start: [2, 20],  end: [12, 15] },   // Feb 20 → Dec 15
+  };
+
   const SPORT_CONFIG = {
     NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22, k: 8  },
     NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 18, k: 15 },
@@ -51,12 +60,31 @@ const EDGE_POWER = (() => {
     getPowerRating,
     getCoachingRating,
     getGamePrior,
+    isSportInSeason,
     SPORT_CONFIG,
     ESPN_MAP,
+    SEASON_WINDOWS,
   };
 
+  // ── Season check ──
+  function isSportInSeason(sport, date = new Date()) {
+    const w = SEASON_WINDOWS[sport];
+    if (!w) return true;
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    const now = m * 100 + d;
+    const start = w.start[0] * 100 + w.start[1];
+    const end = w.end[0] * 100 + w.end[1];
+
+    // Handle wrap-around seasons (e.g. NFL Sep→Feb, NHL Oct→Jun)
+    if (start <= end) {
+      return now >= start && now <= end;
+    }
+    return now >= start || now <= end;
+  }
+
   async function computeAllTeamRatings() {
-    const results = { teams: {}, coaching: {}, errors: [], counts: {} };
+    const results = { teams: {}, coaching: {}, errors: [], counts: {}, skipped: [] };
 
     const end = new Date();
     const start = new Date(end.getTime() - LOOKBACK_DAYS * 86400000);
@@ -64,6 +92,13 @@ const EDGE_POWER = (() => {
     const endStr = fmtDate(end);
 
     for (const [sport, path] of Object.entries(ESPN_MAP)) {
+      // Skip out-of-season sports
+      if (!isSportInSeason(sport)) {
+        results.skipped.push(sport);
+        results.counts[sport] = 0;
+        continue;
+      }
+
       let teamCount = 0;
       try {
         const events = await fetchGamesInRange(path, startStr, endStr);
@@ -144,18 +179,14 @@ const EDGE_POWER = (() => {
     const avgPA = state.pa / games;
     const avgMOV = (state.pf - state.pa) / games;
 
-    // Pythagorean raw (before shrinkage)
     const pythRaw = avgPA > 0
       ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
       : 0.5;
 
-    // Offense/defense raw (before shrinkage)
     const offenseRaw = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 25, 0, 100);
     const defenseRaw = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 25, 0, 100);
     const movRaw = clamp(50 + (avgMOV / cfg.scale) * 25, 0, 100);
 
-    // ── Bayesian shrinkage toward 50 for small samples ──
-    // weight = games / (games + k). At k=6, a 2-game team gets 25% real weight.
     const realWeight = games / (games + cfg.k);
 
     const offense = clamp(50 + (offenseRaw - 50) * realWeight, 0, 100);
@@ -166,7 +197,6 @@ const EDGE_POWER = (() => {
     const winPct = state.wins / games;
     const elo = 1500 + (winPct - 0.5) * 200 + avgMOV * 4;
 
-    // Recent form (last 5 margins)
     const recent = state.margins.slice(-5);
     const formWeights = [0.10, 0.15, 0.20, 0.25, 0.30];
     let formScore = 0;
@@ -212,7 +242,6 @@ const EDGE_POWER = (() => {
   function buildCoaching(sport, teamName, state) {
     const cfg = COACHING_WEIGHTS[sport] || COACHING_WEIGHTS.DEFAULT;
     const closeWinPct = state.closeGames > 0 ? state.closeWins / state.closeGames : 0.5;
-    // Shrink close-game record toward 0.5 for small samples
     const realWeight = state.closeGames / (state.closeGames + 4);
     const closeShrunk = 0.5 + (closeWinPct - 0.5) * realWeight;
     const closeComponent = closeShrunk * 100 * 0.6;
@@ -386,6 +415,7 @@ const EDGE_POWER = (() => {
     const coachRows = Object.values(results.coaching);
 
     try {
+      // Wipe the table and reinsert fresh — removes off-season sports
       await fetch(`${url}/rest/v1/power_ratings?sport=not.is.null`, {
         method: 'DELETE',
         headers: { apikey: key, Authorization: `Bearer ${key}` },
