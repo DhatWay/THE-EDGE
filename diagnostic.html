@@ -12,9 +12,9 @@
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="context-builder.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="context-builder.js"></script>
   <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -46,7 +46,6 @@
     .err { color: var(--red); font-weight: 700; }
     .warn { color: var(--gold); }
     .info { color: var(--blue); }
-    .big { font-weight: 900; font-size: 12px; }
     .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.err { background: var(--red); color: #fff; }
@@ -77,9 +76,7 @@
 
   <script>
     const lines = [];
-    const out = (text = '', cls = '') => {
-      lines.push({ text, cls });
-    };
+    const out = (text = '', cls = '') => { lines.push({ text, cls }); };
     const render = () => {
       document.getElementById('output').innerHTML = lines.map(l => {
         const cls = l.cls ? ` class="${l.cls}"` : '';
@@ -108,10 +105,6 @@
       setTimeout(() => t.className = 'toast', 2200);
     };
 
-    // ============================================================
-    // MAIN
-    // ============================================================
-
     async function runAll() {
       lines.length = 0;
       document.getElementById('runBtn').disabled = true;
@@ -131,6 +124,7 @@
       await checkOddsAPI();
       await checkGames();
       await checkTeamMatch();
+      await checkContextBuilder();
       await simulatePipeline();
 
       out('');
@@ -143,17 +137,13 @@
       render();
     }
 
-    // ============================================================
     // 1. ENVIRONMENT
-    // ============================================================
-
     async function checkEnvironment() {
       section('1. ENVIRONMENT');
       kv('Page URL', location.href, 'info');
       kv('User agent', navigator.userAgent.slice(0, 90), 'info');
       kv('Online', navigator.onLine ? 'yes' : 'NO', navigator.onLine ? 'ok' : 'err');
 
-      // Service worker
       try {
         if ('serviceWorker' in navigator) {
           const regs = await navigator.serviceWorker.getRegistrations();
@@ -161,40 +151,30 @@
           regs.forEach((r, i) => {
             kv(`  SW[${i}] scope`, r.scope, 'info');
             kv(`  SW[${i}] active`, r.active?.scriptURL || 'none', 'info');
-            kv(`  SW[${i}] waiting`, r.waiting?.scriptURL || 'none', 'info');
-            kv(`  SW[${i}] installing`, r.installing?.scriptURL || 'none', 'info');
           });
         } else {
           kv('Service worker', 'not supported', 'warn');
         }
-      } catch (e) {
-        kv('SW check', 'error: ' + e.message, 'err');
-      }
+      } catch (e) { kv('SW check', 'error: ' + e.message, 'err'); }
 
-      // Cache storage
       try {
         const keys = await caches.keys();
-        kv('Cache names', keys.length ? keys.join(', ') : '(none)', keys.length ? 'warn' : 'ok');
+        kv('Cache names', keys.length ? keys.join(', ') : '(none)', 'info');
         for (const k of keys) {
           const c = await caches.open(k);
           const reqs = await c.keys();
           kv(`  ${k}`, reqs.length + ' files cached', 'info');
         }
-      } catch (e) {
-        kv('Cache check', 'error: ' + e.message, 'err');
-      }
+      } catch (e) { kv('Cache check', 'error: ' + e.message, 'err'); }
     }
 
-    // ============================================================
-    // 2. MODULES LOADED IN MEMORY
-    // ============================================================
-
+    // 2. MODULES
     async function checkModulesLoaded() {
       section('2. MODULES LOADED (window globals)');
       const mods = [
         'EDGE_POWER', 'EDGE_ALGOS', 'EDGE_GOVERNOR', 'EDGE_PHYSICS',
-        'EDGE_CLAUDE', 'EDGE_ORCHESTRATOR', 'EDGE_LEARNING', 'EDGE_ENGINE',
-        'EDGE_BACKTEST', 'EDGE_SIM'
+        'EDGE_CLAUDE', 'EDGE_CONTEXT', 'EDGE_ORCHESTRATOR',
+        'EDGE_LEARNING', 'EDGE_ENGINE', 'EDGE_BACKTEST', 'EDGE_SIM'
       ];
       mods.forEach(m => {
         const v = window[m];
@@ -207,62 +187,39 @@
         }
       });
 
-      // EDGE_POWER - does it have isSportInSeason? (v3.2+)
       if (window.EDGE_POWER) {
         kv('EDGE_POWER.isSportInSeason', typeof window.EDGE_POWER.isSportInSeason, window.EDGE_POWER.isSportInSeason ? 'ok' : 'err');
         kv('EDGE_POWER.SEASON_WINDOWS', window.EDGE_POWER.SEASON_WINDOWS ? 'present' : 'missing', window.EDGE_POWER.SEASON_WINDOWS ? 'ok' : 'err');
       }
-      if (window.EDGE_ORCHESTRATOR) {
-        kv('ORCHESTRATOR has run()', typeof window.EDGE_ORCHESTRATOR.run, 'info');
+      if (window.EDGE_CONTEXT) {
+        kv('EDGE_CONTEXT.buildContext', typeof window.EDGE_CONTEXT.buildContext, 'ok');
       }
     }
 
-    // ============================================================
-    // 3. REMOTE FILES (what the browser actually fetches)
-    // ============================================================
-
+    // 3. REMOTE FILES
     async function checkRemoteFiles() {
-      section('3. REMOTE FILE CONTENT (what is actually served)');
-      const files = ['power-engine.js', 'orchestrator.js', 'governor.js', 'physics.js', 'sw.js'];
+      section('3. REMOTE FILE CONTENT');
+      const files = ['power-engine.js', 'algorithms.js', 'governor.js', 'physics.js', 'claude.js', 'context-builder.js', 'orchestrator.js', 'learning.js'];
       for (const f of files) {
         try {
-          const res = await fetch(f + '?cachebust=' + Date.now(), { cache: 'no-store' });
+          const res = await fetch(f + '?cb=' + Date.now(), { cache: 'no-store' });
           if (!res.ok) { kv(f, 'HTTP ' + res.status, 'err'); continue; }
           const text = await res.text();
-          const size = text.length;
-          // Fingerprint key markers
-          const hasSeasonWindows = text.includes('SEASON_WINDOWS');
-          const hasIsInSeason = text.includes('isSportInSeason');
-          const hasAmplifier = text.includes('* 2.5');
-          const hasCacheV4 = text.includes("'edge-v4'") || text.includes('"edge-v4"');
-          const hasCacheV3 = text.includes("'edge-v3'") || text.includes('"edge-v3"');
-          const hasCacheV2 = text.includes("'edge-v2'") || text.includes('"edge-v2"');
-
-          kv(f, size + ' bytes', 'ok');
+          kv(f, text.length + ' bytes', 'ok');
           if (f === 'power-engine.js') {
-            kv('  has SEASON_WINDOWS', hasSeasonWindows ? 'yes' : 'NO', hasSeasonWindows ? 'ok' : 'err');
-            kv('  has isSportInSeason', hasIsInSeason ? 'yes' : 'NO', hasIsInSeason ? 'ok' : 'err');
+            kv('  has SEASON_WINDOWS', text.includes('SEASON_WINDOWS') ? 'yes' : 'NO', text.includes('SEASON_WINDOWS') ? 'ok' : 'err');
+            kv('  has isSportInSeason', text.includes('isSportInSeason') ? 'yes' : 'NO', text.includes('isSportInSeason') ? 'ok' : 'err');
           }
           if (f === 'governor.js') {
-            kv('  has 2.5x amplifier', hasAmplifier ? 'YES (bad)' : 'no (good)', hasAmplifier ? 'err' : 'ok');
+            kv('  has 2.5x amplifier', text.includes('* 2.5') ? 'YES (bad)' : 'no', text.includes('* 2.5') ? 'err' : 'ok');
           }
-          if (f === 'sw.js') {
-            kv('  cache v2', hasCacheV2 ? 'yes' : 'no', hasCacheV2 ? 'warn' : '');
-            kv('  cache v3', hasCacheV3 ? 'yes' : 'no', hasCacheV3 ? 'warn' : '');
-            kv('  cache v4', hasCacheV4 ? 'yes' : 'no', hasCacheV4 ? 'ok' : 'err');
-          }
-        } catch (e) {
-          kv(f, 'FETCH ERROR: ' + e.message, 'err');
-        }
+        } catch (e) { kv(f, 'ERROR: ' + e.message, 'err'); }
       }
     }
 
-    // ============================================================
-    // 4. LOCAL STORAGE (full dump)
-    // ============================================================
-
+    // 4. LOCALSTORAGE
     async function checkLocalStorage() {
-      section('4. LOCAL STORAGE (full dump)');
+      section('4. LOCAL STORAGE');
       const keys = [];
       for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
       keys.sort();
@@ -270,15 +227,11 @@
       keys.forEach(k => {
         const v = localStorage.getItem(k);
         const display = v.length > 100 ? v.slice(0, 100) + `… (${v.length} chars)` : v;
-        const cls = v === '' || v === 'null' || v === 'undefined' ? 'warn' : '';
-        out('  ' + k.padEnd(32) + '= ' + display, cls);
+        out('  ' + k.padEnd(32) + '= ' + display);
       });
     }
 
-    // ============================================================
     // 5. SUPABASE SETTINGS
-    // ============================================================
-
     async function checkSupabaseSettings() {
       section('5. SUPABASE SETTINGS TABLE');
       const url = localStorage.getItem('edge_supabase_url');
@@ -297,10 +250,7 @@
       } catch (e) { kv('Error', e.message, 'err'); }
     }
 
-    // ============================================================
-    // 6. ALL TABLES — count + sample
-    // ============================================================
-
+    // 6. TABLES
     async function checkAllTables() {
       section('6. SUPABASE TABLE SNAPSHOTS');
       const url = localStorage.getItem('edge_supabase_url');
@@ -324,22 +274,13 @@
           }
           const rows = await res.json();
           kv(t, rows.length + ' sample rows', rows.length ? 'ok' : 'warn');
-          if (rows[0]) {
-            const cols = Object.keys(rows[0]);
-            out('      columns: ' + cols.slice(0, 15).join(', '));
-          }
-        } catch (e) {
-          kv(t, 'ERROR: ' + e.message, 'err');
-        }
+        } catch (e) { kv(t, 'ERROR: ' + e.message, 'err'); }
       }
     }
 
-    // ============================================================
     // 7. POWER RATINGS BY SPORT
-    // ============================================================
-
     async function checkPowerRatingsBySport() {
-      section('7. POWER RATINGS BY SPORT (Supabase)');
+      section('7. POWER RATINGS BY SPORT');
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) { kv('Config', 'missing', 'err'); return; }
@@ -360,10 +301,9 @@
         const latest = rows[0]?.updated_at;
         kv('Most recent update', latest || '—', 'info');
 
-        // Distribution
         const high = rows.filter(r => r.overall >= 90).length;
-        const mid  = rows.filter(r => r.overall >= 60 && r.overall < 90).length;
-        const low  = rows.filter(r => r.overall < 60).length;
+        const mid = rows.filter(r => r.overall >= 60 && r.overall < 90).length;
+        const low = rows.filter(r => r.overall < 60).length;
         kv('  ≥90 (too high)', high, high > rows.length * 0.2 ? 'err' : 'ok');
         kv('  60-89', mid, 'ok');
         kv('  <60', low, 'ok');
@@ -376,20 +316,13 @@
       } catch (e) { kv('Error', e.message, 'err'); }
     }
 
-    // ============================================================
-    // 8. ESPN REACHABILITY
-    // ============================================================
-
+    // 8. ESPN
     async function checkESPN() {
       section('8. ESPN API');
       const sports = [
-        ['NFL',   'football/nfl'],
-        ['NBA',   'basketball/nba'],
-        ['MLB',   'baseball/mlb'],
-        ['NHL',   'hockey/nhl'],
-        ['NCAAF', 'football/college-football'],
-        ['NCAAB', 'basketball/mens-college-basketball'],
-        ['MLS',   'soccer/usa.1'],
+        ['NFL', 'football/nfl'], ['NBA', 'basketball/nba'], ['MLB', 'baseball/mlb'],
+        ['NHL', 'hockey/nhl'], ['NCAAF', 'football/college-football'],
+        ['NCAAB', 'basketball/mens-college-basketball'], ['MLS', 'soccer/usa.1'],
       ];
       for (const [label, path] of sports) {
         try {
@@ -405,10 +338,7 @@
       }
     }
 
-    // ============================================================
     // 9. ODDS API
-    // ============================================================
-
     async function checkOddsAPI() {
       section('9. THE ODDS API');
       const key = localStorage.getItem('edge_odds_api_key');
@@ -426,15 +356,11 @@
       } catch (e) { kv('Error', e.message, 'err'); }
     }
 
-    // ============================================================
-    // 10. TODAY'S GAMES (localStorage)
-    // ============================================================
-
+    // 10. GAMES
     async function checkGames() {
       section('10. TODAY\'S GAMES (localStorage)');
-
       const raw = localStorage.getItem('edge_todays_games');
-      if (!raw) { kv('edge_todays_games', 'NOT SET — pipeline has nothing to run', 'err'); return; }
+      if (!raw) { kv('edge_todays_games', 'NOT SET', 'err'); return; }
 
       let games = [];
       try { games = JSON.parse(raw); }
@@ -455,30 +381,22 @@
       Object.entries(bySport).sort().forEach(([s, c]) => kv('  · ' + s, c + ' games', 'info'));
 
       out('');
-      out('  First 10 games (full record):');
-      games.slice(0, 10).forEach((g, i) => {
-        out(`    [${i+1}] id=${g.id}`);
-        out(`        sport=${g._sport || g.sport}`);
-        out(`        away="${g.away_team || g.away}"`);
-        out(`        home="${g.home_team || g.home}"`);
-        out(`        spread=${g.spread ?? g.home_spread ?? 'null'} | total=${g.total ?? 'null'} | ml=${g.ml ?? 'null'}`);
+      out('  First 5 games:');
+      games.slice(0, 5).forEach((g, i) => {
+        out(`    [${i+1}] ${g._sport || g.sport} | ${g.away_team || g.away} @ ${g.home_team || g.home} | spread=${g.spread ?? 'null'}`);
       });
     }
 
-    // ============================================================
-    // 11. TEAM NAME CROSS-CHECK
-    // ============================================================
-
+    // 11. TEAM MATCH
     async function checkTeamMatch() {
-      section('11. TEAM NAME CROSS-CHECK (why priors fail)');
-
+      section('11. TEAM NAME CROSS-CHECK');
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) { kv('Config', 'missing', 'err'); return; }
 
       let games = [];
       try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
-      if (!games.length) { kv('Status', 'No games in localStorage', 'err'); return; }
+      if (!games.length) { kv('Status', 'No games', 'err'); return; }
 
       let ratings = [];
       try {
@@ -486,7 +404,7 @@
           { headers: { apikey: key, Authorization: `Bearer ${key}` } });
         if (res.ok) ratings = await res.json();
       } catch {}
-      if (!ratings.length) { kv('Status', 'No ratings in Supabase', 'err'); return; }
+      if (!ratings.length) { kv('Status', 'No ratings', 'err'); return; }
 
       const ratingSet = new Set(ratings.map(r => `${r.sport}:${r.team_name}`));
 
@@ -497,50 +415,81 @@
         const sport = g._sport || g.sport;
         const home = g.home_team || g.home;
         const away = g.away_team || g.away;
-        const hKey = `${sport}:${home}`;
-        const aKey = `${sport}:${away}`;
-        const hOK = ratingSet.has(hKey);
-        const aOK = ratingSet.has(aKey);
+        const hOK = ratingSet.has(`${sport}:${home}`);
+        const aOK = ratingSet.has(`${sport}:${away}`);
         if (hOK) homeOK++;
         if (aOK) awayOK++;
         if (hOK && aOK) bothOK++;
-        else if (mismatches.length < 15) mismatches.push({ sport, home, away, hOK, aOK });
+        else if (mismatches.length < 10) mismatches.push({ sport, home, away, hOK, aOK });
       });
 
       kv('Total games', games.length, 'info');
-      kv('Home matched', homeOK + '/' + games.length, homeOK === games.length ? 'ok' : 'err');
-      kv('Away matched', awayOK + '/' + games.length, awayOK === games.length ? 'ok' : 'err');
+      kv('Home matched', homeOK + '/' + games.length, homeOK === games.length ? 'ok' : 'warn');
+      kv('Away matched', awayOK + '/' + games.length, awayOK === games.length ? 'ok' : 'warn');
       kv('BOTH matched (usable)', bothOK + '/' + games.length, bothOK > 0 ? 'ok' : 'err');
 
       if (mismatches.length) {
         out('');
-        out('  MISMATCHES (first 15):', 'err');
+        out('  Mismatches (first 10):');
         mismatches.forEach((m, i) => {
-          out(`    [${i+1}] ${m.sport}`);
-          out(`        home "${m.home}"  →  ${m.hOK ? '✓ found' : '✗ NOT IN RATINGS'}`, m.hOK ? 'ok' : 'err');
-          out(`        away "${m.away}"  →  ${m.aOK ? '✓ found' : '✗ NOT IN RATINGS'}`, m.aOK ? 'ok' : 'err');
+          out(`    [${i+1}] ${m.sport} | home="${m.home}" ${m.hOK?'✓':'✗'} | away="${m.away}" ${m.aOK?'✓':'✗'}`);
         });
       }
     }
 
-    // ============================================================
-    // 12. SIMULATE PIPELINE END-TO-END
-    // ============================================================
+    // 11b. CONTEXT BUILDER
+    async function checkContextBuilder() {
+      section('11b. CONTEXT BUILDER');
+      if (!window.EDGE_CONTEXT) {
+        kv('EDGE_CONTEXT', 'NOT LOADED — add <script src="context-builder.js"></script>', 'err');
+        return;
+      }
+      kv('EDGE_CONTEXT', 'loaded', 'ok');
 
+      let games = [];
+      try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
+      if (!games.length) { kv('Games', 'none', 'err'); return; }
+
+      const ctx = await EDGE_CONTEXT.buildContext(games);
+      kv('Line history games', Object.keys(ctx.lineHistoryByGame).length, Object.keys(ctx.lineHistoryByGame).length > 0 ? 'ok' : 'err');
+      kv('Rest teams', Object.keys(ctx.restByTeam).length, Object.keys(ctx.restByTeam).length > 0 ? 'ok' : 'err');
+      kv('Travel games', Object.keys(ctx.travelByGame).length, Object.keys(ctx.travelByGame).length > 0 ? 'ok' : 'err');
+      kv('Weather games', Object.keys(ctx.weatherByGame).length, 'info');
+      kv('Injuries games', Object.keys(ctx.injuriesByGame).length, 'info');
+
+      if (Object.keys(ctx.travelByGame).length > 0) {
+        const sample = Object.entries(ctx.travelByGame).slice(0, 3);
+        out('');
+        out('  Travel sample:');
+        sample.forEach(([gid, t]) => out(`    ${gid.slice(0, 8)}… miles=${t.miles} tz=${t.timezones}`));
+      }
+    }
+
+    // 12. SIMULATE PIPELINE
     async function simulatePipeline() {
-      section('12. PIPELINE SIMULATION (end-to-end trace)');
+      section('12. PIPELINE SIMULATION (with context)');
 
       if (!window.EDGE_POWER || !window.EDGE_ALGOS || !window.EDGE_GOVERNOR || !window.EDGE_PHYSICS) {
-        kv('Modules', 'missing — cannot simulate', 'err');
+        kv('Modules', 'missing', 'err');
         return;
       }
 
       let games = [];
       try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
-      if (!games.length) { kv('Games', 'none loaded', 'err'); return; }
+      if (!games.length) { kv('Games', 'none', 'err'); return; }
 
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
+
+      let ctx = {};
+      if (window.EDGE_CONTEXT) {
+        ctx = await EDGE_CONTEXT.buildContext(games);
+        kv('Context loaded',
+          `line_history=${Object.keys(ctx.lineHistoryByGame).length} · rest=${Object.keys(ctx.restByTeam).length} · travel=${Object.keys(ctx.travelByGame).length}`,
+          'ok');
+      } else {
+        kv('Context', 'EDGE_CONTEXT not loaded', 'err');
+      }
 
       let ratings = [];
       try {
@@ -552,21 +501,17 @@
       const ratingIndex = {};
       ratings.forEach(r => { ratingIndex[`${r.sport}:${r.team_name}`] = r; });
 
-      // Try to build a prior for first 5 games
-      let builtCount = 0;
       let firstPrior = null;
-      const buildFailures = [];
+      let builtCount = 0;
 
-      for (const g of games.slice(0, 50)) {
+      for (const g of games.slice(0, 200)) {
         const sport = g._sport || g.sport;
         const home = g.home_team || g.home;
         const away = g.away_team || g.away;
         const homeStats = ratingIndex[`${sport}:${home}`];
         const awayStats = ratingIndex[`${sport}:${away}`];
-        if (!homeStats || !awayStats) {
-          if (buildFailures.length < 5) buildFailures.push({ sport, home, away, hasHome: !!homeStats, hasAway: !!awayStats });
-          continue;
-        }
+        if (!homeStats || !awayStats) continue;
+
         try {
           const prior = await EDGE_POWER.computeGamePrior(g, {
             homeStats, awayStats,
@@ -579,65 +524,73 @@
             },
           });
           builtCount++;
-          if (!firstPrior) firstPrior = { prior, game: g };
-        } catch (e) {
-          if (buildFailures.length < 5) buildFailures.push({ sport, home, away, error: e.message });
-        }
+          const hasCtx = !!(ctx.lineHistoryByGame[g.id] || ctx.travelByGame[g.id]);
+          if (!firstPrior || (!firstPrior.hasCtx && hasCtx)) {
+            firstPrior = { prior, game: g, hasCtx };
+          }
+        } catch (e) {}
       }
 
-      kv('Priors built (of first 50 games)', builtCount, builtCount > 0 ? 'ok' : 'err');
-      if (buildFailures.length) {
-        out('');
-        out('  Build failures:');
-        buildFailures.forEach(f => {
-          if (f.error) out(`    ${f.sport} ${f.away}@${f.home} → ERROR: ${f.error}`, 'err');
-          else out(`    ${f.sport} ${f.away}@${f.home} → home=${f.hasHome} away=${f.hasAway}`, 'err');
-        });
-      }
+      kv('Priors built (of first 200)', builtCount, builtCount > 0 ? 'ok' : 'err');
+      if (!firstPrior) { out('  Cannot simulate — no priors built.', 'err'); return; }
 
-      if (!firstPrior) {
-        out('');
-        out('  Cannot simulate further — no priors built.', 'err');
-        return;
-      }
+      const prior = firstPrior.prior;
+      const g = firstPrior.game;
 
-      // Run algorithms on the first prior
       out('');
-      out('  ── Simulating first game: ' + firstPrior.prior.away_team + ' @ ' + firstPrior.prior.home_team, 'info');
+      out('  ── Simulating: ' + prior.away_team + ' @ ' + prior.home_team, 'info');
+
+      const gameCtx = {
+        lineHistory: ctx.lineHistoryByGame?.[g.id] || null,
+        weather: ctx.weatherByGame?.[g.id] || null,
+        homeInjuries: ctx.injuriesByGame?.[g.id]?.home || [],
+        awayInjuries: ctx.injuriesByGame?.[g.id]?.away || [],
+        homeRestDays: ctx.restByTeam?.[`${prior.sport}:${prior.home_team}`] ?? null,
+        awayRestDays: ctx.restByTeam?.[`${prior.sport}:${prior.away_team}`] ?? null,
+        travelMiles: ctx.travelByGame?.[g.id]?.miles ?? null,
+        timezoneShift: ctx.travelByGame?.[g.id]?.timezones ?? null,
+        hoursToGame: prior.commence_time ? Math.max(0, (new Date(prior.commence_time) - Date.now()) / 3600000) : null,
+      };
+
+      out('  Context for this game:');
+      out(`    lineHistory:    ${gameCtx.lineHistory ? 'present' : 'null'}`);
+      out(`    rest home/away: ${gameCtx.homeRestDays} / ${gameCtx.awayRestDays}`);
+      out(`    travel miles:   ${gameCtx.travelMiles}`);
+      out(`    timezone shift: ${gameCtx.timezoneShift}`);
 
       let families = [];
       try {
-        families = await EDGE_ALGOS.runAll(firstPrior.prior, {});
-        kv('  Algorithm families returned', families.length, families.length ? 'ok' : 'err');
+        families = await EDGE_ALGOS.runAll(prior, gameCtx);
+        kv('Algorithm families returned', families.length, families.length ? 'ok' : 'err');
         families.forEach(f => {
-          out(`      ${f.family.padEnd(20)} vote=${f.vote.padEnd(4)} conf=${(f.confidence * 100).toFixed(0)}% edge=${(f.edge * 100).toFixed(2)}%`, 'info');
+          const voteStr = f.vote === 'yes' ? 'YES' : f.vote === 'no' ? 'NO ' : 'NEU';
+          const cls = f.vote === 'yes' ? 'ok' : f.vote === 'no' ? 'err' : 'info';
+          out(`      ${f.family.padEnd(20)} ${voteStr}  conf=${(f.confidence * 100).toFixed(0)}%  edge=${(f.edge * 100).toFixed(2)}%  ${f.reason || ''}`, cls);
         });
       } catch (e) {
-        kv('  Algorithm error', e.message, 'err');
+        kv('Algorithm error', e.message, 'err');
         return;
       }
 
-      // Governor
       let gov = null;
       try {
-        gov = EDGE_GOVERNOR.run(families, firstPrior.prior);
+        gov = EDGE_GOVERNOR.run(families, prior);
         out('');
         out('  ── Governor output:');
         kv('    consensus_score', gov.consensus_score, 'info');
-        kv('    confidence', gov.confidence + '%', gov.confidence > 0 ? 'ok' : 'warn');
+        kv('    confidence', gov.confidence + '%', gov.confidence > 40 ? 'ok' : 'warn');
         kv('    edge', (gov.edge * 100).toFixed(2) + '%', 'info');
         kv('    agreement_index', gov.agreement_index, 'info');
         kv('    decision', gov.decision, gov.decision !== 'PASS' ? 'ok' : 'warn');
         kv('    units', gov.units, 'info');
         kv('    data_cap', gov.data_cap + (gov.data_caps?.length ? ' (' + gov.data_caps.join(', ') + ')' : ''), 'info');
       } catch (e) {
-        kv('  Governor error', e.message, 'err');
+        kv('Governor error', e.message, 'err');
         return;
       }
 
-      // Physics
       try {
-        const phys = EDGE_PHYSICS.decide(gov, firstPrior.prior, {});
+        const phys = EDGE_PHYSICS.decide(gov, prior, gameCtx);
         out('');
         out('  ── Physics output:');
         kv('    decision', phys.decision, phys.decision !== 'PASS' && phys.decision !== 'CAPPED' ? 'ok' : 'warn');
@@ -649,14 +602,11 @@
           phys.reasons.forEach(r => out('      · ' + r));
         }
       } catch (e) {
-        kv('  Physics error', e.message, 'err');
+        kv('Physics error', e.message, 'err');
       }
     }
 
-    // ============================================================
     // COPY
-    // ============================================================
-
     function copyAll() {
       const text = lines.map(l => l.text).join('\n');
       if (navigator.clipboard && navigator.clipboard.writeText) {
