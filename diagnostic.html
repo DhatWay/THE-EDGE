@@ -7,6 +7,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -17,29 +25,27 @@
       --green: #27AE60; --red: #E74C3C; --blue: #4A90D9;
     }
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; }
-    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
-    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; padding: 0 20px; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
-    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
-    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; margin-left: 10px; }
     main { padding-top: 60px; }
-    .header { padding: 24px 20px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .title { font-family: 'Bebas Neue', sans-serif; font-size: 32px; letter-spacing: 3px; }
+    .header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .title { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 3px; }
     .title em { color: var(--gold); font-style: normal; }
     .btn-bar { display: flex; gap: 8px; flex-wrap: wrap; }
-    .btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 9px 18px; cursor: pointer; }
+    .btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 2px; padding: 9px 16px; cursor: pointer; }
     .btn:hover { opacity: 0.85; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn.secondary { background: none; border: 1px solid var(--border); color: var(--text-mid); }
-    .btn.secondary:hover { border-color: var(--gold); color: var(--gold); }
     .status { padding: 10px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); background: var(--bg2); }
     .status.active { color: var(--gold); }
-    pre { padding: 16px 20px 40px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; line-height: 1.6; color: var(--text-mid); white-space: pre-wrap; word-break: break-word; }
-    .section-title { color: var(--gold); font-weight: 700; margin-top: 14px; display: block; }
+    pre { padding: 16px 20px 80px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; line-height: 1.6; color: var(--text-mid); white-space: pre-wrap; word-break: break-word; }
+    .section-title { color: var(--gold); font-weight: 700; display: inline; }
     .ok { color: var(--green); }
-    .err { color: var(--red); }
+    .err { color: var(--red); font-weight: 700; }
     .warn { color: var(--gold); }
     .info { color: var(--blue); }
+    .big { font-weight: 900; font-size: 12px; }
     .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.err { background: var(--red); color: #fff; }
@@ -48,382 +54,325 @@
 <body>
 
   <nav>
-    <div class="logo">
-      <div class="logo-mark">ED</div>
-      <div>
-        <div class="logo-text">EDGE</div>
-        <div class="logo-sub">Diagnostic</div>
-      </div>
-    </div>
+    <div class="logo-mark">ED</div>
+    <div class="logo-text">EDGE · DIAGNOSTIC</div>
   </nav>
 
   <main>
     <div class="header">
-      <div class="title">DIAG<em>NOSTIC</em></div>
+      <div class="title">FULL <em>DIAGNOSTIC</em></div>
       <div class="btn-bar">
-        <button class="btn" id="runBtn" onclick="runDiagnostics()">▶ RUN ALL</button>
+        <button class="btn" id="runBtn" onclick="runAll()">▶ RUN</button>
         <button class="btn secondary" id="copyBtn" onclick="copyAll()">⧉ COPY ALL</button>
       </div>
     </div>
 
-    <div class="status" id="status">Idle — tap RUN ALL</div>
+    <div class="status" id="status">Idle — tap RUN</div>
 
-    <pre id="output">Diagnostic will appear here.</pre>
+    <pre id="output">Output appears here after RUN.</pre>
   </main>
 
   <div class="toast" id="toast"></div>
 
   <script>
     const lines = [];
-
-    function out(text, cls) {
-      if (cls) lines.push({ text, cls });
-      else lines.push({ text });
-      render();
-    }
-
-    function render() {
-      const el = document.getElementById('output');
-      el.innerHTML = lines.map(l => {
+    const out = (text = '', cls = '') => {
+      lines.push({ text, cls });
+    };
+    const render = () => {
+      document.getElementById('output').innerHTML = lines.map(l => {
         const cls = l.cls ? ` class="${l.cls}"` : '';
-        return `<span${cls}>${escapeHtml(l.text)}</span>`;
+        const safe = String(l.text).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+        return `<span${cls}>${safe}</span>`;
       }).join('\n');
-    }
-
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-    }
-
-    function section(name) {
+    };
+    const section = (name) => {
       out('');
-      out('══════════════════════════════════════════════════════', 'section-title');
-      out('  ' + name, 'section-title');
-      out('══════════════════════════════════════════════════════', 'section-title');
-    }
-
-    function line(label, value, cls) {
-      const pad = label.padEnd(28);
-      out('  ' + pad + '  ' + (value ?? '—'), cls);
-    }
-
-    function setStatus(msg, active) {
+      out('████████████████████████████████████████████████████████', 'section-title');
+      out('█  ' + name, 'section-title');
+      out('████████████████████████████████████████████████████████', 'section-title');
+    };
+    const kv = (label, value, cls = '') => {
+      out('  ' + String(label).padEnd(32) + value, cls);
+    };
+    const setStatus = (msg, active) => {
       const el = document.getElementById('status');
       el.textContent = msg;
       el.className = 'status' + (active ? ' active' : '');
-    }
-
-    function showToast(msg, isErr) {
+    };
+    const showToast = (msg, isErr) => {
       const t = document.getElementById('toast');
       t.textContent = msg;
       t.className = 'toast show' + (isErr ? ' err' : '');
       setTimeout(() => t.className = 'toast', 2200);
-    }
+    };
 
     // ============================================================
-    // RUN DIAGNOSTICS
+    // MAIN
     // ============================================================
 
-    async function runDiagnostics() {
+    async function runAll() {
       lines.length = 0;
       document.getElementById('runBtn').disabled = true;
       setStatus('Running…', true);
 
-      out('EDGE DIAGNOSTIC REPORT');
+      out('EDGE FULL DIAGNOSTIC');
       out('Generated: ' + new Date().toISOString());
 
+      await checkEnvironment();
+      await checkModulesLoaded();
+      await checkRemoteFiles();
       await checkLocalStorage();
-      await checkSupabaseConnection();
-      await checkSupabaseTables();
-      await checkSettings();
-      await checkTodaysGames();
-      await checkPowerRatings();
-      await checkTeamNameMatching();
+      await checkSupabaseSettings();
+      await checkAllTables();
+      await checkPowerRatingsBySport();
       await checkESPN();
       await checkOddsAPI();
+      await checkGames();
+      await checkTeamMatch();
+      await simulatePipeline();
 
       out('');
-      out('══════════════════════════════════════════════════════');
-      out('  END OF REPORT');
-      out('══════════════════════════════════════════════════════');
+      out('████████████████████████████████████████████████████████');
+      out('█  END OF REPORT');
+      out('████████████████████████████████████████████████████████');
 
       setStatus('Done · ' + new Date().toLocaleTimeString(), false);
       document.getElementById('runBtn').disabled = false;
+      render();
     }
 
     // ============================================================
-    // 1. LOCAL STORAGE
+    // 1. ENVIRONMENT
+    // ============================================================
+
+    async function checkEnvironment() {
+      section('1. ENVIRONMENT');
+      kv('Page URL', location.href, 'info');
+      kv('User agent', navigator.userAgent.slice(0, 90), 'info');
+      kv('Online', navigator.onLine ? 'yes' : 'NO', navigator.onLine ? 'ok' : 'err');
+
+      // Service worker
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          kv('SW registrations', regs.length, regs.length ? 'warn' : 'ok');
+          regs.forEach((r, i) => {
+            kv(`  SW[${i}] scope`, r.scope, 'info');
+            kv(`  SW[${i}] active`, r.active?.scriptURL || 'none', 'info');
+            kv(`  SW[${i}] waiting`, r.waiting?.scriptURL || 'none', 'info');
+            kv(`  SW[${i}] installing`, r.installing?.scriptURL || 'none', 'info');
+          });
+        } else {
+          kv('Service worker', 'not supported', 'warn');
+        }
+      } catch (e) {
+        kv('SW check', 'error: ' + e.message, 'err');
+      }
+
+      // Cache storage
+      try {
+        const keys = await caches.keys();
+        kv('Cache names', keys.length ? keys.join(', ') : '(none)', keys.length ? 'warn' : 'ok');
+        for (const k of keys) {
+          const c = await caches.open(k);
+          const reqs = await c.keys();
+          kv(`  ${k}`, reqs.length + ' files cached', 'info');
+        }
+      } catch (e) {
+        kv('Cache check', 'error: ' + e.message, 'err');
+      }
+    }
+
+    // ============================================================
+    // 2. MODULES LOADED IN MEMORY
+    // ============================================================
+
+    async function checkModulesLoaded() {
+      section('2. MODULES LOADED (window globals)');
+      const mods = [
+        'EDGE_POWER', 'EDGE_ALGOS', 'EDGE_GOVERNOR', 'EDGE_PHYSICS',
+        'EDGE_CLAUDE', 'EDGE_ORCHESTRATOR', 'EDGE_LEARNING', 'EDGE_ENGINE',
+        'EDGE_BACKTEST', 'EDGE_SIM'
+      ];
+      mods.forEach(m => {
+        const v = window[m];
+        if (typeof v === 'undefined') {
+          kv(m, 'NOT LOADED', 'err');
+        } else {
+          const keys = Object.keys(v).slice(0, 12).join(', ');
+          kv(m, 'loaded (' + Object.keys(v).length + ' exports)', 'ok');
+          out('      exports: ' + keys);
+        }
+      });
+
+      // EDGE_POWER - does it have isSportInSeason? (v3.2+)
+      if (window.EDGE_POWER) {
+        kv('EDGE_POWER.isSportInSeason', typeof window.EDGE_POWER.isSportInSeason, window.EDGE_POWER.isSportInSeason ? 'ok' : 'err');
+        kv('EDGE_POWER.SEASON_WINDOWS', window.EDGE_POWER.SEASON_WINDOWS ? 'present' : 'missing', window.EDGE_POWER.SEASON_WINDOWS ? 'ok' : 'err');
+      }
+      if (window.EDGE_ORCHESTRATOR) {
+        kv('ORCHESTRATOR has run()', typeof window.EDGE_ORCHESTRATOR.run, 'info');
+      }
+    }
+
+    // ============================================================
+    // 3. REMOTE FILES (what the browser actually fetches)
+    // ============================================================
+
+    async function checkRemoteFiles() {
+      section('3. REMOTE FILE CONTENT (what is actually served)');
+      const files = ['power-engine.js', 'orchestrator.js', 'governor.js', 'physics.js', 'sw.js'];
+      for (const f of files) {
+        try {
+          const res = await fetch(f + '?cachebust=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) { kv(f, 'HTTP ' + res.status, 'err'); continue; }
+          const text = await res.text();
+          const size = text.length;
+          // Fingerprint key markers
+          const hasSeasonWindows = text.includes('SEASON_WINDOWS');
+          const hasIsInSeason = text.includes('isSportInSeason');
+          const hasAmplifier = text.includes('* 2.5');
+          const hasCacheV4 = text.includes("'edge-v4'") || text.includes('"edge-v4"');
+          const hasCacheV3 = text.includes("'edge-v3'") || text.includes('"edge-v3"');
+          const hasCacheV2 = text.includes("'edge-v2'") || text.includes('"edge-v2"');
+
+          kv(f, size + ' bytes', 'ok');
+          if (f === 'power-engine.js') {
+            kv('  has SEASON_WINDOWS', hasSeasonWindows ? 'yes' : 'NO', hasSeasonWindows ? 'ok' : 'err');
+            kv('  has isSportInSeason', hasIsInSeason ? 'yes' : 'NO', hasIsInSeason ? 'ok' : 'err');
+          }
+          if (f === 'governor.js') {
+            kv('  has 2.5x amplifier', hasAmplifier ? 'YES (bad)' : 'no (good)', hasAmplifier ? 'err' : 'ok');
+          }
+          if (f === 'sw.js') {
+            kv('  cache v2', hasCacheV2 ? 'yes' : 'no', hasCacheV2 ? 'warn' : '');
+            kv('  cache v3', hasCacheV3 ? 'yes' : 'no', hasCacheV3 ? 'warn' : '');
+            kv('  cache v4', hasCacheV4 ? 'yes' : 'no', hasCacheV4 ? 'ok' : 'err');
+          }
+        } catch (e) {
+          kv(f, 'FETCH ERROR: ' + e.message, 'err');
+        }
+      }
+    }
+
+    // ============================================================
+    // 4. LOCAL STORAGE (full dump)
     // ============================================================
 
     async function checkLocalStorage() {
-      section('1. LOCAL STORAGE KEYS');
-
-      const keys = ['edge_supabase_url', 'edge_supabase_key', 'edge_odds_api_key',
-                    'edge_claude_api_key', 'edge_decision_mode', 'edge_active_portfolio',
-                    'edge_betting_mode', 'edge_bankroll', 'edge_unit_size',
-                    'edge_sim_bankroll', 'edge_sim_unit_size',
-                    'edge_governor_calibration', 'edge_dynamic_weights',
-                    'edge_todays_games', 'edge_todays_games_ts'];
-
+      section('4. LOCAL STORAGE (full dump)');
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      keys.sort();
+      kv('Total keys', keys.length, 'info');
       keys.forEach(k => {
         const v = localStorage.getItem(k);
-        if (v === null) {
-          line(k, '(not set)', 'err');
-        } else {
-          let display = v.length > 60 ? v.slice(0, 60) + '…' : v;
-          line(k, display, 'ok');
-        }
+        const display = v.length > 100 ? v.slice(0, 100) + `… (${v.length} chars)` : v;
+        const cls = v === '' || v === 'null' || v === 'undefined' ? 'warn' : '';
+        out('  ' + k.padEnd(32) + '= ' + display, cls);
       });
     }
 
     // ============================================================
-    // 2. SUPABASE CONNECTION
+    // 5. SUPABASE SETTINGS
     // ============================================================
 
-    async function checkSupabaseConnection() {
-      section('2. SUPABASE CONNECTION');
-
+    async function checkSupabaseSettings() {
+      section('5. SUPABASE SETTINGS TABLE');
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
-
-      if (!url || !key) {
-        line('Connection', 'MISSING URL OR KEY', 'err');
-        return;
-      }
-
-      line('URL', url, 'ok');
-      line('Key prefix', key.slice(0, 20) + '…', 'ok');
-
+      if (!url || !key) { kv('Config', 'missing', 'err'); return; }
       try {
-        const res = await fetch(`${url}/rest/v1/settings?select=id&limit=1`, {
+        const res = await fetch(`${url}/rest/v1/settings?select=*`, {
           headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
-        if (res.ok) {
-          line('Reachability', 'OK (' + res.status + ')', 'ok');
-        } else {
-          line('Reachability', 'FAILED (' + res.status + ')', 'err');
-          const txt = await res.text().catch(() => '');
-          line('Response', txt.slice(0, 200), 'err');
+        if (!res.ok) { kv('Query', 'HTTP ' + res.status, 'err'); return; }
+        const rows = await res.json();
+        kv('Rows', rows.length, rows.length ? 'ok' : 'warn');
+        if (rows[0]) {
+          Object.entries(rows[0]).forEach(([k, v]) => kv('  ' + k, String(v), 'info'));
         }
-      } catch (e) {
-        line('Reachability', 'ERROR: ' + e.message, 'err');
-      }
+      } catch (e) { kv('Error', e.message, 'err'); }
     }
 
     // ============================================================
-    // 3. SUPABASE TABLE COUNTS
+    // 6. ALL TABLES — count + sample
     // ============================================================
 
-    async function checkSupabaseTables() {
-      section('3. SUPABASE TABLE COUNTS');
-
+    async function checkAllTables() {
+      section('6. SUPABASE TABLE SNAPSHOTS');
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) { line('Status', 'No Supabase', 'err'); return; }
+      if (!url || !key) { kv('Config', 'missing', 'err'); return; }
 
-      const tables = ['power_ratings', 'coaching_ratings', 'shadow_picks',
-                      'algorithm_weights', 'line_history', 'bet_log',
-                      'game_priors', 'backtest_runs'];
+      const tables = [
+        'power_ratings', 'coaching_ratings', 'shadow_picks',
+        'algorithm_weights', 'line_history', 'bet_log', 'game_priors',
+        'backtest_runs', 'picks', 'settings'
+      ];
 
       for (const t of tables) {
         try {
-          const res = await fetch(`${url}/rest/v1/${t}?select=id&limit=1000`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'count=exact' }
+          const res = await fetch(`${url}/rest/v1/${t}?select=*&limit=3`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
           });
           if (!res.ok) {
-            line(t, 'HTTP ' + res.status, 'err');
+            kv(t, 'HTTP ' + res.status, res.status === 404 ? 'err' : 'warn');
             continue;
           }
           const rows = await res.json();
-          const count = rows.length;
-          const cls = count > 0 ? 'ok' : 'warn';
-          line(t, count + ' rows', cls);
+          kv(t, rows.length + ' sample rows', rows.length ? 'ok' : 'warn');
+          if (rows[0]) {
+            const cols = Object.keys(rows[0]);
+            out('      columns: ' + cols.slice(0, 15).join(', '));
+          }
         } catch (e) {
-          line(t, 'ERROR: ' + e.message, 'err');
+          kv(t, 'ERROR: ' + e.message, 'err');
         }
       }
     }
 
     // ============================================================
-    // 4. SETTINGS SNAPSHOT
+    // 7. POWER RATINGS BY SPORT
     // ============================================================
 
-    async function checkSettings() {
-      section('4. SETTINGS');
-
-      const settings = [
-        ['Decision mode', localStorage.getItem('edge_decision_mode') || 'math_only'],
-        ['Portfolio', localStorage.getItem('edge_active_portfolio') || 'real'],
-        ['Betting mode', localStorage.getItem('edge_betting_mode') || 'manual'],
-        ['Bankroll', localStorage.getItem('edge_bankroll') || '0'],
-        ['Unit size', localStorage.getItem('edge_unit_size') || '0'],
-        ['Sim bankroll', localStorage.getItem('edge_sim_bankroll') || '0'],
-        ['Sim unit size', localStorage.getItem('edge_sim_unit_size') || '0'],
-        ['Daily cap', localStorage.getItem('edge_daily_cap') || '0'],
-        ['Max bets', localStorage.getItem('edge_max_bets') || '0'],
-      ];
-
-      settings.forEach(([k, v]) => line(k, v, v === '0' ? 'warn' : 'ok'));
-    }
-
-    // ============================================================
-    // 5. TODAY'S GAMES
-    // ============================================================
-
-    async function checkTodaysGames() {
-      section('5. TODAY\'S GAMES (localStorage)');
-
-      let games = [];
-      try {
-        games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
-      } catch (e) {
-        line('Parse', 'ERROR: ' + e.message, 'err');
-        return;
-      }
-
-      const ts = localStorage.getItem('edge_todays_games_ts');
-      line('Total games', games.length, games.length > 0 ? 'ok' : 'err');
-      if (ts) {
-        const ageMin = Math.round((Date.now() - parseInt(ts)) / 60000);
-        line('Cache age', ageMin + ' minutes', ageMin > 10 ? 'warn' : 'ok');
-      }
-
-      // Count by sport
-      const bySport = {};
-      games.forEach(g => {
-        const s = g._sport || g.sport || 'UNKNOWN';
-        bySport[s] = (bySport[s] || 0) + 1;
-      });
-      Object.entries(bySport).forEach(([s, c]) => line('  · ' + s, c, 'info'));
-
-      // Sample 5 games
-      out('');
-      out('  Sample (first 5):');
-      games.slice(0, 5).forEach((g, i) => {
-        const home = g.home_team || g.home || '?';
-        const away = g.away_team || g.away || '?';
-        const sport = g._sport || g.sport || '?';
-        const spread = g.spread ?? g.home_spread ?? '—';
-        out(`    [${i+1}] ${sport} | ${away} @ ${home} | spread ${spread}`);
-      });
-
-      // Check if any have market data
-      const withSpread = games.filter(g => g.spread != null).length;
-      const withML = games.filter(g => g.ml != null || g.home_ml != null).length;
-      line('  Games with spread', withSpread, withSpread > 0 ? 'ok' : 'warn');
-      line('  Games with ML', withML, withML > 0 ? 'ok' : 'warn');
-    }
-
-    // ============================================================
-    // 6. POWER RATINGS
-    // ============================================================
-
-    async function checkPowerRatings() {
-      section('6. POWER RATINGS (Supabase)');
-
+    async function checkPowerRatingsBySport() {
+      section('7. POWER RATINGS BY SPORT (Supabase)');
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) { line('Status', 'No Supabase', 'err'); return; }
+      if (!url || !key) { kv('Config', 'missing', 'err'); return; }
 
       try {
         const res = await fetch(
-          `${url}/rest/v1/power_ratings?select=sport,team_name,overall,games_played,updated_at&order=overall.desc&limit=1000`,
+          `${url}/rest/v1/power_ratings?select=sport,team_name,overall,games_played,updated_at&order=overall.desc&limit=2000`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
-        if (!res.ok) { line('Fetch', 'HTTP ' + res.status, 'err'); return; }
+        if (!res.ok) { kv('Query', 'HTTP ' + res.status, 'err'); return; }
         const rows = await res.json();
 
-        line('Total rated teams', rows.length, rows.length > 0 ? 'ok' : 'err');
-
+        kv('Total rows', rows.length, 'ok');
         const bySport = {};
         rows.forEach(r => { bySport[r.sport] = (bySport[r.sport] || 0) + 1; });
-        Object.entries(bySport).forEach(([s, c]) => line('  · ' + s, c, c > 0 ? 'ok' : 'warn'));
+        Object.entries(bySport).sort().forEach(([s, c]) => kv('  · ' + s, c + ' teams', 'info'));
 
-        if (rows.length > 0) {
-          line('Most recent update', rows[0].updated_at || '—', 'info');
+        const latest = rows[0]?.updated_at;
+        kv('Most recent update', latest || '—', 'info');
 
-          // Rating distribution
-          const highs = rows.filter(r => r.overall >= 90).length;
-          const mids = rows.filter(r => r.overall >= 60 && r.overall < 90).length;
-          const lows = rows.filter(r => r.overall < 60).length;
-          line('  ≥90 rated', highs, highs > rows.length * 0.3 ? 'err' : 'ok');
-          line('  60-89 rated', mids, 'ok');
-          line('  <60 rated', lows, 'ok');
+        // Distribution
+        const high = rows.filter(r => r.overall >= 90).length;
+        const mid  = rows.filter(r => r.overall >= 60 && r.overall < 90).length;
+        const low  = rows.filter(r => r.overall < 60).length;
+        kv('  ≥90 (too high)', high, high > rows.length * 0.2 ? 'err' : 'ok');
+        kv('  60-89', mid, 'ok');
+        kv('  <60', low, 'ok');
 
-          out('');
-          out('  Top 5:');
-          rows.slice(0, 5).forEach((r, i) => {
-            out(`    [${i+1}] ${r.sport} | ${r.team_name} | overall ${r.overall} | ${r.games_played} games`);
-          });
-        }
-      } catch (e) {
-        line('Error', e.message, 'err');
-      }
-    }
-
-    // ============================================================
-    // 7. TEAM NAME MATCHING (THE KEY DIAGNOSTIC)
-    // ============================================================
-
-    async function checkTeamNameMatching() {
-      section('7. TEAM NAME MATCHING — WHY PRIORS FAIL');
-
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-
-      let games = [];
-      try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
-      if (!games.length) { line('No games loaded', 'SKIP', 'err'); return; }
-
-      let ratings = [];
-      try {
-        const res = await fetch(
-          `${url}/rest/v1/power_ratings?select=sport,team_name&limit=5000`,
-          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-        );
-        if (res.ok) ratings = await res.json();
-      } catch {}
-      if (!ratings.length) { line('No ratings loaded', 'SKIP', 'err'); return; }
-
-      // Build lookup set
-      const ratingSet = new Set(ratings.map(r => `${r.sport}:${r.team_name}`));
-
-      let homeMatched = 0;
-      let awayMatched = 0;
-      let bothMatched = 0;
-      const mismatches = [];
-
-      games.forEach(g => {
-        const sport = g._sport || g.sport;
-        const home = g.home_team || g.home;
-        const away = g.away_team || g.away;
-
-        const hKey = `${sport}:${home}`;
-        const aKey = `${sport}:${away}`;
-        const hMatch = ratingSet.has(hKey);
-        const aMatch = ratingSet.has(aKey);
-
-        if (hMatch) homeMatched++;
-        if (aMatch) awayMatched++;
-        if (hMatch && aMatch) bothMatched++;
-        else if (mismatches.length < 10) {
-          mismatches.push({ sport, home, away, hMatch, aMatch });
-        }
-      });
-
-      line('Total games', games.length);
-      line('Home team matched', `${homeMatched}/${games.length}`, homeMatched === games.length ? 'ok' : 'err');
-      line('Away team matched', `${awayMatched}/${games.length}`, awayMatched === games.length ? 'ok' : 'err');
-      line('BOTH matched (usable)', `${bothMatched}/${games.length}`, bothMatched > 0 ? 'ok' : 'err');
-
-      if (mismatches.length) {
         out('');
-        out('  ⚠ MATCH FAILURES (first 10):');
-        mismatches.forEach(m => {
-          out(`    ${m.sport}`);
-          out(`      home: "${m.home}" ${m.hMatch ? '✓' : '✗ NOT FOUND'}`);
-          out(`      away: "${m.away}" ${m.aMatch ? '✓' : '✗ NOT FOUND'}`);
+        out('  Top 5:');
+        rows.slice(0, 5).forEach((r, i) => {
+          out(`    [${i+1}] ${r.sport} | ${r.team_name} | ${r.overall} | ${r.games_played}g`);
         });
-      }
+      } catch (e) { kv('Error', e.message, 'err'); }
     }
 
     // ============================================================
@@ -432,7 +381,6 @@
 
     async function checkESPN() {
       section('8. ESPN API');
-
       const sports = [
         ['NFL',   'football/nfl'],
         ['NBA',   'basketball/nba'],
@@ -440,66 +388,279 @@
         ['NHL',   'hockey/nhl'],
         ['NCAAF', 'football/college-football'],
         ['NCAAB', 'basketball/mens-college-basketball'],
+        ['MLS',   'soccer/usa.1'],
       ];
-
       for (const [label, path] of sports) {
         try {
-          const res = await fetch(
-            `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`,
-            { cache: 'no-store' }
-          );
+          const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`, { cache: 'no-store' });
           if (res.ok) {
             const data = await res.json();
-            const count = (data.events || []).length;
-            line(label, `OK · ${count} events today`, 'ok');
+            const events = (data.events || []).length;
+            kv(label, events + ' events today', events > 0 ? 'ok' : 'info');
           } else {
-            line(label, 'HTTP ' + res.status, 'err');
+            kv(label, 'HTTP ' + res.status, 'err');
           }
-        } catch (e) {
-          line(label, 'ERROR: ' + e.message, 'err');
-        }
+        } catch (e) { kv(label, 'ERROR: ' + e.message, 'err'); }
       }
     }
 
     // ============================================================
-    // 9. ODDS API REACHABILITY
+    // 9. ODDS API
     // ============================================================
 
     async function checkOddsAPI() {
       section('9. THE ODDS API');
-
       const key = localStorage.getItem('edge_odds_api_key');
-      if (!key) { line('Key', 'NOT SET', 'err'); return; }
-
+      if (!key) { kv('Key', 'not set', 'err'); return; }
       try {
         const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
         if (res.ok) {
           const data = await res.json();
-          line('Reachability', 'OK (' + data.length + ' sports)', 'ok');
-
-          const quotaRemaining = res.headers.get('x-requests-remaining');
-          const quotaUsed = res.headers.get('x-requests-used');
-          if (quotaRemaining) line('Quota remaining', quotaRemaining, parseInt(quotaRemaining) < 100 ? 'err' : 'ok');
-          if (quotaUsed) line('Quota used', quotaUsed, 'info');
+          kv('Sports available', data.length, 'ok');
+          kv('Quota remaining', res.headers.get('x-requests-remaining') || '?', 'info');
+          kv('Quota used', res.headers.get('x-requests-used') || '?', 'info');
         } else {
-          line('Reachability', 'HTTP ' + res.status, 'err');
-          const txt = await res.text().catch(() => '');
-          line('Response', txt.slice(0, 200), 'err');
+          kv('HTTP', res.status, 'err');
         }
-      } catch (e) {
-        line('Error', e.message, 'err');
+      } catch (e) { kv('Error', e.message, 'err'); }
+    }
+
+    // ============================================================
+    // 10. TODAY'S GAMES (localStorage)
+    // ============================================================
+
+    async function checkGames() {
+      section('10. TODAY\'S GAMES (localStorage)');
+
+      const raw = localStorage.getItem('edge_todays_games');
+      if (!raw) { kv('edge_todays_games', 'NOT SET — pipeline has nothing to run', 'err'); return; }
+
+      let games = [];
+      try { games = JSON.parse(raw); }
+      catch (e) { kv('Parse', 'ERROR: ' + e.message, 'err'); return; }
+
+      kv('Total games', games.length, games.length ? 'ok' : 'err');
+      const ts = localStorage.getItem('edge_todays_games_ts');
+      if (ts) {
+        const ageMin = Math.round((Date.now() - parseInt(ts)) / 60000);
+        kv('Cache age', ageMin + ' minutes', ageMin > 10 ? 'warn' : 'ok');
+      }
+
+      const bySport = {};
+      games.forEach(g => {
+        const s = g._sport || g.sport || 'UNKNOWN';
+        bySport[s] = (bySport[s] || 0) + 1;
+      });
+      Object.entries(bySport).sort().forEach(([s, c]) => kv('  · ' + s, c + ' games', 'info'));
+
+      out('');
+      out('  First 10 games (full record):');
+      games.slice(0, 10).forEach((g, i) => {
+        out(`    [${i+1}] id=${g.id}`);
+        out(`        sport=${g._sport || g.sport}`);
+        out(`        away="${g.away_team || g.away}"`);
+        out(`        home="${g.home_team || g.home}"`);
+        out(`        spread=${g.spread ?? g.home_spread ?? 'null'} | total=${g.total ?? 'null'} | ml=${g.ml ?? 'null'}`);
+      });
+    }
+
+    // ============================================================
+    // 11. TEAM NAME CROSS-CHECK
+    // ============================================================
+
+    async function checkTeamMatch() {
+      section('11. TEAM NAME CROSS-CHECK (why priors fail)');
+
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { kv('Config', 'missing', 'err'); return; }
+
+      let games = [];
+      try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
+      if (!games.length) { kv('Status', 'No games in localStorage', 'err'); return; }
+
+      let ratings = [];
+      try {
+        const res = await fetch(`${url}/rest/v1/power_ratings?select=sport,team_name&limit=5000`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (res.ok) ratings = await res.json();
+      } catch {}
+      if (!ratings.length) { kv('Status', 'No ratings in Supabase', 'err'); return; }
+
+      const ratingSet = new Set(ratings.map(r => `${r.sport}:${r.team_name}`));
+
+      let homeOK = 0, awayOK = 0, bothOK = 0;
+      const mismatches = [];
+
+      games.forEach(g => {
+        const sport = g._sport || g.sport;
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        const hKey = `${sport}:${home}`;
+        const aKey = `${sport}:${away}`;
+        const hOK = ratingSet.has(hKey);
+        const aOK = ratingSet.has(aKey);
+        if (hOK) homeOK++;
+        if (aOK) awayOK++;
+        if (hOK && aOK) bothOK++;
+        else if (mismatches.length < 15) mismatches.push({ sport, home, away, hOK, aOK });
+      });
+
+      kv('Total games', games.length, 'info');
+      kv('Home matched', homeOK + '/' + games.length, homeOK === games.length ? 'ok' : 'err');
+      kv('Away matched', awayOK + '/' + games.length, awayOK === games.length ? 'ok' : 'err');
+      kv('BOTH matched (usable)', bothOK + '/' + games.length, bothOK > 0 ? 'ok' : 'err');
+
+      if (mismatches.length) {
+        out('');
+        out('  MISMATCHES (first 15):', 'err');
+        mismatches.forEach((m, i) => {
+          out(`    [${i+1}] ${m.sport}`);
+          out(`        home "${m.home}"  →  ${m.hOK ? '✓ found' : '✗ NOT IN RATINGS'}`, m.hOK ? 'ok' : 'err');
+          out(`        away "${m.away}"  →  ${m.aOK ? '✓ found' : '✗ NOT IN RATINGS'}`, m.aOK ? 'ok' : 'err');
+        });
       }
     }
 
     // ============================================================
-    // COPY ALL
+    // 12. SIMULATE PIPELINE END-TO-END
+    // ============================================================
+
+    async function simulatePipeline() {
+      section('12. PIPELINE SIMULATION (end-to-end trace)');
+
+      if (!window.EDGE_POWER || !window.EDGE_ALGOS || !window.EDGE_GOVERNOR || !window.EDGE_PHYSICS) {
+        kv('Modules', 'missing — cannot simulate', 'err');
+        return;
+      }
+
+      let games = [];
+      try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
+      if (!games.length) { kv('Games', 'none loaded', 'err'); return; }
+
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      let ratings = [];
+      try {
+        const res = await fetch(`${url}/rest/v1/power_ratings?select=*&limit=5000`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (res.ok) ratings = await res.json();
+      } catch {}
+
+      const ratingIndex = {};
+      ratings.forEach(r => { ratingIndex[`${r.sport}:${r.team_name}`] = r; });
+
+      // Try to build a prior for first 5 games
+      let builtCount = 0;
+      let firstPrior = null;
+      const buildFailures = [];
+
+      for (const g of games.slice(0, 50)) {
+        const sport = g._sport || g.sport;
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        const homeStats = ratingIndex[`${sport}:${home}`];
+        const awayStats = ratingIndex[`${sport}:${away}`];
+        if (!homeStats || !awayStats) {
+          if (buildFailures.length < 5) buildFailures.push({ sport, home, away, hasHome: !!homeStats, hasAway: !!awayStats });
+          continue;
+        }
+        try {
+          const prior = await EDGE_POWER.computeGamePrior(g, {
+            homeStats, awayStats,
+            market: {
+              open_spread: g.open_spread ?? null,
+              current_spread: g.spread ?? null,
+              total: g.total ?? null,
+              home_ml: g.ml ?? null,
+              away_ml: g.away_ml ?? null,
+            },
+          });
+          builtCount++;
+          if (!firstPrior) firstPrior = { prior, game: g };
+        } catch (e) {
+          if (buildFailures.length < 5) buildFailures.push({ sport, home, away, error: e.message });
+        }
+      }
+
+      kv('Priors built (of first 50 games)', builtCount, builtCount > 0 ? 'ok' : 'err');
+      if (buildFailures.length) {
+        out('');
+        out('  Build failures:');
+        buildFailures.forEach(f => {
+          if (f.error) out(`    ${f.sport} ${f.away}@${f.home} → ERROR: ${f.error}`, 'err');
+          else out(`    ${f.sport} ${f.away}@${f.home} → home=${f.hasHome} away=${f.hasAway}`, 'err');
+        });
+      }
+
+      if (!firstPrior) {
+        out('');
+        out('  Cannot simulate further — no priors built.', 'err');
+        return;
+      }
+
+      // Run algorithms on the first prior
+      out('');
+      out('  ── Simulating first game: ' + firstPrior.prior.away_team + ' @ ' + firstPrior.prior.home_team, 'info');
+
+      let families = [];
+      try {
+        families = await EDGE_ALGOS.runAll(firstPrior.prior, {});
+        kv('  Algorithm families returned', families.length, families.length ? 'ok' : 'err');
+        families.forEach(f => {
+          out(`      ${f.family.padEnd(20)} vote=${f.vote.padEnd(4)} conf=${(f.confidence * 100).toFixed(0)}% edge=${(f.edge * 100).toFixed(2)}%`, 'info');
+        });
+      } catch (e) {
+        kv('  Algorithm error', e.message, 'err');
+        return;
+      }
+
+      // Governor
+      let gov = null;
+      try {
+        gov = EDGE_GOVERNOR.run(families, firstPrior.prior);
+        out('');
+        out('  ── Governor output:');
+        kv('    consensus_score', gov.consensus_score, 'info');
+        kv('    confidence', gov.confidence + '%', gov.confidence > 0 ? 'ok' : 'warn');
+        kv('    edge', (gov.edge * 100).toFixed(2) + '%', 'info');
+        kv('    agreement_index', gov.agreement_index, 'info');
+        kv('    decision', gov.decision, gov.decision !== 'PASS' ? 'ok' : 'warn');
+        kv('    units', gov.units, 'info');
+        kv('    data_cap', gov.data_cap + (gov.data_caps?.length ? ' (' + gov.data_caps.join(', ') + ')' : ''), 'info');
+      } catch (e) {
+        kv('  Governor error', e.message, 'err');
+        return;
+      }
+
+      // Physics
+      try {
+        const phys = EDGE_PHYSICS.decide(gov, firstPrior.prior, {});
+        out('');
+        out('  ── Physics output:');
+        kv('    decision', phys.decision, phys.decision !== 'PASS' && phys.decision !== 'CAPPED' ? 'ok' : 'warn');
+        kv('    units', phys.units, 'info');
+        kv('    confidence', phys.confidence + '%', 'info');
+        kv('    edge', (phys.edge * 100).toFixed(2) + '%', 'info');
+        if (phys.reasons?.length) {
+          out('    reasons:');
+          phys.reasons.forEach(r => out('      · ' + r));
+        }
+      } catch (e) {
+        kv('  Physics error', e.message, 'err');
+      }
+    }
+
+    // ============================================================
+    // COPY
     // ============================================================
 
     function copyAll() {
       const text = lines.map(l => l.text).join('\n');
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-          .then(() => showToast('Copied ' + lines.length + ' lines', false))
+          .then(() => showToast('Copied ' + lines.length + ' lines'))
           .catch(() => fallbackCopy(text));
       } else {
         fallbackCopy(text);
@@ -513,14 +674,12 @@
       ta.style.left = '-9999px';
       document.body.appendChild(ta);
       ta.select();
-      try {
-        document.execCommand('copy');
-        showToast('Copied to clipboard', false);
-      } catch {
-        showToast('Copy failed', true);
-      }
+      try { document.execCommand('copy'); showToast('Copied'); }
+      catch { showToast('Copy failed', true); }
       document.body.removeChild(ta);
     }
+
+    render();
   </script>
 </body>
 </html>
