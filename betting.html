@@ -7,31 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -50,29 +44,20 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px,10vw,62px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
-
     .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
     .sec-title em { color: var(--gold); font-style: normal; }
+    .sec-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: -8px; margin-bottom: 14px; }
 
-    /* MODE SELECTOR */
+    /* MODE CARDS */
     .mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .mode-card {
-      background: var(--surface);
-      border: 2px solid var(--border);
-      padding: 20px 16px;
-      cursor: pointer;
-      transition: all 0.2s;
-      text-align: center;
-    }
+    .mode-card { background: var(--surface); border: 2px solid var(--border); padding: 20px 16px; cursor: pointer; transition: all 0.2s; text-align: center; }
     .mode-card.active { border-color: var(--gold); background: var(--gold-glow); }
     .mode-card:hover  { border-color: var(--border-bright); }
     .mode-icon { font-size: 24px; margin-bottom: 10px; opacity: 0.7; }
@@ -80,23 +65,47 @@
     .mode-card.active .mode-name { color: var(--gold); }
     .mode-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; font-weight: 300; }
 
-    /* STATUS BAR */
-    .status-bar {
-      display: flex; align-items: center; justify-content: space-between;
-      background: var(--bg4); border: 1px solid var(--border);
-      padding: 12px 16px; margin-top: 14px;
-    }
+    /* DECISION ENGINE CARDS */
+    .decision-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .decision-card { background: var(--surface); border: 2px solid var(--border); padding: 20px 16px; cursor: pointer; transition: all 0.2s; text-align: center; position: relative; }
+    .decision-card.active.math { border-color: var(--gold); background: var(--gold-glow); }
+    .decision-card.active.ai   { border-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .decision-card:hover { border-color: var(--border-bright); }
+    .decision-icon { font-size: 26px; margin-bottom: 10px; opacity: 0.75; }
+    .decision-name { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 6px; }
+    .decision-card.active.math .decision-name { color: var(--gold); }
+    .decision-card.active.ai .decision-name   { color: var(--blue); }
+    .decision-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; font-weight: 300; }
+    .decision-pill { display: inline-block; margin-top: 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 8px; border: 1px solid; }
+    .decision-pill.math { border-color: var(--gold-dim); color: var(--gold); }
+    .decision-pill.ai   { border-color: var(--blue); color: var(--blue); }
+
+    /* PIPELINE STATUS */
+    .status-bar { display: flex; align-items: center; justify-content: space-between; background: var(--bg4); border: 1px solid var(--border); padding: 12px 16px; margin-top: 14px; gap: 10px; flex-wrap: wrap; }
+    .status-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 200px; }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .status-dot.active { background: var(--green); box-shadow: 0 0 6px var(--green); animation: blink 2s infinite; }
     .status-dot.paused { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
     .status-dot.off    { background: var(--text-dim); }
+    .status-dot.ai     { background: var(--blue); box-shadow: 0 0 6px var(--blue); animation: blink 2s infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
-    .status-text { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); flex: 1; margin-left: 10px; }
-    .status-action { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 14px; cursor: pointer; transition: all 0.2s; }
+    .status-text { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); }
+    .status-action { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 14px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .status-action:hover { border-color: var(--gold); color: var(--gold); }
     .status-action.danger:hover { border-color: var(--red); color: var(--red); }
 
-    /* CAP STATUS */
+    /* PORTFOLIO ROW */
+    .portfolio-bar { display: flex; gap: 0; border: 1px solid var(--border); margin-top: 10px; }
+    .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
+    .pf-btn:last-child { border-right: none; }
+    .pf-btn.active.real { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .pf-btn.active.sim  { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .pf-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 2px; }
+    .pf-val { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .pf-btn.active.real .pf-val { color: var(--gold); }
+    .pf-btn.active.sim .pf-val  { color: var(--blue); }
+
+    /* CAP GRID */
     .cap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .cap-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 14px; }
     .cap-lbl  { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
@@ -108,13 +117,11 @@
     .cap-fill  { height: 100%; transition: width 0.8s ease; }
     .cap-fill.safe { background: linear-gradient(90deg, #1E8449, var(--green)); }
     .cap-fill.warn { background: linear-gradient(90deg, #C0392B, var(--red)); }
+    .cap-fill.sim-safe { background: linear-gradient(90deg, #2E5C8A, var(--blue)); }
     .cap-card.span2 { grid-column: span 2; }
 
-    /* ANON TOGGLE */
-    .anon-row {
-      display: flex; align-items: center; justify-content: space-between;
-      background: var(--surface); border: 1px solid var(--border); padding: 16px 16px;
-    }
+    /* TOGGLE */
+    .anon-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; }
     .anon-info { flex: 1; }
     .anon-name { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); margin-bottom: 3px; }
     .anon-desc { font-size: 12px; color: var(--text-dim); font-weight: 300; }
@@ -125,7 +132,7 @@
     .toggle-thumb { position: absolute; top: 4px; left: 4px; width: 14px; height: 14px; background: var(--text-dim); transition: all 0.25s; }
     .toggle input:checked ~ .toggle-thumb { left: 24px; background: var(--gold); }
 
-    /* AUTO THRESHOLD */
+    /* THRESHOLD */
     .threshold-row { background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; }
     .threshold-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
     .threshold-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); }
@@ -134,7 +141,7 @@
     .threshold-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: var(--gold); cursor: pointer; border: none; }
     .threshold-desc { font-size: 12px; color: var(--text-dim); margin-top: 8px; font-weight: 300; }
 
-    /* LIMITS GRID */
+    /* LIMITS */
     .limits-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .limit-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; }
     .limit-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
@@ -147,14 +154,16 @@
     .bet-log-table tbody tr { border-bottom: 1px solid rgba(201,168,76,0.05); transition: background 0.15s; }
     .bet-log-table tbody tr:hover { background: rgba(201,168,76,0.04); }
     .bet-log-table tbody td { padding: 11px 10px; font-size: 13px; color: var(--text-mid); white-space: nowrap; }
-    .bet-type { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--border); color: var(--text-dim); }
+    .bet-mode-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; }
+    .bet-mode-tag.real { border-color: var(--gold-dim); color: var(--gold); }
+    .bet-mode-tag.sim  { border-color: rgba(74,144,217,0.5); color: var(--blue); }
     .bet-pick { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: var(--gold); }
     .bet-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; }
     .bet-status.placed  { color: var(--green); }
     .bet-status.pending { color: var(--gold); }
     .bet-status.failed  { color: var(--red); }
 
-    /* SPORTSBOOK CONNECT */
+    /* SPORTSBOOK */
     .sb-card { background: var(--surface); border: 1px solid var(--border); padding: 20px 16px; }
     .sb-status { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .sb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
@@ -165,10 +174,17 @@
     .sb-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
 
     .empty-note { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 24px; text-align: center; }
+    .action-btn { display: block; width: 100%; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px; cursor: pointer; transition: all 0.2s; margin-top: 10px; }
+    .action-btn:hover { border-color: var(--red); color: var(--red); }
 
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red  { background: var(--red); color: #fff; }
   </style>
 </head>
 <body>
@@ -206,6 +222,8 @@
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
   </div>
 
+  <div class="toast" id="toast"></div>
+
   <main>
 
     <div class="page-header">
@@ -213,30 +231,67 @@
       <div class="page-title">BETTING <em>CONTROL</em></div>
     </div>
 
-    <!-- MODE -->
+    <!-- DECISION ENGINE (NEW) -->
     <div class="section">
-      <div class="sec-title">BETTING <em>MODE</em></div>
-      <div class="mode-cards">
-        <div class="mode-card" id="modeManual" onclick="setMode('manual')">
-          <div class="mode-icon">☰</div>
-          <div class="mode-name">Manual</div>
-          <div class="mode-desc">Review and approve each pick individually before it is placed</div>
+      <div class="sec-title">DECISION <em>ENGINE</em></div>
+      <div class="sec-sub">Deterministic always runs. AI overlays when active.</div>
+      <div class="decision-cards">
+        <div class="decision-card math active" id="dcMath" onclick="setDecisionMode('math_only')">
+          <div class="decision-icon">∑</div>
+          <div class="decision-name">Math Only</div>
+          <div class="decision-desc">Pure deterministic. Physics phase rules. No AI overlay.</div>
+          <div class="decision-pill math">DEFAULT</div>
         </div>
-        <div class="mode-card" id="modeAuto" onclick="setMode('auto')">
-          <div class="mode-icon">●</div>
-          <div class="mode-name">Auto</div>
-          <div class="mode-desc">Automatically queue picks above your confidence threshold</div>
+        <div class="decision-card ai" id="dcAi" onclick="setDecisionMode('ai_assisted')">
+          <div class="decision-icon">◎</div>
+          <div class="decision-name">AI-Assisted</div>
+          <div class="decision-desc">Deterministic runs first. Claude reviews and can veto or reduce.</div>
+          <div class="decision-pill ai">CLAUDE</div>
         </div>
       </div>
 
       <div class="status-bar">
-        <div class="status-dot" id="statusDot"></div>
-        <div class="status-text" id="statusText">Manual mode active</div>
+        <div class="status-left">
+          <div class="status-dot off" id="statusDot"></div>
+          <div class="status-text" id="statusText">—</div>
+        </div>
         <button class="status-action danger" id="pauseBtn" onclick="togglePause()">Pause</button>
       </div>
     </div>
 
-    <!-- CAP STATUS -->
+    <!-- BETTING MODE -->
+    <div class="section">
+      <div class="sec-title">BETTING <em>MODE</em></div>
+      <div class="mode-cards">
+        <div class="mode-card active" id="modeManual" onclick="setMode('manual')">
+          <div class="mode-icon">☰</div>
+          <div class="mode-name">Manual</div>
+          <div class="mode-desc">Review and approve each pick individually</div>
+        </div>
+        <div class="mode-card" id="modeAuto" onclick="setMode('auto')">
+          <div class="mode-icon">●</div>
+          <div class="mode-name">Auto</div>
+          <div class="mode-desc">Auto-queue picks above confidence threshold</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PORTFOLIO -->
+    <div class="section">
+      <div class="sec-title">ACTIVE <em>PORTFOLIO</em></div>
+      <div class="portfolio-bar">
+        <button class="pf-btn real active" id="pfReal" onclick="setPortfolio('real')">
+          <div class="pf-lbl">Real Bankroll</div>
+          <div class="pf-val" id="realBankroll">$0</div>
+        </button>
+        <button class="pf-btn sim" id="pfSim" onclick="setPortfolio('sim')">
+          <div class="pf-lbl">Simulation Bankroll</div>
+          <div class="pf-val" id="simBankroll">$0</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- CAPS -->
     <div class="section">
       <div class="sec-title">CAP <em>STATUS</em></div>
       <div class="cap-grid">
@@ -270,13 +325,29 @@
       </div>
     </div>
 
-    <!-- ANONYMOUS MODE -->
+    <!-- SIM CAPS -->
+    <div class="section">
+      <div class="sec-title">SIM CAP <em>STATUS</em></div>
+      <div class="cap-grid">
+        <div class="cap-card span2">
+          <div class="cap-lbl">Sim Daily Cap</div>
+          <div class="cap-vals">
+            <span class="cap-used" id="simDailyUsed">$0</span>
+            <span class="cap-of">of</span>
+            <span class="cap-max" id="simDailyMax">$0</span>
+          </div>
+          <div class="cap-track"><div class="cap-fill sim-safe" id="simDailyBar" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANON MODE -->
     <div class="section">
       <div class="sec-title">PRIVACY <em>&amp; ANON</em></div>
       <div class="anon-row">
         <div class="anon-info">
           <div class="anon-name">Anonymous Mode</div>
-          <div class="anon-desc">Caps enforced. No identity attached to bets. Sportsbook API still active.</div>
+          <div class="anon-desc">Caps enforced. No identity attached to bets.</div>
         </div>
         <label class="toggle">
           <input type="checkbox" id="anonToggle" onchange="saveAnon(this.checked)" />
@@ -292,11 +363,11 @@
       <div class="threshold-row">
         <div class="threshold-head">
           <span class="threshold-lbl">Min Confidence to Auto-Bet</span>
-          <span class="threshold-val" id="thresholdDisplay">60%</span>
+          <span class="threshold-val" id="thresholdDisplay">70%</span>
         </div>
-        <input type="range" class="threshold-slider" id="thresholdSlider" min="40" max="90" value="60"
+        <input type="range" class="threshold-slider" id="thresholdSlider" min="40" max="90" value="70"
           oninput="updateThreshold(this.value)" />
-        <div class="threshold-desc">Only picks with confidence ≥ this % will be auto-queued when in Auto mode.</div>
+        <div class="threshold-desc">Only picks at or above this confidence auto-queue when in Auto mode. Deterministic governor thresholds still apply.</div>
       </div>
     </div>
 
@@ -331,22 +402,20 @@
         <table class="bet-log-table">
           <thead>
             <tr>
+              <th>Mode</th>
               <th>Time</th>
               <th>Matchup</th>
               <th>Pick</th>
-              <th>Type</th>
               <th>Units</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody id="betLogBody">
-            <tr>
-              <td colspan="6" class="empty-note">No bets placed this session</td>
-            </tr>
+            <tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>
           </tbody>
         </table>
       </div>
-      <button onclick="clearBetLog()" style="display:block;width:100%;margin-top:10px;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:10px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">Clear Session Log</button>
+      <button class="action-btn" onclick="clearBetLog()">Clear Session Log</button>
     </div>
 
     <!-- SPORTSBOOK -->
@@ -389,8 +458,21 @@
 
     // ── STATE ──
     let isPaused = localStorage.getItem('edge_betting_paused') === 'true';
+    let portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
 
-    // ── MODE ──
+    // ── DECISION MODE ──
+    function setDecisionMode(mode) {
+      if (mode !== 'math_only' && mode !== 'ai_assisted') return;
+      localStorage.setItem('edge_decision_mode', mode);
+
+      document.getElementById('dcMath').classList.toggle('active', mode === 'math_only');
+      document.getElementById('dcAi').classList.toggle('active', mode === 'ai_assisted');
+
+      updateStatusBar();
+      showToast(mode === 'math_only' ? 'Deterministic mode active' : 'AI-Assisted mode active', mode === 'ai_assisted' ? 'blue' : '');
+    }
+
+    // ── BETTING MODE ──
     function setMode(mode) {
       localStorage.setItem('edge_betting_mode', mode);
       document.getElementById('modeManual').classList.toggle('active', mode === 'manual');
@@ -400,42 +482,65 @@
 
     function updateStatusBar() {
       const mode = localStorage.getItem('edge_betting_mode') || 'manual';
+      const dMode = localStorage.getItem('edge_decision_mode') || 'math_only';
       const dot  = document.getElementById('statusDot');
       const txt  = document.getElementById('statusText');
       const btn  = document.getElementById('pauseBtn');
 
       if (isPaused) {
         dot.className = 'status-dot paused';
-        txt.textContent = 'Betting paused — no picks will be queued';
+        txt.textContent = 'Paused · no picks queued';
         btn.textContent = 'Resume';
-        btn.classList.remove('danger');
+        return;
+      }
+
+      if (dMode === 'ai_assisted') {
+        dot.className = 'status-dot ai';
+        txt.textContent = `AI-Assisted · ${mode === 'auto' ? 'Auto' : 'Manual'}`;
       } else if (mode === 'auto') {
         dot.className = 'status-dot active';
-        txt.textContent = 'Auto mode active — picks auto-queued above threshold';
-        btn.textContent = 'Pause';
-        btn.classList.add('danger');
+        txt.textContent = 'Deterministic · Auto';
       } else {
         dot.className = 'status-dot off';
-        txt.textContent = 'Manual mode active — approve picks individually';
-        btn.textContent = 'Pause';
-        btn.classList.add('danger');
+        txt.textContent = 'Deterministic · Manual';
       }
+
+      btn.textContent = 'Pause';
     }
 
     function togglePause() {
       isPaused = !isPaused;
       localStorage.setItem('edge_betting_paused', isPaused);
       updateStatusBar();
+      showToast(isPaused ? 'Betting paused' : 'Betting resumed', isPaused ? 'red' : '');
+    }
+
+    // ── PORTFOLIO ──
+    function setPortfolio(p) {
+      portfolio = p;
+      localStorage.setItem('edge_active_portfolio', p);
+      document.getElementById('pfReal').classList.toggle('active', p === 'real');
+      document.getElementById('pfSim').classList.toggle('active', p === 'sim');
+      updateBankrolls();
+      loadCaps();
+      loadBetLog();
+    }
+
+    function updateBankrolls() {
+      const real = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+      const sim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+      document.getElementById('realBankroll').textContent = '$' + real.toLocaleString();
+      document.getElementById('simBankroll').textContent = '$' + sim.toLocaleString();
     }
 
     // ── CAPS ──
     function loadCaps() {
-      const dailyCap  = parseFloat(localStorage.getItem('edge_daily_cap')    || '0');
-      const weeklyCap = parseFloat(localStorage.getItem('edge_weekly_cap')   || '0');
-      const maxBets   = parseInt(localStorage.getItem('edge_max_bets')       || '0');
-      const dailyUsed  = parseFloat(localStorage.getItem('edge_daily_used')  || '0');
-      const weeklyUsed = parseFloat(localStorage.getItem('edge_weekly_used') || '0');
-      const betsUsed   = parseInt(localStorage.getItem('edge_bets_used')     || '0');
+      const dailyCap   = parseFloat(localStorage.getItem('edge_daily_cap')  || '0');
+      const weeklyCap  = parseFloat(localStorage.getItem('edge_weekly_cap') || '0');
+      const maxBets    = parseInt(localStorage.getItem('edge_max_bets')     || '0');
+      const dailyUsed  = parseFloat(localStorage.getItem('edge_daily_used') || '0');
+      const weeklyUsed = parseFloat(localStorage.getItem('edge_weekly_used')|| '0');
+      const betsUsed   = parseInt(localStorage.getItem('edge_bets_used')    || '0');
 
       document.getElementById('dailyUsed').textContent  = '$' + dailyUsed.toFixed(0);
       document.getElementById('dailyMax').textContent   = '$' + dailyCap.toFixed(0);
@@ -444,18 +549,24 @@
       document.getElementById('betsUsed').textContent   = betsUsed;
       document.getElementById('betsMax').textContent    = maxBets;
 
-      const fillCap = (id, used, max) => {
+      const simDailyCap = parseFloat(localStorage.getItem('edge_sim_daily_cap') || '500');
+      const simDailyUsed = parseFloat(localStorage.getItem('edge_sim_daily_used') || '0');
+      document.getElementById('simDailyUsed').textContent = '$' + simDailyUsed.toFixed(0);
+      document.getElementById('simDailyMax').textContent  = '$' + simDailyCap.toFixed(0);
+
+      const fillCap = (id, used, max, simCls) => {
         const el = document.getElementById(id);
         if (!el) return;
         const pct = max > 0 ? Math.min((used / max) * 100, 100) : 0;
         el.style.width = pct + '%';
-        el.className = 'cap-fill ' + (pct >= 80 ? 'warn' : 'safe');
+        el.className = 'cap-fill ' + (simCls ? 'sim-safe' : pct >= 80 ? 'warn' : 'safe');
       };
 
       setTimeout(() => {
         fillCap('dailyBar',  dailyUsed,  dailyCap);
         fillCap('weeklyBar', weeklyUsed, weeklyCap);
         fillCap('betsBar',   betsUsed,   maxBets);
+        fillCap('simDailyBar', simDailyUsed, simDailyCap, true);
       }, 300);
     }
 
@@ -467,19 +578,14 @@
       document.getElementById('limitCons').textContent     = get('edge_min_cons', '—') + (get('edge_min_cons','') ? '/25' : '');
       document.getElementById('limitUnitSize').textContent = get('edge_unit_size', '—') ? '$' + get('edge_unit_size','') : '—';
 
-      // Mark muted if not set
       ['limitUnit','limitConf','limitCons','limitUnitSize'].forEach(id => {
         const el = document.getElementById(id);
-        if (el.textContent === '—' || el.textContent.startsWith('$') === false && el.textContent.includes('—')) {
-          el.className = 'limit-val muted';
-        }
+        if (el.textContent === '—' || el.textContent === '$') el.className = 'limit-val muted';
       });
     }
 
     // ── ANON ──
-    function saveAnon(val) {
-      localStorage.setItem('edge_anon_mode', val);
-    }
+    function saveAnon(val) { localStorage.setItem('edge_anon_mode', val); }
 
     // ── THRESHOLD ──
     function updateThreshold(val) {
@@ -487,35 +593,53 @@
       localStorage.setItem('edge_auto_threshold', val);
     }
 
-    // ── BET LOG ──
-    function loadBetLog() {
+    // ── BET LOG (local + Supabase) ──
+    async function loadBetLog() {
       const body = document.getElementById('betLogBody');
-      try {
-        const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
-        if (!log.length) {
-          body.innerHTML = '<tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>';
-          return;
-        }
-        body.innerHTML = log.map(b => `
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      let rows = [];
+      if (url && key) {
+        try {
+          const since = new Date(Date.now() - 24 * 3600000).toISOString();
+          const res = await fetch(
+            `${url}/rest/v1/bet_log?select=*&created_at=gte.${since}&order=created_at.desc&limit=50`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
+          if (res.ok) rows = await res.json();
+        } catch {}
+      }
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>';
+        return;
+      }
+
+      body.innerHTML = rows.map(b => {
+        const modeTag = b.mode === 'sim'
+          ? '<span class="bet-mode-tag sim">SIM</span>'
+          : '<span class="bet-mode-tag real">REAL</span>';
+        const status = b.status || 'pending';
+        return `
           <tr>
+            <td>${modeTag}</td>
             <td>${b.time || '—'}</td>
             <td>${b.matchup || '—'}</td>
-            <td><span class="bet-pick">${b.pick || '—'}</span></td>
-            <td><span class="bet-type">${b.type || '—'}</span></td>
+            <td><span class="bet-pick">${b.pick_label || '—'}</span></td>
             <td>${b.units || '—'}u</td>
-            <td><span class="bet-status ${b.status || 'pending'}">${(b.status || 'pending').toUpperCase()}</span></td>
-          </tr>`).join('');
-      } catch {
-        body.innerHTML = '<tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>';
-      }
+            <td><span class="bet-status ${status}">${status.toUpperCase()}</span></td>
+          </tr>`;
+      }).join('');
     }
 
-    function clearBetLog() {
+    async function clearBetLog() {
       localStorage.removeItem('edge_session_bet_log');
+      showToast('Session log cleared');
       loadBetLog();
     }
 
-    // ── SPORTSBOOK STATUS ──
+    // ── SPORTSBOOK ──
     function checkSportsbook() {
       const key = localStorage.getItem('edge_sportsbook_api_key');
       const name = localStorage.getItem('edge_sportsbook_name') || 'Not Connected';
@@ -523,10 +647,23 @@
       document.getElementById('sbName').textContent = key ? name : 'Not Connected';
     }
 
+    // ── TOAST ──
+    function showToast(msg, color) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (color ? ' ' + color : '');
+      setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2400);
+    }
+
     // ── INIT ──
     function init() {
-      const mode = localStorage.getItem('edge_betting_mode') || 'manual';
-      setMode(mode);
+      const bettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
+      const decisionMode = localStorage.getItem('edge_decision_mode') || 'math_only';
+
+      setMode(bettingMode);
+      setDecisionMode(decisionMode);
+      setPortfolio(portfolio);
+
       loadCaps();
       loadLimits();
       loadBetLog();
@@ -535,9 +672,11 @@
       const anonToggle = document.getElementById('anonToggle');
       anonToggle.checked = localStorage.getItem('edge_anon_mode') === 'true';
 
-      const threshold = localStorage.getItem('edge_auto_threshold') || '60';
+      const threshold = localStorage.getItem('edge_auto_threshold') || '70';
       document.getElementById('thresholdSlider').value = threshold;
       document.getElementById('thresholdDisplay').textContent = threshold + '%';
+
+      updateStatusBar();
     }
 
     init();
