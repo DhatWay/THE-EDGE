@@ -1,7 +1,6 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v2.0
-// Uses ESPN standings endpoint for reliable season-long stats
-// Fallback to scoreboard when standings unavailable
+// EDGE — POWER RATINGS ENGINE v3.0
+// Scoreboard-only. Full-season game logs. No standings parser.
 // ============================================================
 
 const EDGE_POWER = (() => {
@@ -20,13 +19,13 @@ const EDGE_POWER = (() => {
   };
 
   const SPORT_CONFIG = {
-    NFL:   { avgPF: 24,  avgPA: 24,  pyExp: 2.37,  scale: 35 },
-    NBA:   { avgPF: 113, avgPA: 113, pyExp: 13.91, scale: 20 },
-    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 8  },
-    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 5  },
-    NCAAF: { avgPF: 28,  avgPA: 28,  pyExp: 2.37,  scale: 40 },
-    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 20 },
-    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 4  },
+    NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 14 },
+    NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 12 },
+    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 2  },
+    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 1.5 },
+    NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 16 },
+    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 12 },
+    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1  },
   };
 
   const COACHING_WEIGHTS = {
@@ -36,6 +35,9 @@ const EDGE_POWER = (() => {
     NHL:   { halftime: 0.5, close: 0.5, maxAdj: 1.5 },
     DEFAULT: { halftime: 0.8, close: 0.5, maxAdj: 2.5 },
   };
+
+  // Date ranges — how far back to pull games for current-season ratings
+  const LOOKBACK_DAYS = 150;
 
   return {
     computeGamePrior,
@@ -52,46 +54,55 @@ const EDGE_POWER = (() => {
   };
 
   // ============================================================
-  // ── MAIN: Fetch ratings from standings endpoint ──
+  // ── MAIN ──
   // ============================================================
 
   async function computeAllTeamRatings() {
     const results = { teams: {}, coaching: {}, errors: [], counts: {} };
 
+    const end = new Date();
+    const start = new Date(end.getTime() - LOOKBACK_DAYS * 86400000);
+    const startStr = fmtDate(start);
+    const endStr = fmtDate(end);
+
     for (const [sport, path] of Object.entries(ESPN_MAP)) {
       let teamCount = 0;
       try {
-        // 1. Standings — primary source (season aggregate stats)
-        const standings = await fetchStandings(path);
-        if (standings) {
-          const teams = extractTeamsFromStandings(standings, sport);
-          teams.forEach(t => {
-            if (t && t.team_name) {
-              results.teams[`${sport}:${t.team_name}`] = t;
-              teamCount++;
-            }
-          });
-        }
+        const events = await fetchGamesInRange(path, startStr, endStr);
+        if (!events.length) { results.counts[sport] = 0; continue; }
 
-        // 2. Scoreboard — for coaching data (halftime adjustments, close games)
-        try {
-          const scoreboard = await fetchScoreboard(path);
-          if (scoreboard) {
-            const events = scoreboard.events || [];
-            const teamNames = new Set();
-            events.forEach(e => {
-              e.competitions?.[0]?.competitors?.forEach(c => {
-                if (c.team?.displayName) teamNames.add(c.team.displayName);
-              });
-            });
+        // Aggregate per-team game logs
+        const teamMap = new Map();
 
-            for (const name of teamNames) {
-              const coach = await computeCoachingRating(sport, name, null, events);
-              if (coach) results.coaching[`${sport}:${name}`] = coach;
-            }
+        events.forEach(e => {
+          const comp = e.competitions?.[0];
+          if (!comp) return;
+          const home = comp.competitors?.find(c => c.homeAway === 'home');
+          const away = comp.competitors?.find(c => c.homeAway === 'away');
+          if (!home || !away) return;
+
+          const homeName = home.team?.displayName;
+          const awayName = away.team?.displayName;
+          if (!homeName || !awayName) return;
+
+          const homeScore = parseInt(home.score || '0');
+          const awayScore = parseInt(away.score || '0');
+          if (homeScore === 0 && awayScore === 0) return;
+
+          pushGame(teamMap, homeName, home.team, homeScore, awayScore, true);
+          pushGame(teamMap, awayName, away.team, awayScore, homeScore, false);
+        });
+
+        for (const [teamName, state] of teamMap) {
+          if (state.games < 1) continue;
+          const rating = buildRating(sport, teamName, state);
+          if (rating) {
+            results.teams[`${sport}:${teamName}`] = rating;
+            teamCount++;
           }
-        } catch (_) { /* coaching is optional */ }
-
+          const coach = buildCoaching(sport, teamName, state);
+          if (coach) results.coaching[`${sport}:${teamName}`] = coach;
+        }
       } catch (err) {
         results.errors.push({ sport, error: err.message });
       }
@@ -102,107 +113,44 @@ const EDGE_POWER = (() => {
     return results;
   }
 
-  // ============================================================
-  // ── ESPN FETCHERS ──
-  // ============================================================
-
-  async function fetchStandings(path) {
-    try {
-      const res = await fetch(`https://site.api.espn.com/apis/v2/sports/${path}/standings`);
-      if (!res.ok) return null;
-      return await res.json();
-    } catch { return null; }
+  function pushGame(map, teamName, teamObj, scored, allowed, wasHome) {
+    if (!map.has(teamName)) {
+      map.set(teamName, {
+        team_id: String(teamObj?.id || teamName),
+        abbr: teamObj?.abbreviation || teamName.slice(0, 3).toUpperCase(),
+        games: 0,
+        pf: 0,
+        pa: 0,
+        wins: 0,
+        losses: 0,
+        homeW: 0, homeL: 0, awayW: 0, awayL: 0,
+        margins: [],
+        closeGames: 0, closeWins: 0,
+      });
+    }
+    const t = map.get(teamName);
+    t.games++;
+    t.pf += scored;
+    t.pa += allowed;
+    t.margins.push(scored - allowed);
+    const won = scored > allowed;
+    if (won) t.wins++; else t.losses++;
+    if (wasHome) { won ? t.homeW++ : t.homeL++; }
+    else { won ? t.awayW++ : t.awayL++; }
+    if (Math.abs(scored - allowed) <= 7) {
+      t.closeGames++;
+      if (won) t.closeWins++;
+    }
   }
 
-  async function fetchScoreboard(path) {
-    try {
-      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
-      if (!res.ok) return null;
-      return await res.json();
-    } catch { return null; }
-  }
-
-  async function fetchTeamStats(sport) {
-    const path = ESPN_MAP[sport];
-    if (!path) return null;
-    return fetchScoreboard(path);
-  }
-
-  // ============================================================
-  // ── STANDINGS EXTRACTION ──
-  // ============================================================
-
-  function extractTeamsFromStandings(standings, sport) {
+  function buildRating(sport, teamName, state) {
     const cfg = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
-    const teams = [];
-    const seen = new Set();
+    const games = state.games;
+    if (games === 0) return null;
 
-    function walk(node) {
-      if (!node) return;
-      if (Array.isArray(node.standings?.entries)) {
-        node.standings.entries.forEach(entry => {
-          const t = extractTeamFromEntry(entry, sport, cfg);
-          if (t && !seen.has(t.team_id)) {
-            seen.add(t.team_id);
-            teams.push(t);
-          }
-        });
-      }
-      if (Array.isArray(node.children)) {
-        node.children.forEach(walk);
-      }
-    }
-
-    walk(standings);
-    return teams;
-  }
-
-  function extractTeamFromEntry(entry, sport, cfg) {
-    const team = entry.team;
-    if (!team) return null;
-
-    const stats = entry.stats || [];
-    const getStat = names => {
-      if (!Array.isArray(names)) names = [names];
-      for (const n of names) {
-        const s = stats.find(x => x.name === n);
-        if (s && (s.value != null || s.displayValue != null)) {
-          const v = parseFloat(s.value ?? s.displayValue);
-          if (isFinite(v)) return v;
-        }
-      }
-      return null;
-    };
-
-    const wins = getStat(['wins']) ?? 0;
-    const losses = getStat(['losses']) ?? 0;
-    const games = wins + losses;
-
-    // Handle both total points and per-game averages
-    const pfRaw = getStat(['pointsFor', 'avgPointsFor', 'pointsPerGame']);
-    const paRaw = getStat(['pointsAgainst', 'avgPointsAgainst', 'pointsAllowedPerGame']);
-
-    let avgPF, avgPA;
-
-    if (pfRaw == null || paRaw == null) {
-      // No scoring stats available — use league average
-      avgPF = cfg.avgPF;
-      avgPA = cfg.avgPA;
-    } else if (pfRaw > cfg.avgPF * 5 && games > 0) {
-      // Values are totals, not averages
-      avgPF = pfRaw / games;
-      avgPA = paRaw / games;
-    } else {
-      // Values are already per-game averages
-      avgPF = pfRaw;
-      avgPA = paRaw;
-    }
-
-    // Sanity clamp — averages should be within reason
-    avgPF = clamp(avgPF, cfg.avgPF * 0.4, cfg.avgPF * 1.8);
-    avgPA = clamp(avgPA, cfg.avgPA * 0.4, cfg.avgPA * 1.8);
-
-    const avgMOV = avgPF - avgPA;
+    const avgPF = state.pf / games;
+    const avgPA = state.pa / games;
+    const avgMOV = (state.pf - state.pa) / games;
 
     const pyth = avgPA > 0
       ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
@@ -210,34 +158,43 @@ const EDGE_POWER = (() => {
 
     const offense = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 50, 0, 100);
     const defense = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 50, 0, 100);
-    const srs = round(avgMOV, 2);
-    const winPct = games > 0 ? wins / games : 0.5;
-    const elo = 1500 + (winPct - 0.5) * 400 + avgMOV * 10;
+
+    const winPct = state.wins / games;
+    const elo = 1500 + (winPct - 0.5) * 400 + avgMOV * 8;
+
+    // Recent form (last 5 margins)
+    const recent = state.margins.slice(-5);
+    const formWeights = [0.10, 0.15, 0.20, 0.25, 0.30];
+    let formScore = 0;
+    recent.forEach((m, i) => {
+      formScore += formWeights[i] * (m / cfg.scale) * 5;
+    });
+    formScore = clamp(formScore, -20, 20);
 
     const overall = round(
-      (pyth * 100 * 0.40) +
-      (offense * 0.25) +
-      (defense * 0.25) +
-      (clamp(50 + (avgMOV / cfg.scale) * 50, 0, 100) * 0.10),
+      (pyth * 100 * 0.45) +
+      (offense * 0.20) +
+      (defense * 0.20) +
+      (clamp(50 + (avgMOV / cfg.scale) * 50, 0, 100) * 0.15),
       1
     );
 
     return {
-      team_id: String(team.id || team.abbreviation || team.displayName),
-      team_name: team.displayName,
-      abbr: team.abbreviation || (team.displayName || '').slice(0, 3).toUpperCase(),
+      team_id: state.team_id,
+      team_name: teamName,
+      abbr: state.abbr,
       sport,
       overall: clamp(overall, 0, 100),
       offense: round(offense, 1),
       defense: round(defense, 1),
       pythagorean: round(pyth, 4),
-      srs,
+      srs: round(avgMOV, 2),
       elo: Math.round(elo),
       pace: round(avgPF, 1),
-      record: `${wins}-${losses}`,
-      home_record: '0-0',
-      away_record: '0-0',
-      last5_form: 0,
+      record: `${state.wins}-${state.losses}`,
+      home_record: `${state.homeW}-${state.homeL}`,
+      away_record: `${state.awayW}-${state.awayL}`,
+      last5_form: round(formScore, 2),
       games_played: games,
       raw_stats: {
         avgPF: round(avgPF, 2),
@@ -247,16 +204,33 @@ const EDGE_POWER = (() => {
     };
   }
 
-  // ============================================================
-  // ── TEAM RATING (from scoreboard events — kept as fallback) ──
-  // ============================================================
+  function buildCoaching(sport, teamName, state) {
+    const cfg = COACHING_WEIGHTS[sport] || COACHING_WEIGHTS.DEFAULT;
+    const closeWinPct = state.closeGames > 0 ? state.closeWins / state.closeGames : 0.5;
+    const closeComponent = closeWinPct * 100 * 0.6;
+    const halves = 0;
+    const halftimeComponent = 50 * 0.4;
+    const overall = round(closeComponent + halftimeComponent, 1);
+
+    return {
+      coach_id: null,
+      coach_name: null,
+      team_id: state.team_id,
+      team_name: teamName,
+      sport,
+      overall: clamp(overall, 0, 100),
+      ats_as_favorite: null,
+      ats_as_underdog: null,
+      halftime_adjustment: 0,
+      close_game_record: round(closeWinPct, 3),
+      primetime_record: null,
+      raw_stats: { closeGames: state.closeGames, closeWins: state.closeWins, halves },
+      max_adjustment: cfg.maxAdj,
+    };
+  }
 
   async function computeTeamRating(sport, teamName, teamId, espnEvents) {
-    const cfg = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
-
-    let pf = 0, pa = 0, games = 0, movTotal = 0;
-    let wins = 0, losses = 0, homeW = 0, homeL = 0, awayW = 0, awayL = 0;
-
+    const teamMap = new Map();
     (espnEvents || []).forEach(e => {
       const comp = e.competitions?.[0];
       if (!comp) return;
@@ -266,64 +240,15 @@ const EDGE_POWER = (() => {
       const score = parseInt(us.score || 0);
       const oppScore = parseInt(opp.score || 0);
       if (score === 0 && oppScore === 0) return;
-
-      pf += score; pa += oppScore; games++; movTotal += (score - oppScore);
-      const won = score > oppScore;
-      if (won) wins++; else losses++;
-      if (us.homeAway === 'home') { won ? homeW++ : homeL++; }
-      else { won ? awayW++ : awayL++; }
+      pushGame(teamMap, teamName, us.team, score, oppScore, us.homeAway === 'home');
     });
-
-    if (games === 0) {
-      return {
-        team_id: teamId, team_name: teamName, sport,
-        overall: 50, offense: 50, defense: 50,
-        pythagorean: 0.5, srs: 0, elo: 1500, pace: cfg.avgPF,
-        record: '0-0', home_record: '0-0', away_record: '0-0',
-        last5_form: 0, games_played: 0,
-        raw_stats: { avgPF: cfg.avgPF, avgPA: cfg.avgPA, avgMOV: 0 },
-      };
-    }
-
-    const avgPF = pf / games, avgPA = pa / games, avgMOV = movTotal / games;
-    const pyth = avgPA > 0
-      ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
-      : 0.5;
-
-    const offense = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 50, 0, 100);
-    const defense = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 50, 0, 100);
-    const winPct = wins / games;
-    const elo = 1500 + (winPct - 0.5) * 400 + avgMOV * 10;
-
-    const overall = round(
-      (pyth * 100 * 0.40) + (offense * 0.25) + (defense * 0.25) +
-      (clamp(50 + (avgMOV / cfg.scale) * 50, 0, 100) * 0.10),
-      1
-    );
-
-    return {
-      team_id: teamId, team_name: teamName, sport,
-      overall: clamp(overall, 0, 100),
-      offense: round(offense, 1), defense: round(defense, 1),
-      pythagorean: round(pyth, 4), srs: round(avgMOV, 2),
-      elo: Math.round(elo), pace: round(avgPF, 1),
-      record: `${wins}-${losses}`,
-      home_record: `${homeW}-${homeL}`,
-      away_record: `${awayW}-${awayL}`,
-      last5_form: 0, games_played: games,
-      raw_stats: { avgPF: round(avgPF, 2), avgPA: round(avgPA, 2), avgMOV: round(avgMOV, 2) },
-    };
+    const state = teamMap.get(teamName);
+    if (!state) return null;
+    return buildRating(sport, teamName, state);
   }
 
-  // ============================================================
-  // ── COACHING ──
-  // ============================================================
-
   async function computeCoachingRating(sport, teamName, teamId, espnEvents) {
-    const cfg = COACHING_WEIGHTS[sport] || COACHING_WEIGHTS.DEFAULT;
-    let closeGames = 0, closeWins = 0;
-    let firstHalfMargin = 0, secondHalfMargin = 0, halves = 0;
-
+    const teamMap = new Map();
     (espnEvents || []).forEach(e => {
       const comp = e.competitions?.[0];
       if (!comp) return;
@@ -331,55 +256,36 @@ const EDGE_POWER = (() => {
       const opp = comp.competitors?.find(c => c.team?.displayName !== teamName);
       if (!us || !opp) return;
       const score = parseInt(us.score || 0);
-      const oppScore = parseInt(opp?.score || 0);
+      const oppScore = parseInt(opp.score || 0);
       if (score === 0 && oppScore === 0) return;
-
-      const margin = score - oppScore;
-      if (Math.abs(margin) <= 7) {
-        closeGames++;
-        if (score > oppScore) closeWins++;
-      }
-
-      const ourLines = us.linescores || [];
-      if (ourLines.length >= 2) {
-        const fh = sumFirst(ourLines, 2);
-        const sh = sumRest(ourLines, 2);
-        const oppLines = opp.linescores || [];
-        const oppFh = sumFirst(oppLines, 2);
-        const oppSh = sumRest(oppLines, 2);
-        firstHalfMargin += (fh - oppFh);
-        secondHalfMargin += (sh - oppSh);
-        halves++;
-      }
+      pushGame(teamMap, teamName, us.team, score, oppScore, us.homeAway === 'home');
     });
-
-    const closeWinPct = closeGames > 0 ? closeWins / closeGames : 0.5;
-    const halftimeAdj = halves > 0
-      ? round((secondHalfMargin - firstHalfMargin) / halves, 2)
-      : 0;
-
-    const closeComponent = closeWinPct * 100 * 0.6;
-    const halftimeComponent = clamp(50 + halftimeAdj * 5, 0, 100) * 0.4;
-    const overall = round(closeComponent + halftimeComponent, 1);
-
-    return {
-      coach_id: null, coach_name: null,
-      team_id: teamId, team_name: teamName, sport,
-      overall: clamp(overall, 0, 100),
-      ats_as_favorite: null, ats_as_underdog: null,
-      halftime_adjustment: halftimeAdj,
-      close_game_record: round(closeWinPct, 3),
-      primetime_record: null,
-      raw_stats: { closeGames, closeWins, halves, firstHalfMargin, secondHalfMargin },
-      max_adjustment: cfg.maxAdj,
-    };
+    const state = teamMap.get(teamName);
+    if (!state) return null;
+    return buildCoaching(sport, teamName, state);
   }
 
-  function sumFirst(lines, n) {
-    return lines.slice(0, n).reduce((s, l) => s + (parseInt(l.value || l.displayValue || 0) || 0), 0);
+  // ============================================================
+  // ── ESPN FETCH ──
+  // ============================================================
+
+  async function fetchGamesInRange(path, start, end) {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${start}-${end}&limit=1000`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events || [];
+    } catch { return []; }
   }
-  function sumRest(lines, n) {
-    return lines.slice(n).reduce((s, l) => s + (parseInt(l.value || l.displayValue || 0) || 0), 0);
+
+  async function fetchTeamStats(sport) {
+    const path = ESPN_MAP[sport];
+    if (!path) return null;
+    try {
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
+      return res.ok ? await res.json() : null;
+    } catch { return null; }
   }
 
   // ============================================================
@@ -391,34 +297,27 @@ const EDGE_POWER = (() => {
       return {
         home_defense_score: 50, away_defense_score: 50,
         scheme_advantage: 'neutral', adjustment_points: 0,
-        notes: ['Insufficient power rating data'],
+        notes: ['Insufficient data'],
       };
     }
-
     const homeOffVsAwayDef = (homePower.offense + (100 - awayPower.defense)) / 2;
     const awayOffVsHomeDef = (awayPower.offense + (100 - homePower.defense)) / 2;
     const differential = homeOffVsAwayDef - awayOffVsHomeDef;
 
     const conversion = {
-      NFL: 0.06, NBA: 0.08, MLB: 0.03, NHL: 0.02,
-      NCAAF: 0.07, NCAAB: 0.08, MLS: 0.02,
+      NFL: 0.08, NBA: 0.10, MLB: 0.03, NHL: 0.02,
+      NCAAF: 0.09, NCAAB: 0.10, MLS: 0.02,
     }[sport] || 0.05;
 
     const adjustment = round(differential * conversion, 2);
     const schemeAdvantage = Math.abs(adjustment) < 0.5 ? 'neutral'
                           : adjustment > 0 ? 'home' : 'away';
-
-    const notes = [];
-    if (homeOffVsAwayDef > 70) notes.push('Home offense vs weak away defense');
-    if (awayOffVsHomeDef > 70) notes.push('Away offense vs weak home defense');
-    if (homePower.defense > 75 && awayPower.defense > 75) notes.push('Defensive battle');
-
     return {
       home_defense_score: round(homeOffVsAwayDef, 1),
       away_defense_score: round(awayOffVsHomeDef, 1),
       scheme_advantage: schemeAdvantage,
       adjustment_points: adjustment,
-      notes,
+      notes: [],
     };
   }
 
@@ -435,9 +334,9 @@ const EDGE_POWER = (() => {
 
     const ratingDelta = homeStats.overall - awayStats.overall;
     const spreadConv = {
-      NFL: -0.20, NBA: -0.20, MLB: -0.06, NHL: -0.04,
-      NCAAF: -0.24, NCAAB: -0.20, MLS: -0.04,
-    }[sport] || -0.20;
+      NFL: -0.28, NBA: -0.28, MLB: -0.08, NHL: -0.05,
+      NCAAF: -0.32, NCAAB: -0.28, MLS: -0.05,
+    }[sport] || -0.28;
 
     const modelSpread = round(ratingDelta * spreadConv, 2);
     const marketSpread = market?.current_spread ?? null;
@@ -496,13 +395,23 @@ const EDGE_POWER = (() => {
     const coachRows = Object.values(results.coaching);
 
     try {
+      // Delete and re-insert (clean slate) — avoids stale rows from broken runs
+      await fetch(`${url}/rest/v1/power_ratings?sport=not.is.null`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+      await fetch(`${url}/rest/v1/coaching_ratings?sport=not.is.null`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+
       if (teamRows.length) {
         await fetch(`${url}/rest/v1/power_ratings`, {
           method: 'POST',
           headers: {
             apikey: key, Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates',
+            Prefer: 'return=minimal',
           },
           body: JSON.stringify(teamRows),
         });
@@ -513,7 +422,7 @@ const EDGE_POWER = (() => {
           headers: {
             apikey: key, Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates',
+            Prefer: 'return=minimal',
           },
           body: JSON.stringify(coachRows),
         });
@@ -566,6 +475,12 @@ const EDGE_POWER = (() => {
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
+  function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
 
 })();
 
