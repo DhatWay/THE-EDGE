@@ -1,4 +1,4 @@
-const CACHE = 'edge-v1';
+const CACHE = 'edge-v2';
 const STATIC = [
   '/',
   '/THE-EDGE/',
@@ -10,6 +10,7 @@ const STATIC = [
   '/THE-EDGE/power.html',
   '/THE-EDGE/lines.html',
   '/THE-EDGE/intelligence.html',
+  '/THE-EDGE/diagnostic.html',
   '/THE-EDGE/history.html',
   '/THE-EDGE/performance.html',
   '/THE-EDGE/betting.html',
