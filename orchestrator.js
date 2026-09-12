@@ -1,6 +1,6 @@
 // ============================================================
-// EDGE — ORCHESTRATOR v2.2
-// Filters power index to sports with games today
+// EDGE — ORCHESTRATOR v2.3
+// Context-aware · dedup-safe · auto-sim-bet
 // ============================================================
 
 const EDGE_ORCHESTRATOR = (() => {
@@ -48,13 +48,28 @@ const EDGE_ORCHESTRATOR = (() => {
       }
       summary.stages.games_loaded = gameList.length;
 
-      // Which sports have games today?
       const activeSports = new Set(gameList.map(g => g._sport || g.sport).filter(Boolean));
       summary.stages.active_sports = Array.from(activeSports);
 
-      log('Stage 2/7 · Power ratings (' + Array.from(activeSports).join(', ') + ')');
+      log('Stage 2/7 · Power ratings');
       const powerIndex = await loadPowerIndex(activeSports);
       summary.stages.teams_rated = Object.keys(powerIndex.teams).length;
+
+      log('Stage 3/7 · Building context');
+      let builtContext = context;
+      if (window.EDGE_CONTEXT) {
+        builtContext = await EDGE_CONTEXT.buildContext(gameList);
+        summary.stages.context_loaded = {
+          line_history: Object.keys(builtContext.lineHistoryByGame || {}).length,
+          rest: Object.keys(builtContext.restByTeam || {}).length,
+          travel: Object.keys(builtContext.travelByGame || {}).length,
+        };
+        log(`  Line history: ${summary.stages.context_loaded.line_history} games`);
+        log(`  Rest: ${summary.stages.context_loaded.rest} teams`);
+        log(`  Travel: ${summary.stages.context_loaded.travel} games`);
+      } else {
+        log('  context-builder.js not loaded — running with empty context');
+      }
 
       log('Stage 3/7 · Computing game priors');
       const priors = await buildPriors(gameList, powerIndex);
@@ -67,7 +82,7 @@ const EDGE_ORCHESTRATOR = (() => {
       }
 
       log('Stage 4/7 · Running algorithms');
-      const algoResults = await runAlgorithmsParallel(priors, context, MAX_PARALLEL_GAMES, log);
+      const algoResults = await runAlgorithmsParallel(priors, builtContext, MAX_PARALLEL_GAMES, log);
       summary.stages.algo_runs = algoResults.length;
 
       log('Stage 5/7 · Governor consensus');
@@ -83,8 +98,8 @@ const EDGE_ORCHESTRATOR = (() => {
 
       if (mode === MODES.AI_ASSISTED) {
         log('Stage 7/7 · Claude batch review');
-        const batch = buildClaudeBatch(physicsResults, priors, context);
-        claudeReviews = await EDGE_CLAUDE.reviewBatch(batch, context);
+        const batch = buildClaudeBatch(physicsResults, priors, builtContext);
+        claudeReviews = await EDGE_CLAUDE.reviewBatch(batch, builtContext);
         finalResults = applyClaudeReviews(physicsResults, claudeReviews);
         summary.metrics.claude_calls = 1;
       } else {
@@ -150,7 +165,6 @@ const EDGE_ORCHESTRATOR = (() => {
 
     if (url && key) {
       try {
-        // Build sport filter — only request ratings for sports we need
         const sportsList = activeSports ? Array.from(activeSports) : null;
         const sportFilter = sportsList && sportsList.length
           ? '&sport=in.(' + sportsList.map(s => `"${s}"`).join(',') + ')'
@@ -249,6 +263,7 @@ const EDGE_ORCHESTRATOR = (() => {
 
   function buildGameContext(prior, sharedContext) {
     const ctx = { ...sharedContext };
+
     if (sharedContext.lineHistoryByGame?.[prior.game_id]) {
       ctx.lineHistory = sharedContext.lineHistoryByGame[prior.game_id];
     }
