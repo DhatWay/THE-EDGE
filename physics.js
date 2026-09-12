@@ -75,7 +75,11 @@ const EDGE_PHYSICS = (() => {
     const bankroll = getBankroll();
     const unitSize = getUnitSize(bankroll);
     const kellyInput = governorOutput.kelly || {};
-    const kellyUnits = kellyInput.available ? kellyInput.kelly_units : baseUnits;
+// Fall back to governor units when Kelly is unavailable OR returns 0
+// (Kelly returns 0 when market ML is missing, common in NCAAF/NCAAB)
+const kellyUnits = (kellyInput.available && kellyInput.kelly_units > 0)
+  ? kellyInput.kelly_units
+  : baseUnits;
 
     // ── STEP 3: Confidence tier cap ──
     const tierCap = getConfidenceTierCap(confidence);
