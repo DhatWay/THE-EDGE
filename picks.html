@@ -105,6 +105,7 @@
     .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
     .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
     .decision-tag.pass  { border-color: var(--text-dim); color: var(--text-dim); }
+    .decision-tag.capped { border-color: var(--text-dim); color: var(--text-dim); }
     .mode-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--border); color: var(--text-dim); }
     .mode-badge.ai { border-color: var(--blue); color: var(--blue); }
 
@@ -236,6 +237,7 @@
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button class="run-btn" id="runBtn" onclick="runPipeline()">▶ RUN</button>
         <button class="run-btn" id="refreshBtn" onclick="loadPicks()" style="background:none;border:1px solid var(--border);color:var(--text-mid);">↻</button>
+        <button class="run-btn" id="copyBtn" onclick="copyPicks()" style="background:none;border:1px solid var(--border);color:var(--text-mid);">⧉</button>
         <button class="run-btn" id="clearBtn" onclick="clearTodaysPicks()" style="background:none;border:1px solid rgba(231,76,60,0.4);color:var(--red);">✕ CLEAR</button>
       </div>
     </div>
@@ -261,14 +263,16 @@
 
     <div class="filter-strip">
       <button class="fchip active" data-filter="all">All</button>
-      <button class="fchip" data-filter="elite">Elite 85+</button>
-      <button class="fchip" data-filter="high">High 75+</button>
-      <button class="fchip" data-filter="solid">Solid 65+</button>
-      <button class="fchip" data-filter="lean">Lean 55+</button>
+      <button class="fchip" data-filter="elite">Elite 75+</button>
+      <button class="fchip" data-filter="high">High 65+</button>
+      <button class="fchip" data-filter="solid">Solid 55+</button>
+      <button class="fchip" data-filter="bet2u">BET 2U</button>
+      <button class="fchip" data-filter="bet1u">BET 1U</button>
+      <button class="fchip" data-filter="lean">Lean</button>
       <button class="fchip" data-filter="NFL">NFL</button>
       <button class="fchip" data-filter="NBA">NBA</button>
-      <button class="fchip" data-filter="MLB">MLB</button>
-      <button class="fchip" data-filter="NHL">NHL</button>
+      <button class="fchip" data-filter="NCAAF">NCAAF</button>
+      <button class="fchip" data-filter="NCAAB">NCAAB</button>
     </div>
 
     <div class="picks-list" id="picksList">
@@ -400,13 +404,9 @@
       try {
         await fetch(
           `${url}/rest/v1/shadow_picks?created_at=gte.${todayStart.toISOString()}`,
-          {
-            method: 'DELETE',
-            headers: { apikey: key, Authorization: `Bearer ${key}` },
-          }
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
 
-        // Clear bet flags
         const flags = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
@@ -420,6 +420,60 @@
       } catch (e) {
         showToast('Clear failed: ' + e.message, 'red');
       }
+    }
+
+    function copyPicks() {
+      const visible = applyFilter(allPicks);
+      if (!visible.length) { showToast('No picks to copy', 'red'); return; }
+
+      const lines = visible.map((p, i) => {
+        const num = String(i + 1).padStart(2, '0');
+        const sport = (p.sport || '').padEnd(6);
+        const matchup = `${(p.away_team || '?')} @ ${(p.home_team || '?')}`.padEnd(50);
+        const side = (p.side_team || p.direction || '—').padEnd(28);
+        const conf = String(Math.round(p.confidence || 0)).padStart(3) + '%';
+        const edge = (((p.edge || 0) * 100).toFixed(2) + '%').padStart(7);
+        const units = ((p.units || 0) + 'u').padEnd(5);
+        const decision = p.decision || '—';
+        return `${num}  ${sport}  ${matchup}  ${side}  ${conf}  ${edge}  ${units}  ${decision}`;
+      });
+
+      const header = 'EDGE — Today\'s Picks\n' +
+                     '='.repeat(125) + '\n' +
+                     '#   SPORT   MATCHUP'.padEnd(64) +
+                     'SIDE'.padEnd(30) + 'CONF    EDGE     UNITS  DECISION\n' +
+                     '-'.repeat(125);
+
+      const totalUnits = visible.reduce((s, p) => s + (p.units || 0), 0);
+      const avgConf = visible.reduce((s, p) => s + (p.confidence || 0), 0) / visible.length;
+      const summary = '\n\n' +
+        `Total: ${visible.length} picks · Units: ${totalUnits.toFixed(1)}u · Avg Conf: ${avgConf.toFixed(1)}%`;
+
+      const text = header + '\n' + lines.join('\n') + summary;
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => showToast(`Copied ${visible.length} picks`, ''))
+          .catch(() => fallbackCopy(text, visible.length));
+      } else {
+        fallbackCopy(text, visible.length);
+      }
+    }
+
+    function fallbackCopy(text, count) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        showToast(`Copied ${count} picks`, '');
+      } catch {
+        showToast('Copy failed — long-press to select manually', 'red');
+      }
+      document.body.removeChild(ta);
     }
 
     function updateSummary(picks) {
@@ -440,17 +494,19 @@
 
     function applyFilter(picks) {
       if (currentFilter === 'all') return picks;
-      if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 85);
-      if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 75);
-      if (currentFilter === 'solid') return picks.filter(p => (p.confidence || 0) >= 65);
-      if (currentFilter === 'lean')  return picks.filter(p => (p.confidence || 0) >= 55);
+      if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 75);
+      if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 65);
+      if (currentFilter === 'solid') return picks.filter(p => (p.confidence || 0) >= 55);
+      if (currentFilter === 'bet2u') return picks.filter(p => p.decision === 'BET_2U' || (p.decision === 'BET' && (p.units || 0) >= 2));
+      if (currentFilter === 'bet1u') return picks.filter(p => p.decision === 'BET_1U' || (p.decision === 'BET' && (p.units || 0) < 2));
+      if (currentFilter === 'lean')  return picks.filter(p => p.decision === 'LEAN');
       return picks.filter(p => p.sport === currentFilter);
     }
 
     function tier(conf) {
-      if (conf >= 85) return 'elite';
-      if (conf >= 75) return 'high';
-      if (conf >= 65) return 'solid';
+      if (conf >= 75) return 'elite';
+      if (conf >= 65) return 'high';
+      if (conf >= 55) return 'solid';
       return 'lean';
     }
 
@@ -489,13 +545,17 @@
       const decisionTag = isVetoed ? 'VETOED'
                         : p.decision === 'BET_2U' ? 'BET 2U'
                         : p.decision === 'BET_1U' ? 'BET 1U'
+                        : p.decision === 'BET' ? (p.units >= 2 ? 'BET 2U' : 'BET 1U')
                         : p.decision === 'LEAN' ? 'LEAN'
+                        : p.decision === 'CAPPED' ? 'CAPPED'
                         : 'PASS';
 
       const tagCls = isVetoed ? 'vetoed'
                    : p.decision === 'BET_2U' ? 'bet2u'
                    : p.decision === 'BET_1U' ? 'bet1u'
+                   : p.decision === 'BET' ? 'bet1u'
                    : p.decision === 'LEAN' ? 'lean'
+                   : p.decision === 'CAPPED' ? 'capped'
                    : 'pass';
 
       const cardCls = ['pick-card', 'tier-' + t, isVetoed ? 'vetoed' : '', isPassed ? 'passed' : ''].filter(Boolean).join(' ');
@@ -576,7 +636,7 @@
 
             <div class="metric-row">
               <div class="metric-cell">
-                <div class="metric-val ${conf >= 75 ? 'gold' : conf >= 65 ? 'green' : ''}">${Math.round(conf)}%</div>
+                <div class="metric-val ${conf >= 65 ? 'gold' : conf >= 55 ? 'green' : ''}">${Math.round(conf)}%</div>
                 <div class="metric-lbl">Confidence</div>
               </div>
               <div class="metric-cell">
