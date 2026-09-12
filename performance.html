@@ -7,32 +7,25 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
-<script src="engine.js"></script>
-  <link rel="manifest" href="manifest.json" />
-  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --gold: #C9A84C;
-      --gold-bright: #E8C76A;
-      --gold-dim: #8A6E2F;
-      --gold-glow: rgba(201,168,76,0.10);
-      --bg: #080808;
-      --bg2: #0F0F0F;
-      --bg4: #1C1C1C;
-      --surface: #111111;
-      --border: rgba(201,168,76,0.12);
-      --border-bright: rgba(201,168,76,0.32);
-      --text: #F0EAD8;
-      --text-dim: #7A7060;
-      --text-mid: #A89878;
-      --green: #27AE60;
-      --red: #E74C3C;
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
     }
-
     body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
-
     nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
     .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
     .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
@@ -51,14 +44,24 @@
     .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
     .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
     .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
-
     main { padding-top: 60px; }
-
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(38px,10vw,64px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
+
+    /* MODE SPLIT */
+    .mode-split { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .mode-cell { padding: 14px 12px; text-align: center; cursor: pointer; transition: all 0.2s; border-bottom: 3px solid transparent; }
+    .mode-cell:first-child { border-right: 1px solid var(--border); }
+    .mode-cell.active.math { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .mode-cell.active.ai   { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .mode-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+    .mode-rec { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .mode-cell.active.math .mode-rec { color: var(--gold); }
+    .mode-cell.active.ai .mode-rec   { color: var(--blue); }
+    .mode-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 3px; }
 
     /* SECTION */
     .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
@@ -78,9 +81,9 @@
     .key-val.muted { color: var(--text-dim); font-size: 28px; }
     .key-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; font-weight: 300; }
 
-    /* P&L CHART */
+    /* CHART */
     .chart-box { background: var(--surface); border: 1px solid var(--border); padding: 16px; }
-    .chart-area { width: 100%; height: 120px; position: relative; overflow: hidden; }
+    .chart-area { width: 100%; height: 140px; position: relative; overflow: hidden; }
     .chart-area svg { width: 100%; height: 100%; }
     .chart-labels { display: flex; justify-content: space-between; margin-top: 6px; }
     .chart-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
@@ -90,11 +93,11 @@
     .sport-roi-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; }
     .sport-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); width: 56px; flex-shrink: 0; }
     .sport-rec  { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; color: var(--text-mid); width: 72px; flex-shrink: 0; }
-    .sport-bar-track { flex: 1; background: var(--bg4); height: 4px; }
+    .sport-bar-track { flex: 1; background: var(--bg4); height: 4px; overflow: hidden; }
     .sport-bar-fill  { height: 100%; transition: width 0.8s ease; }
     .sport-bar-fill.pos { background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); }
     .sport-bar-fill.neg { background: linear-gradient(90deg, #7B241C, var(--red)); }
-    .sport-roi-val { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; width: 52px; text-align: right; flex-shrink: 0; }
+    .sport-roi-val { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; width: 60px; text-align: right; flex-shrink: 0; }
     .sport-roi-val.pos { color: var(--green); }
     .sport-roi-val.neg { color: var(--red); }
     .sport-roi-val.neu { color: var(--text-dim); }
@@ -104,12 +107,13 @@
     .algo-perf-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 11px 14px; }
     .algo-rank-num { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: var(--text-dim); width: 22px; flex-shrink: 0; text-align: center; }
     .algo-rank-num.top { color: var(--gold); }
-    .algo-perf-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); flex: 1; }
+    .algo-perf-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); flex: 1; text-transform: uppercase; }
     .algo-perf-rec  { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; color: var(--text-mid); }
-    .algo-perf-roi  { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; width: 52px; text-align: right; }
+    .algo-perf-roi  { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; width: 60px; text-align: right; }
     .algo-perf-roi.pos { color: var(--green); }
     .algo-perf-roi.neg { color: var(--red); }
     .algo-perf-roi.neu { color: var(--text-dim); }
+    .algo-perf-weight { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; width: 40px; text-align: right; }
 
     /* STREAK */
     .streak-list { display: flex; flex-direction: column; gap: 6px; }
@@ -125,12 +129,13 @@
     .clv-val { font-family: 'Bebas Neue', sans-serif; font-size: 52px; letter-spacing: 2px; color: var(--gold); line-height: 1; margin: 8px 0 4px; }
     .clv-desc { font-size: 13px; color: var(--text-dim); font-weight: 300; line-height: 1.55; }
 
-    /* UNIT TRACKER */
+    /* UNITS */
     .unit-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
     .unit-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 12px; text-align: center; }
     .unit-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; color: var(--text); line-height: 1; }
     .unit-val.pos { color: var(--green); }
     .unit-val.neg { color: var(--red); }
+    .unit-val.gold { color: var(--gold); }
     .unit-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
 
     .empty-note { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 16px 0; text-align: center; }
@@ -182,6 +187,20 @@
       <div class="page-title">PERFORMANCE <em>&amp; ROI</em></div>
     </div>
 
+    <!-- MODE SPLIT -->
+    <div class="mode-split">
+      <div class="mode-cell math active" id="modeMath" onclick="setModeFilter('math_only')">
+        <div class="mode-lbl">Deterministic</div>
+        <div class="mode-rec" id="mathRec">—</div>
+        <div class="mode-sub" id="mathRoi">—</div>
+      </div>
+      <div class="mode-cell ai" id="modeAi" onclick="setModeFilter('ai_assisted')">
+        <div class="mode-lbl">AI-Assisted</div>
+        <div class="mode-rec" id="aiRec">—</div>
+        <div class="mode-sub" id="aiRoi">—</div>
+      </div>
+    </div>
+
     <!-- KEY STATS -->
     <div class="section">
       <div class="sec-title">KEY <em>STATS</em></div>
@@ -189,27 +208,27 @@
         <div class="key-card span2">
           <div class="key-lbl">Overall ROI</div>
           <div class="key-val muted" id="overallROI">—</div>
-          <div class="key-sub">All picks · all sports · this season</div>
+          <div class="key-sub" id="overallROISub">All settled picks in this mode</div>
         </div>
         <div class="key-card">
           <div class="key-lbl">Win Rate</div>
           <div class="key-val muted" id="winRate">—</div>
-          <div class="key-sub">SU win %</div>
-        </div>
-        <div class="key-card">
-          <div class="key-lbl">ATS Win Rate</div>
-          <div class="key-val muted" id="atsRate">—</div>
-          <div class="key-sub">Against spread</div>
+          <div class="key-sub">Settled picks</div>
         </div>
         <div class="key-card">
           <div class="key-lbl">Total Units</div>
           <div class="key-val muted" id="totalUnits">—</div>
-          <div class="key-sub">Season P&amp;L</div>
+          <div class="key-sub">Net P&L</div>
         </div>
         <div class="key-card">
-          <div class="key-lbl">Avg CLV</div>
-          <div class="key-val muted" id="avgCLV">—</div>
-          <div class="key-sub">Closing line value</div>
+          <div class="key-lbl">Avg Confidence</div>
+          <div class="key-val muted" id="avgConf">—</div>
+          <div class="key-sub">All picks</div>
+        </div>
+        <div class="key-card">
+          <div class="key-lbl">Avg Edge</div>
+          <div class="key-val muted" id="avgEdge">—</div>
+          <div class="key-sub">Model vs market</div>
         </div>
       </div>
     </div>
@@ -218,11 +237,10 @@
     <div class="section">
       <div class="sec-title">MONTHLY <em>P&amp;L</em></div>
       <div class="chart-box">
-        <div class="chart-area" id="chartArea">
-          <svg id="pnlChart" viewBox="0 0 320 120" preserveAspectRatio="none">
-            <line x1="0" y1="60" x2="320" y2="60" stroke="rgba(201,168,76,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
-            <text x="4" y="14" fill="#7A7060" font-family="'Barlow Condensed'" font-size="9" letter-spacing="1">NO DATA</text>
-            <text x="4" y="26" fill="#7A7060" font-family="'Barlow Condensed'" font-size="8">Loads from Supabase</text>
+        <div class="chart-area">
+          <svg id="pnlChart" viewBox="0 0 320 140" preserveAspectRatio="none">
+            <line x1="0" y1="70" x2="320" y2="70" stroke="rgba(201,168,76,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
+            <text x="4" y="20" fill="#7A7060" font-family="'Barlow Condensed'" font-size="10" letter-spacing="1">NO DATA</text>
           </svg>
         </div>
         <div class="chart-labels" id="chartLabels"></div>
@@ -233,22 +251,22 @@
     <div class="section">
       <div class="sec-title">ROI BY <em>SPORT</em></div>
       <div class="sport-roi-list" id="sportROIList">
-        <div class="empty-note">No data yet · Loads from Supabase</div>
+        <div class="empty-note">No data yet</div>
       </div>
     </div>
 
     <!-- ALGO PERFORMANCE -->
     <div class="section">
-      <div class="sec-title">ALGORITHM <em>PERFORMANCE</em></div>
+      <div class="sec-title">FAMILY <em>PERFORMANCE</em></div>
       <div class="algo-perf-list" id="algoPerfList">
-        <div class="empty-note">No data yet · Loads from Supabase</div>
+        <div class="empty-note">No data yet</div>
       </div>
     </div>
 
-    <!-- STREAK HISTORY -->
+    <!-- STREAKS -->
     <div class="section">
       <div class="sec-title">STREAK <em>HISTORY</em></div>
-      <div class="streak-list" id="streakList">
+      <div class="streak-list">
         <div class="streak-row">
           <span class="streak-lbl">Current Streak</span>
           <span class="streak-val muted" id="currentStreak">—</span>
@@ -271,9 +289,8 @@
         <div class="key-lbl">Average CLV</div>
         <div class="clv-val" id="clvDisplay">—</div>
         <div class="clv-desc">
-          Closing Line Value measures pick quality by comparing the line at time of pick
-          to the closing number. Positive CLV means you consistently beat the closing line —
-          the strongest indicator of long-term edge. Loads when Odds API is connected.
+          Closing Line Value measures whether picks consistently beat the closing number.
+          Positive CLV is the strongest long-term indicator of edge. Requires line history tracking.
         </div>
       </div>
     </div>
@@ -288,10 +305,10 @@
         </div>
         <div class="unit-card">
           <div class="unit-val pos" id="unitProfit">—</div>
-          <div class="unit-lbl">Season Profit</div>
+          <div class="unit-lbl">Net Profit</div>
         </div>
         <div class="unit-card">
-          <div class="unit-val" id="unitTotal">—</div>
+          <div class="unit-val gold" id="unitTotal">—</div>
           <div class="unit-lbl">Total Wagered</div>
         </div>
       </div>
@@ -316,146 +333,212 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── LOAD FROM SUPABASE ──
+    // ── STATE ──
+    let currentMode = 'math_only';
+    let allPicks = [];
+
+    // ── MODE FILTER ──
+    function setModeFilter(mode) {
+      currentMode = mode;
+      document.getElementById('modeMath').classList.toggle('active', mode === 'math_only');
+      document.getElementById('modeAi').classList.toggle('active', mode === 'ai_assisted');
+      renderAll();
+    }
+
+    function picksForMode() {
+      return allPicks.filter(p => p.decision_mode === currentMode);
+    }
+
+    // ── LOAD ──
     async function loadPerformance() {
       const sbUrl = localStorage.getItem('edge_supabase_url');
       const sbKey = localStorage.getItem('edge_supabase_key');
 
-      let picks = [];
-      let algoData = [];
-
-      if (sbUrl && sbKey) {
-        try {
-          const [picksRes, algoRes] = await Promise.all([
-            fetch(`${sbUrl}/rest/v1/picks?select=*&order=date.desc`, {
-              headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
-            }),
-            fetch(`${sbUrl}/rest/v1/algorithms?select=*`, {
-              headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
-            })
-          ]);
-          if (picksRes.ok) picks = await picksRes.json();
-          if (algoRes.ok)  algoData = await algoRes.json();
-        } catch {}
+      if (!sbUrl || !sbKey) {
+        renderAll();
+        return;
       }
 
-      renderKeyStats(picks);
-      renderChart(picks);
-      renderSportROI(picks);
-      renderAlgoPerf(algoData);
-      renderStreaks(picks);
-      renderUnits(picks);
+      try {
+        const res = await fetch(`${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=2000`, {
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
+        });
+        if (res.ok) allPicks = await res.json();
+      } catch {}
+
+      renderAll();
+    }
+
+    // ── RENDER ALL ──
+    function renderAll() {
+      renderModeSplit();
+      renderKeyStats();
+      renderChart();
+      renderSportROI();
+      renderAlgoPerf();
+      renderStreaks();
+      renderCLV();
+      renderUnits();
+    }
+
+    // ── MODE SPLIT ──
+    function renderModeSplit() {
+      const mathPicks = allPicks.filter(p => p.decision_mode === 'math_only');
+      const aiPicks   = allPicks.filter(p => p.decision_mode === 'ai_assisted');
+
+      const mathW = mathPicks.filter(p => p.result === 'W').length;
+      const mathL = mathPicks.filter(p => p.result === 'L').length;
+      const aiW   = aiPicks.filter(p => p.result === 'W').length;
+      const aiL   = aiPicks.filter(p => p.result === 'L').length;
+
+      document.getElementById('mathRec').textContent = (mathW + mathL) > 0 ? `${mathW}-${mathL}` : '—';
+      document.getElementById('aiRec').textContent   = (aiW + aiL) > 0 ? `${aiW}-${aiL}` : '—';
+
+      const mathPnl = mathPicks.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+      const mathU   = mathPicks.reduce((s, p) => s + (p.units || 0), 0);
+      const aiPnl   = aiPicks.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+      const aiU     = aiPicks.reduce((s, p) => s + (p.units || 0), 0);
+
+      document.getElementById('mathRoi').textContent = mathU > 0
+        ? 'ROI ' + (mathPnl / mathU * 100).toFixed(1) + '%'
+        : 'No data';
+      document.getElementById('aiRoi').textContent = aiU > 0
+        ? 'ROI ' + (aiPnl / aiU * 100).toFixed(1) + '%'
+        : 'No data';
     }
 
     // ── KEY STATS ──
-    function renderKeyStats(picks) {
-      const settled = picks.filter(p => p.result && p.result !== 'pending');
-      const wins    = settled.filter(p => p.result === 'W').length;
-      const losses  = settled.filter(p => p.result === 'L').length;
-      const atsW    = settled.filter(p => p.result === 'W' && p.pick_type === 'ATS').length;
-      const atsL    = settled.filter(p => p.result === 'L' && p.pick_type === 'ATS').length;
-      const totalPnl = settled.reduce((s,p) => s + (p.pnl || 0), 0);
-      const roi = settled.length > 0 ? ((totalPnl / settled.length) * 100).toFixed(1) : null;
-      const winPct = settled.length > 0 ? ((wins / settled.length) * 100).toFixed(1) : null;
-      const atsPct = (atsW + atsL) > 0 ? ((atsW / (atsW + atsL)) * 100).toFixed(1) : null;
-      const clvAvg = picks.filter(p => p.clv != null).length > 0
-        ? (picks.filter(p => p.clv != null).reduce((s,p) => s + p.clv, 0) / picks.filter(p => p.clv != null).length).toFixed(2)
-        : null;
+    function renderKeyStats() {
+      const picks = picksForMode();
+      const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
+      const wins = picks.filter(p => p.result === 'W').length;
+      const losses = picks.filter(p => p.result === 'L').length;
 
-      const set = (id, val, cls) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.textContent = val ?? '—';
-        el.className = 'key-val ' + (val != null ? cls : 'muted');
-      };
+      const totalUnits = picks.reduce((s, p) => s + (p.units || 0), 0);
+      const netPnl = settled.reduce((s, p) => s + (p.pnl || 0), 0);
+      const roi = totalUnits > 0 ? (netPnl / totalUnits) * 100 : null;
+      const winPct = (wins + losses) > 0 ? (wins / (wins + losses)) * 100 : null;
 
-      set('overallROI',  roi    != null ? (roi > 0 ? '+' : '') + roi + '%'       : null, roi > 0 ? 'green' : 'red');
-      set('winRate',     winPct != null ? winPct + '%'                            : null, parseFloat(winPct) >= 52.4 ? 'green' : 'gold');
-      set('atsRate',     atsPct != null ? atsPct + '%'                            : null, parseFloat(atsPct) >= 52.4 ? 'green' : 'gold');
-      set('totalUnits',  totalPnl !== 0 ? (totalPnl > 0 ? '+' : '') + totalPnl.toFixed(1) + 'u' : null, totalPnl > 0 ? 'green' : 'red');
-      set('avgCLV',      clvAvg  != null ? (clvAvg > 0 ? '+' : '') + clvAvg     : null, parseFloat(clvAvg) > 0 ? 'green' : 'red');
+      const confs = picks.map(p => p.confidence).filter(c => typeof c === 'number' && c > 0);
+      const avgConf = confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : null;
 
-      document.getElementById('clvDisplay').textContent = clvAvg != null ? (clvAvg > 0 ? '+' : '') + clvAvg : '—';
+      const edges = picks.map(p => p.edge).filter(e => typeof e === 'number' && e !== 0);
+      const avgEdge = edges.length ? edges.reduce((a, b) => a + b, 0) / edges.length * 100 : null;
+
+      setVal('overallROI', roi !== null ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%' : null,
+             roi > 0 ? 'green' : roi < 0 ? 'red' : 'muted');
+      setVal('winRate', winPct !== null ? winPct.toFixed(1) + '%' : null,
+             winPct !== null && winPct >= 52.4 ? 'green' : 'gold');
+      setVal('totalUnits', netPnl !== 0 ? (netPnl > 0 ? '+' : '') + netPnl.toFixed(1) + 'u' : null,
+             netPnl > 0 ? 'green' : netPnl < 0 ? 'red' : 'muted');
+      setVal('avgConf', avgConf !== null ? avgConf.toFixed(1) + '%' : null, 'gold');
+      setVal('avgEdge', avgEdge !== null ? (avgEdge > 0 ? '+' : '') + avgEdge.toFixed(2) + '%' : null,
+             avgEdge > 0 ? 'green' : 'red');
+
+      document.getElementById('overallROISub').textContent =
+        `${settled.length} settled of ${picks.length} total picks`;
+    }
+
+    function setVal(id, val, cls) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = val ?? '—';
+      el.className = 'key-val ' + (val != null ? cls : 'muted');
     }
 
     // ── CHART ──
-    function renderChart(picks) {
+    function renderChart() {
+      const picks = picksForMode().filter(p => p.result);
       const months = {};
       picks.forEach(p => {
-        if (!p.date || !p.result) return;
-        const d = new Date(p.date);
-        const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
-        const lbl = d.toLocaleDateString('en-US',{month:'short'});
+        if (!p.created_at) return;
+        const d = new Date(p.created_at);
+        const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        const lbl = d.toLocaleDateString('en-US', { month: 'short' });
         if (!months[key]) months[key] = { lbl, pnl: 0 };
         months[key].pnl += p.pnl || 0;
       });
 
-      const sorted = Object.values(months).sort((a,b) => a.lbl.localeCompare(b.lbl)).slice(-8);
-      const container = document.getElementById('chartLabels');
+      const sorted = Object.values(months).sort((a, b) => a.lbl.localeCompare(b.lbl)).slice(-10);
+      const svg = document.getElementById('pnlChart');
+      const labels = document.getElementById('chartLabels');
 
       if (!sorted.length) {
-        container.innerHTML = '';
+        svg.innerHTML = `
+          <line x1="0" y1="70" x2="320" y2="70" stroke="rgba(201,168,76,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
+          <text x="4" y="20" fill="#7A7060" font-family="'Barlow Condensed'" font-size="10" letter-spacing="1">NO DATA</text>`;
+        labels.innerHTML = '';
         return;
       }
 
-      const max = Math.max(...sorted.map(m => Math.abs(m.pnl)), 1);
-      const W = 320, H = 120, mid = 60;
-      const pts = sorted.map((m, i) => {
-        const x = (i / (sorted.length - 1 || 1)) * W;
-        const y = mid - (m.pnl / max) * (mid - 10);
-        return { x, y, pnl: m.pnl };
+      // Cumulative
+      let cum = 0;
+      const cums = sorted.map(m => { cum += m.pnl; return cum; });
+      const maxAbs = Math.max(...cums.map(Math.abs), 1);
+      const W = 320, H = 140, mid = 70;
+      const pts = cums.map((v, i) => {
+        const x = (i / Math.max(cums.length - 1, 1)) * W;
+        const y = mid - (v / maxAbs) * (mid - 15);
+        return { x, y, v };
       });
 
-      const path = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-      const area = path + ` L${pts[pts.length-1].x},${mid} L${pts[0].x},${mid} Z`;
+      const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+      const area = path + ` L${pts[pts.length - 1].x},${mid} L${pts[0].x},${mid} Z`;
 
-      const svg = document.getElementById('pnlChart');
+      const positive = cum >= 0;
+
       svg.innerHTML = `
         <defs>
           <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#27AE60" stop-opacity="0.3"/>
-            <stop offset="100%" stop-color="#27AE60" stop-opacity="0"/>
+            <stop offset="0%" stop-color="${positive ? '#27AE60' : '#E74C3C'}" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="${positive ? '#27AE60' : '#E74C3C'}" stop-opacity="0"/>
           </linearGradient>
         </defs>
-        <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="rgba(201,168,76,0.1)" stroke-width="1" stroke-dasharray="4,4"/>
+        <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="rgba(201,168,76,0.15)" stroke-width="1" stroke-dasharray="4,4"/>
         <path d="${area}" fill="url(#chartGrad)"/>
-        <path d="${path}" fill="none" stroke="#27AE60" stroke-width="2"/>
-        ${pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${p.pnl >= 0 ? '#27AE60' : '#E74C3C'}"/>`).join('')}
+        <path d="${path}" fill="none" stroke="${positive ? '#27AE60' : '#E74C3C'}" stroke-width="2"/>
+        ${pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${p.v >= 0 ? '#27AE60' : '#E74C3C'}"/>`).join('')}
       `;
 
-      container.innerHTML = sorted.map(m =>
-        `<span class="chart-lbl">${m.lbl}</span>`
-      ).join('');
+      labels.innerHTML = sorted.map(m => `<span class="chart-lbl">${m.lbl}</span>`).join('');
     }
 
     // ── ROI BY SPORT ──
-    function renderSportROI(picks) {
+    function renderSportROI() {
       const container = document.getElementById('sportROIList');
-      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
-      const data = sports.map(s => {
-        const sp = picks.filter(p => p.sport === s && p.result);
-        const wins = sp.filter(p => p.result === 'W').length;
-        const losses = sp.filter(p => p.result === 'L').length;
-        const pnl = sp.reduce((sum,p) => sum + (p.pnl || 0), 0);
-        const roi = sp.length > 0 ? (pnl / sp.length) * 100 : null;
-        return { s, wins, losses, pnl, roi, total: sp.length };
-      }).filter(d => d.total > 0);
+      const picks = picksForMode().filter(p => p.result);
 
-      if (!data.length) {
-        container.innerHTML = '<div class="empty-note">No data yet · Loads from Supabase</div>';
+      if (!picks.length) {
+        container.innerHTML = '<div class="empty-note">No settled picks in this mode</div>';
         return;
       }
 
-      const maxPnl = Math.max(...data.map(d => Math.abs(d.pnl)), 1);
+      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+      const data = sports.map(s => {
+        const sp = picks.filter(p => p.sport === s);
+        const w = sp.filter(p => p.result === 'W').length;
+        const l = sp.filter(p => p.result === 'L').length;
+        const pnl = sp.reduce((sum, p) => sum + (p.pnl || 0), 0);
+        const units = sp.reduce((sum, p) => sum + (p.units || 0), 0);
+        const roi = units > 0 ? (pnl / units) * 100 : null;
+        return { s, w, l, pnl, roi, total: sp.length };
+      }).filter(d => d.total > 0);
+
+      if (!data.length) {
+        container.innerHTML = '<div class="empty-note">No data yet</div>';
+        return;
+      }
+
+      const maxAbs = Math.max(...data.map(d => Math.abs(d.pnl)), 1);
 
       container.innerHTML = data.map(d => {
-        const barW = Math.min((Math.abs(d.pnl) / maxPnl) * 100, 100);
+        const barW = Math.min((Math.abs(d.pnl) / maxAbs) * 100, 100);
         const roiStr = d.roi != null ? (d.roi > 0 ? '+' : '') + d.roi.toFixed(1) + '%' : '—';
         const cls = d.pnl > 0 ? 'pos' : d.pnl < 0 ? 'neg' : 'neu';
         return `
           <div class="sport-roi-row">
             <span class="sport-name">${d.s}</span>
-            <span class="sport-rec">${d.wins}–${d.losses}</span>
+            <span class="sport-rec">${d.w}–${d.l}</span>
             <div class="sport-bar-track">
               <div class="sport-bar-fill ${cls}" style="width:${barW}%"></div>
             </div>
@@ -464,33 +547,90 @@
       }).join('');
     }
 
-    // ── ALGO PERFORMANCE ──
-    function renderAlgoPerf(algoData) {
+    // ── FAMILY PERFORMANCE ──
+    async function renderAlgoPerf() {
       const container = document.getElementById('algoPerfList');
-      if (!algoData.length) {
-        container.innerHTML = '<div class="empty-note">No data yet · Loads from Supabase</div>';
+      const sbUrl = localStorage.getItem('edge_supabase_url');
+      const sbKey = localStorage.getItem('edge_supabase_key');
+
+      if (!sbUrl || !sbKey) {
+        container.innerHTML = '<div class="empty-note">Supabase not connected</div>';
         return;
       }
 
-      const sorted = [...algoData].sort((a,b) => (b.roi || 0) - (a.roi || 0));
+      try {
+        const res = await fetch(`${sbUrl}/rest/v1/algorithm_weights?select=*&order=roi.desc`, {
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
+        });
+        if (!res.ok) throw new Error();
+        const rows = await res.json();
 
-      container.innerHTML = sorted.map((a, i) => {
-        const roi = a.roi != null ? (a.roi > 0 ? '+' : '') + a.roi + '%' : '—';
-        const cls = a.roi > 0 ? 'pos' : a.roi < 0 ? 'neg' : 'neu';
-        return `
-          <div class="algo-perf-row">
-            <span class="algo-rank-num ${i < 3 ? 'top' : ''}">${i+1}</span>
-            <span class="algo-perf-name">${a.name}</span>
-            <span class="algo-perf-rec">${a.wins || 0}–${a.losses || 0}</span>
-            <span class="algo-perf-roi ${cls}">${roi}</span>
-          </div>`;
-      }).join('');
+        if (!rows.length) {
+          container.innerHTML = '<div class="empty-note">No family data yet</div>';
+          return;
+        }
+
+        // Aggregate by family across sports
+        const byFamily = {};
+        rows.forEach(r => {
+          if (!byFamily[r.family]) byFamily[r.family] = { family: r.family, wins: 0, losses: 0, roiSum: 0, roiCount: 0, weightSum: 0, weightCount: 0 };
+          const f = byFamily[r.family];
+          f.wins += r.wins || 0;
+          f.losses += r.losses || 0;
+          if (typeof r.roi === 'number') { f.roiSum += r.roi; f.roiCount++; }
+          if (typeof r.dynamic_weight === 'number') { f.weightSum += r.dynamic_weight; f.weightCount++; }
+        });
+
+        const familyDisplay = {
+          team_quality: 'Team Quality',
+          offense_defense: 'Offense / Defense',
+          coaching: 'Coaching',
+          market: 'Market Intelligence',
+          line_dynamics: 'Line Dynamics',
+          fatigue: 'Fatigue & Recovery',
+          environment: 'Environment',
+          trend: 'Trend & Momentum',
+          injury: 'Injury Impact',
+        };
+
+        const sorted = Object.values(byFamily).map(f => ({
+          family: f.family,
+          name: familyDisplay[f.family] || f.family,
+          wins: f.wins,
+          losses: f.losses,
+          roi: f.roiCount > 0 ? (f.roiSum / f.roiCount) * 100 : null,
+          weight: f.weightCount > 0 ? f.weightSum / f.weightCount : null,
+        })).sort((a, b) => (b.roi ?? -999) - (a.roi ?? -999));
+
+        container.innerHTML = sorted.map((a, i) => {
+          const roi = a.roi != null ? (a.roi > 0 ? '+' : '') + a.roi.toFixed(1) + '%' : '—';
+          const cls = a.roi > 0 ? 'pos' : a.roi < 0 ? 'neg' : 'neu';
+          return `
+            <div class="algo-perf-row">
+              <span class="algo-rank-num ${i < 3 ? 'top' : ''}">${i + 1}</span>
+              <span class="algo-perf-name">${a.name}</span>
+              <span class="algo-perf-rec">${a.wins}-${a.losses}</span>
+              <span class="algo-perf-roi ${cls}">${roi}</span>
+              <span class="algo-perf-weight">${a.weight != null ? a.weight.toFixed(1) : '—'}</span>
+            </div>`;
+        }).join('');
+      } catch {
+        container.innerHTML = '<div class="empty-note">Error loading family data</div>';
+      }
     }
 
     // ── STREAKS ──
-    function renderStreaks(picks) {
-      const settled = picks.filter(p => p.result === 'W' || p.result === 'L').sort((a,b) => new Date(b.date) - new Date(a.date));
-      if (!settled.length) return;
+    function renderStreaks() {
+      const settled = picksForMode()
+        .filter(p => p.result === 'W' || p.result === 'L')
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      if (!settled.length) {
+        document.getElementById('currentStreak').textContent = '—';
+        document.getElementById('bestWin').textContent = '—';
+        document.getElementById('worstLoss').textContent = '—';
+        return;
+      }
 
       // Current streak
       let cur = 1;
@@ -499,8 +639,9 @@
         if (settled[i].result === curRes) cur++;
         else break;
       }
-      document.getElementById('currentStreak').textContent = curRes + cur;
-      document.getElementById('currentStreak').className = 'streak-val ' + (curRes === 'W' ? 'win' : 'loss');
+      const curEl = document.getElementById('currentStreak');
+      curEl.textContent = curRes + cur;
+      curEl.className = 'streak-val ' + (curRes === 'W' ? 'win' : 'loss');
 
       // Best win / worst loss
       let bestW = 0, worstL = 0, runW = 0, runL = 0;
@@ -508,21 +649,38 @@
         if (p.result === 'W') { runW++; runL = 0; bestW = Math.max(bestW, runW); }
         else { runL++; runW = 0; worstL = Math.max(worstL, runL); }
       });
-      document.getElementById('bestWin').textContent  = bestW  > 0 ? 'W' + bestW  : '—';
+      document.getElementById('bestWin').textContent = bestW > 0 ? 'W' + bestW : '—';
       document.getElementById('worstLoss').textContent = worstL > 0 ? 'L' + worstL : '—';
     }
 
-    // ── UNITS ──
-    function renderUnits(picks) {
-      const unitSize = parseFloat(localStorage.getItem('edge_unit_size') || '0');
-      const settled  = picks.filter(p => p.result && p.pnl != null);
-      const profit   = settled.reduce((s,p) => s + p.pnl, 0);
-      const wagered  = settled.length;
+    // ── CLV ──
+    function renderCLV() {
+      const picks = picksForMode().filter(p => typeof p.clv === 'number');
+      if (!picks.length) {
+        document.getElementById('clvDisplay').textContent = '—';
+        return;
+      }
+      const avg = picks.reduce((s, p) => s + p.clv, 0) / picks.length;
+      document.getElementById('clvDisplay').textContent =
+        (avg > 0 ? '+' : '') + avg.toFixed(2);
+    }
 
-      document.getElementById('unitSize').textContent   = unitSize > 0 ? '$' + unitSize : '—';
-      document.getElementById('unitProfit').textContent = profit !== 0 ? (profit > 0 ? '+' : '') + profit.toFixed(1) + 'u' : '—';
-      document.getElementById('unitProfit').className   = 'unit-val ' + (profit > 0 ? 'pos' : profit < 0 ? 'neg' : '');
-      document.getElementById('unitTotal').textContent  = wagered > 0 ? wagered + 'u' : '—';
+    // ── UNITS ──
+    function renderUnits() {
+      const picks = picksForMode();
+      const settled = picks.filter(p => p.result && p.pnl != null);
+      const profit = settled.reduce((s, p) => s + p.pnl, 0);
+      const wagered = settled.reduce((s, p) => s + (p.units || 0), 0);
+
+      const unitType = localStorage.getItem('edge_unit_type') || 'flat';
+      const unitSize = parseFloat(localStorage.getItem('edge_unit_size') || '0');
+
+      document.getElementById('unitSize').textContent =
+        unitType === 'pct' ? unitSize + '%' : unitSize > 0 ? '$' + unitSize : '—';
+      const profitEl = document.getElementById('unitProfit');
+      profitEl.textContent = profit !== 0 ? (profit > 0 ? '+' : '') + profit.toFixed(1) + 'u' : '—';
+      profitEl.className = 'unit-val ' + (profit > 0 ? 'pos' : profit < 0 ? 'neg' : '');
+      document.getElementById('unitTotal').textContent = wagered > 0 ? wagered.toFixed(1) + 'u' : '—';
     }
 
     // ── INIT ──
