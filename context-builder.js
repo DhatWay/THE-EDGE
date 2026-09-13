@@ -1,7 +1,7 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v1.0
+// EDGE — CONTEXT BUILDER v2.0
 // Loads all non-ratings data that algorithms need.
-// Line history · rest days · travel · (weather/injuries stubbed)
+// Line history · rest days (real, from ESPN) · travel · weather
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
@@ -9,7 +9,23 @@ const EDGE_CONTEXT = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  // Team home cities for travel computation
+  const ESPN_MAP = {
+    NFL:   'football/nfl',
+    NBA:   'basketball/nba',
+    MLB:   'baseball/mlb',
+    NHL:   'hockey/nhl',
+    NCAAF: 'football/college-football',
+    NCAAB: 'basketball/mens-college-basketball',
+    MLS:   'soccer/usa.1',
+  };
+
+  // How far back to look for each team's previous game.
+  const REST_LOOKBACK_DAYS = 21;
+
+  // Indoor sports never get a weather lookup.
+  const INDOOR = ['NBA', 'NHL', 'NCAAB'];
+
+  // Team home cities for travel + weather
   const TEAM_CITIES = {
     // NFL
     'Arizona Cardinals': [33.53, -112.26], 'Atlanta Falcons': [33.75, -84.40],
@@ -62,10 +78,20 @@ const EDGE_CONTEXT = (() => {
     'Toronto Blue Jays': [43.64, -79.39], 'Washington Nationals': [38.87, -77.01],
   };
 
+  // Venues where weather never matters even for an outdoor sport.
+  const DOMED_HOMES = new Set([
+    'Arizona Cardinals', 'Atlanta Falcons', 'Dallas Cowboys', 'Detroit Lions',
+    'Houston Texans', 'Indianapolis Colts', 'Las Vegas Raiders', 'Los Angeles Chargers',
+    'Los Angeles Rams', 'Minnesota Vikings', 'New Orleans Saints',
+    'Arizona Diamondbacks', 'Houston Astros', 'Miami Marlins', 'Milwaukee Brewers',
+    'Seattle Mariners', 'Texas Rangers', 'Toronto Blue Jays', 'Tampa Bay Rays',
+  ]);
+
   return {
     buildContext,
     computeRestDays,
     computeTravelMiles,
+    TEAM_CITIES,
   };
 
   // ============================================================
@@ -84,95 +110,215 @@ const EDGE_CONTEXT = (() => {
 
     if (!Array.isArray(games) || !games.length) return ctx;
 
-    const url = SUPABASE_URL();
-    const key = SUPABASE_KEY();
+    ctx.lineHistoryByGame = await loadLineHistory(games);
+    ctx.restByTeam = await loadRestDays(games);
 
-    // ── Line history ──
-    if (url && key) {
-      try {
-        const gameIds = games.map(g => g.id).filter(Boolean);
-        if (gameIds.length) {
-          const inList = gameIds.map(id => `"${id}"`).join(',');
-          const res = await fetch(
-            `${url}/rest/v1/line_history?select=game_id,spread,total,ml,public_pct,sharp_pct,created_at&game_id=in.(${inList})&order=created_at.asc`,
-            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-          );
-          if (res.ok) {
-            const rows = await res.json();
-            const perGame = {};
-            rows.forEach(r => {
-              if (!perGame[r.game_id]) perGame[r.game_id] = { open: r, latest: r };
-              else perGame[r.game_id].latest = r;
-            });
-            Object.entries(perGame).forEach(([gid, h]) => {
-              ctx.lineHistoryByGame[gid] = {
-                open_spread: h.open.spread,
-                current_spread: h.latest.spread,
-                open_total: h.open.total,
-                current_total: h.latest.total,
-                public_pct: h.latest.public_pct ?? null,
-                sharp_pct: h.latest.sharp_pct ?? null,
-              };
-            });
-          }
-        }
-      } catch {}
-    }
-
-    // ── Rest days + travel ──
-    // Group games by team, then compute days since each team's previous game
-    const gamesByTeam = {};
     games.forEach(g => {
       const home = g.home_team || g.home;
       const away = g.away_team || g.away;
-      const sport = g._sport || g.sport;
-      const time = g.commence_time || g.time;
-      if (!time) return;
-      if (home) (gamesByTeam[`${sport}:${home}`] ||= []).push({ time, atHome: true, opp: away });
-      if (away) (gamesByTeam[`${sport}:${away}`] ||= []).push({ time, atHome: false, opp: home });
-    });
-
-    Object.entries(gamesByTeam).forEach(([teamKey, list]) => {
-      list.sort((a, b) => new Date(a.time) - new Date(b.time));
-      // For every game on this team's schedule, rest days = days since previous
-      list.forEach((entry, i) => {
-        if (i === 0) {
-          ctx.restByTeam[teamKey] = ctx.restByTeam[teamKey] ?? 3; // assume 3 for first appearance
-        } else {
-          const days = (new Date(entry.time) - new Date(list[i - 1].time)) / 86400000;
-          ctx.restByTeam[teamKey] = Math.max(0, Math.round(days));
-        }
-      });
-    });
-
-    // ── Travel miles ──
-    games.forEach(g => {
-      const sport = g._sport || g.sport;
-      const home = g.home_team || g.home;
-      const away = g.away_team || g.away;
-
       const homeCoord = TEAM_CITIES[home];
       const awayCoord = TEAM_CITIES[away];
       if (!homeCoord || !awayCoord) return;
-
-      const miles = haversine(homeCoord, awayCoord);
-      const timezones = estimateTimezoneShift(awayCoord, homeCoord);
-
-      ctx.travelByGame[g.id] = { miles: Math.round(miles), timezones };
+      ctx.travelByGame[g.id] = {
+        miles: Math.round(haversine(homeCoord, awayCoord)),
+        timezones: estimateTimezoneShift(awayCoord, homeCoord),
+      };
     });
 
-    // Weather + injuries are stubs for now (no free source wired yet)
+    ctx.weatherByGame = await loadWeather(games);
 
     return ctx;
+  }
+
+  // ============================================================
+  // ── LINE HISTORY ──
+  // ============================================================
+
+  async function loadLineHistory(games) {
+    const url = SUPABASE_URL();
+    const key = SUPABASE_KEY();
+    const out = {};
+    if (!url || !key) return out;
+
+    const gameIds = games.map(g => g.id).filter(Boolean);
+    if (!gameIds.length) return out;
+
+    const inList = gameIds.map(id => `"${id}"`).join(',');
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+
+    // public_pct / sharp_pct are optional columns. If the table doesn't have
+    // them PostgREST rejects the whole query, so fall back to the core columns
+    // rather than losing line history entirely.
+    const selects = [
+      'game_id,spread,total,ml,public_pct,sharp_pct,created_at',
+      'game_id,spread,total,ml,created_at',
+    ];
+
+    let rows = null;
+    for (const select of selects) {
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/line_history?select=${select}&game_id=in.(${inList})&order=created_at.asc`,
+          { headers }
+        );
+        if (res.ok) { rows = await res.json(); break; }
+      } catch {}
+    }
+    if (!rows) return out;
+
+    const perGame = {};
+    rows.forEach(r => {
+      if (!perGame[r.game_id]) perGame[r.game_id] = { open: r, latest: r };
+      else perGame[r.game_id].latest = r;
+    });
+
+    Object.entries(perGame).forEach(([gid, h]) => {
+      out[gid] = {
+        open_spread: h.open.spread,
+        current_spread: h.latest.spread,
+        open_total: h.open.total,
+        current_total: h.latest.total,
+        public_pct: h.latest.public_pct ?? null,
+        sharp_pct: h.latest.sharp_pct ?? null,
+      };
+    });
+
+    return out;
+  }
+
+  // ============================================================
+  // ── REST DAYS ──
+  // Each team's previous completed game from ESPN, measured
+  // against the upcoming game's start time.
+  // ============================================================
+
+  async function loadRestDays(games) {
+    const rest = {};
+
+    const sports = Array.from(new Set(
+      games.map(g => g._sport || g.sport).filter(s => s && ESPN_MAP[s])
+    ));
+    if (!sports.length) return rest;
+
+    const end = new Date();
+    const start = new Date(end.getTime() - REST_LOOKBACK_DAYS * 86400000);
+
+    const lastPlayed = {}; // `${sport}:${team}` -> Date
+
+    await Promise.all(sports.map(async sport => {
+      const events = await fetchEspnRange(ESPN_MAP[sport], start, end);
+      events.forEach(e => {
+        const comp = e.competitions?.[0];
+        if (!comp) return;
+        if (comp.status?.type?.completed !== true) return;
+        const when = new Date(e.date);
+        if (isNaN(when)) return;
+        (comp.competitors || []).forEach(c => {
+          const name = c.team?.displayName;
+          if (!name) return;
+          const k = `${sport}:${name}`;
+          if (!lastPlayed[k] || when > lastPlayed[k]) lastPlayed[k] = when;
+        });
+      });
+    }));
+
+    games.forEach(g => {
+      const sport = g._sport || g.sport;
+      const when = new Date(g.commence_time || g.time);
+      if (isNaN(when)) return;
+      [g.home_team || g.home, g.away_team || g.away].forEach(team => {
+        if (!team) return;
+        const k = `${sport}:${team}`;
+        const prev = lastPlayed[k];
+        if (!prev) return;
+        rest[k] = Math.max(0, Math.round((when - prev) / 86400000));
+      });
+    });
+
+    return rest;
+  }
+
+  async function fetchEspnRange(path, start, end) {
+    const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    try {
+      const res = await fetch(
+        `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${fmt(start)}-${fmt(end)}&limit=1000`
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events || [];
+    } catch { return []; }
+  }
+
+  // ============================================================
+  // ── WEATHER ──
+  // Open-Meteo forecast API — no key, no account required.
+  // ============================================================
+
+  async function loadWeather(games) {
+    const out = {};
+
+    const targets = games.filter(g => {
+      const sport = g._sport || g.sport;
+      if (INDOOR.includes(sport)) return false;
+      const home = g.home_team || g.home;
+      if (DOMED_HOMES.has(home)) return false;
+      if (!TEAM_CITIES[home]) return false;
+      const when = new Date(g.commence_time || g.time);
+      if (isNaN(when)) return false;
+      const daysOut = (when - Date.now()) / 86400000;
+      return daysOut >= -1 && daysOut <= 14;
+    });
+
+    if (!targets.length) return out;
+
+    await Promise.all(targets.map(async g => {
+      const home = g.home_team || g.home;
+      const [lat, lon] = TEAM_CITIES[home];
+      const when = new Date(g.commence_time || g.time);
+      try {
+        const res = await fetch(
+          `https://api.open-meteo.com/v1/forecast` +
+          `?latitude=${lat}&longitude=${lon}` +
+          `&hourly=temperature_2m,precipitation_probability,wind_speed_10m` +
+          `&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=UTC&forecast_days=16`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const times = data?.hourly?.time || [];
+        if (!times.length) return;
+
+        let bestIdx = 0;
+        let bestGap = Infinity;
+        for (let i = 0; i < times.length; i++) {
+          const gap = Math.abs(new Date(times[i] + 'Z') - when);
+          if (gap < bestGap) { bestGap = gap; bestIdx = i; }
+        }
+        if (bestGap > 6 * 3600000) return;
+
+        const temp = data.hourly.temperature_2m?.[bestIdx];
+        const wind = data.hourly.wind_speed_10m?.[bestIdx];
+        const precip = data.hourly.precipitation_probability?.[bestIdx];
+
+        out[g.id] = {
+          temp_f: typeof temp === 'number' ? Math.round(temp) : null,
+          wind_mph: typeof wind === 'number' ? Math.round(wind) : null,
+          precip_pct: typeof precip === 'number' ? Math.round(precip) : null,
+          forecast_for: times[bestIdx],
+        };
+      } catch {}
+    }));
+
+    return out;
   }
 
   // ============================================================
   // ── HELPERS ──
   // ============================================================
 
-  function computeRestDays(teamKey, allGames) {
-    // Kept for API symmetry
-    return 3;
+  function computeRestDays(teamKey, restIndex) {
+    if (!restIndex || typeof restIndex !== 'object') return null;
+    return restIndex[teamKey] ?? null;
   }
 
   function computeTravelMiles(fromCity, toCity) {
@@ -194,10 +340,8 @@ const EDGE_CONTEXT = (() => {
   }
 
   function estimateTimezoneShift(awayCoord, homeCoord) {
-    // Longitude difference: 15° ≈ 1 hour. Eastern US is more negative (further west).
-    // Away team traveling east = positive shift. Traveling west = negative.
-    const lonDiff = homeCoord[1] - awayCoord[1];
-    return Math.round(lonDiff / 15);
+    // 15° of longitude ≈ 1 hour. Away team traveling east = positive shift.
+    return Math.round((homeCoord[1] - awayCoord[1]) / 15);
   }
 
 })();
