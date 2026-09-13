@@ -1,12 +1,9 @@
 // ============================================================
-// EDGE — ROSTER ENGINE v1.0
-// Fetches every team's roster from ESPN, assigns a rating 0-100
-// per player, computes offensive/defensive contribution, persists
-// to the `players` table. Team power can then be fragmented by
-// subtracting injured players' contributions from the base rating.
+// EDGE — POWER RATINGS ENGINE v3.2
+// Season-aware: skips out-of-season sports entirely
 // ============================================================
 
-const EDGE_ROSTER = (() => {
+const EDGE_POWER = (() => {
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -21,469 +18,486 @@ const EDGE_ROSTER = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // Position group normalization so we can roll up cleanly.
-  const POSITION_GROUPS = {
-    NFL: {
-      QB: 'OFFENSE_SKILL', RB: 'OFFENSE_SKILL', WR: 'OFFENSE_SKILL', TE: 'OFFENSE_SKILL',
-      FB: 'OFFENSE_SKILL', HB: 'OFFENSE_SKILL',
-      LT: 'OFFENSE_LINE', LG: 'OFFENSE_LINE', C: 'OFFENSE_LINE', RG: 'OFFENSE_LINE',
-      RT: 'OFFENSE_LINE', OT: 'OFFENSE_LINE', OG: 'OFFENSE_LINE',
-      T: 'OFFENSE_LINE', G: 'OFFENSE_LINE', OL: 'OFFENSE_LINE',
-      DE: 'DEFENSE_FRONT', DT: 'DEFENSE_FRONT', NT: 'DEFENSE_FRONT', DL: 'DEFENSE_FRONT',
-      EDGE: 'DEFENSE_EDGE', OLB: 'DEFENSE_EDGE',
-      ILB: 'DEFENSE_MID', MLB: 'DEFENSE_MID', LB: 'DEFENSE_MID',
-      CB: 'DEFENSE_SECONDARY', S: 'DEFENSE_SECONDARY',
-      FS: 'DEFENSE_SECONDARY', SS: 'DEFENSE_SECONDARY', DB: 'DEFENSE_SECONDARY',
-      K: 'SPECIAL', P: 'SPECIAL', LS: 'SPECIAL',
-    },
-    NBA: { PG: 'GUARD', SG: 'GUARD', G: 'GUARD', SF: 'WING', F: 'WING', PF: 'BIG', C: 'BIG' },
-    MLB: {
-      SP: 'PITCHER_START', RP: 'PITCHER_RELIEF', CP: 'PITCHER_RELIEF',
-      P: 'PITCHER_START',
-      C: 'CATCHER',
-      '1B': 'INFIELD', '2B': 'INFIELD', '3B': 'INFIELD',
-      SS: 'INFIELD', IF: 'INFIELD', INF: 'INFIELD',
-      LF: 'OUTFIELD', CF: 'OUTFIELD', RF: 'OUTFIELD', OF: 'OUTFIELD',
-      DH: 'DH',
-    },
-    NHL: {
-      G: 'GOALIE', D: 'DEFENSE',
-      LW: 'FORWARD', RW: 'FORWARD', C: 'FORWARD', F: 'FORWARD',
-    },
-    NCAAF: {
-      QB: 'OFFENSE_SKILL', RB: 'OFFENSE_SKILL', WR: 'OFFENSE_SKILL', TE: 'OFFENSE_SKILL',
-      LT: 'OFFENSE_LINE', LG: 'OFFENSE_LINE', C: 'OFFENSE_LINE', RG: 'OFFENSE_LINE',
-      RT: 'OFFENSE_LINE', OT: 'OFFENSE_LINE', OG: 'OFFENSE_LINE',
-      DE: 'DEFENSE_FRONT', DT: 'DEFENSE_FRONT', NT: 'DEFENSE_FRONT',
-      EDGE: 'DEFENSE_EDGE', OLB: 'DEFENSE_EDGE',
-      ILB: 'DEFENSE_MID', MLB: 'DEFENSE_MID', LB: 'DEFENSE_MID',
-      CB: 'DEFENSE_SECONDARY', S: 'DEFENSE_SECONDARY',
-      FS: 'DEFENSE_SECONDARY', SS: 'DEFENSE_SECONDARY',
-      K: 'SPECIAL', P: 'SPECIAL',
-    },
-    NCAAB: { PG: 'GUARD', SG: 'GUARD', G: 'GUARD', SF: 'WING', F: 'WING', PF: 'BIG', C: 'BIG' },
-    MLS: {
-      GK: 'GOALKEEPER', G: 'GOALKEEPER',
-      D: 'DEFENSE', CB: 'DEFENSE', LB: 'DEFENSE', RB: 'DEFENSE',
-      M: 'MIDFIELD', DM: 'MIDFIELD', CM: 'MIDFIELD', AM: 'MIDFIELD',
-      F: 'FORWARD', ST: 'FORWARD', CF: 'FORWARD', W: 'FORWARD',
-    },
+  // ── SEASON WINDOWS (month/day ranges) ──
+  // Only sports whose window contains today get computed.
+  const SEASON_WINDOWS = {
+    NFL:   { start: [9, 1],   end: [2, 15]  },   // Sep 1 → Feb 15
+    NBA:   { start: [10, 15], end: [6, 30]  },   // Oct 15 → Jun 30
+    MLB:   { start: [3, 20],  end: [11, 5]  },   // Mar 20 → Nov 5
+    NHL:   { start: [10, 1],  end: [6, 30]  },   // Oct 1 → Jun 30
+    NCAAF: { start: [8, 15],  end: [1, 15]  },   // Aug 15 → Jan 15
+    NCAAB: { start: [11, 1],  end: [4, 10]  },   // Nov 1 → Apr 10
+    MLS:   { start: [2, 20],  end: [12, 15] },   // Feb 20 → Dec 15
   };
 
-  // Multiplier that converts a player rating into team-power points.
-  // QB = 1.0 because a single elite QB transforms the whole offense.
-  // LB = 0.40 because one linebacker is one of eleven.
-  const POSITION_WEIGHTS = {
-    NFL: {
-      QB: 1.00, RB: 0.35, WR: 0.45, TE: 0.35, FB: 0.10,
-      LT: 0.55, RT: 0.45, LG: 0.35, RG: 0.35, C: 0.40,
-      OT: 0.50, OG: 0.35, T: 0.50, G: 0.35,
-      DE: 0.45, DT: 0.35, NT: 0.30, EDGE: 0.55, OLB: 0.50,
-      ILB: 0.40, MLB: 0.40, LB: 0.40,
-      CB: 0.60, FS: 0.45, SS: 0.40, S: 0.45, DB: 0.50,
-      K: 0.15, P: 0.10, LS: 0.05,
-    },
-    NBA: { PG: 1.00, SG: 0.90, SF: 0.90, PF: 0.85, C: 0.85, G: 0.95, F: 0.90 },
-    MLB: {
-      SP: 1.00, RP: 0.40, CP: 0.55, P: 1.00,
-      C: 0.55,
-      '1B': 0.55, '2B': 0.55, '3B': 0.55, SS: 0.65, IF: 0.55, INF: 0.55,
-      LF: 0.50, CF: 0.60, RF: 0.50, OF: 0.55,
-      DH: 0.50,
-    },
-    NHL: { G: 1.00, D: 0.75, LW: 0.70, RW: 0.70, C: 0.80, F: 0.75 },
-    NCAAF: {
-      QB: 1.00, RB: 0.35, WR: 0.45, TE: 0.35,
-      LT: 0.55, RT: 0.45, LG: 0.35, RG: 0.35, C: 0.40,
-      OT: 0.50, OG: 0.35,
-      DE: 0.45, DT: 0.35, NT: 0.30, EDGE: 0.55, OLB: 0.50,
-      ILB: 0.40, MLB: 0.40, LB: 0.40,
-      CB: 0.60, FS: 0.45, SS: 0.40, S: 0.45,
-      K: 0.15, P: 0.10,
-    },
-    NCAAB: { PG: 1.00, SG: 0.90, SF: 0.90, PF: 0.85, C: 0.85, G: 0.95, F: 0.90 },
-    MLS: {
-      GK: 1.00, G: 1.00,
-      D: 0.75, CB: 0.80, LB: 0.70, RB: 0.70,
-      M: 0.80, DM: 0.70, CM: 0.80, AM: 0.95,
-      F: 1.00, ST: 1.00, CF: 1.00, W: 0.85,
-    },
+  const SPORT_CONFIG = {
+    NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22, k: 8  },
+    NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 18, k: 15 },
+    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 3,  k: 20 },
+    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 2,  k: 15 },
+    NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 32, k: 6  },
+    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 20, k: 10 },
+    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1.2, k: 15 },
   };
 
-  // Rating envelope
-  const BASE_RATING = 50;
-  const ROOKIE_CEILING = 68;
-  const VETERAN_CEILING = 90;
+  const COACHING_WEIGHTS = {
+    NFL:   { halftime: 1.5, close: 0.7, maxAdj: 3.5 },
+    NBA:   { halftime: 1.0, close: 0.5, maxAdj: 2.0 },
+    MLB:   { halftime: 0.0, close: 0.4, maxAdj: 1.5 },
+    NHL:   { halftime: 0.5, close: 0.5, maxAdj: 1.5 },
+    DEFAULT: { halftime: 0.8, close: 0.5, maxAdj: 2.5 },
+  };
+
+  const LOOKBACK_DAYS = 150;
 
   return {
-    buildAll,
-    buildTeam,
-    refreshRatings,
-    getTeamRoster,
-    POSITION_GROUPS,
-    POSITION_WEIGHTS,
+    computeGamePrior,
+    computeAllTeamRatings,
+    computeTeamRating,
+    computeCoachingRating,
+    computeDefenseMatchup,
+    fetchTeamStats,
+    getPowerRating,
+    getCoachingRating,
+    getGamePrior,
+    isSportInSeason,
+    SPORT_CONFIG,
+    ESPN_MAP,
+    SEASON_WINDOWS,
   };
 
-  // ============================================================
-  // ── MAIN ──
-  // ============================================================
+  // ── Season check ──
+  function isSportInSeason(sport, date = new Date()) {
+    const w = SEASON_WINDOWS[sport];
+    if (!w) return true;
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    const now = m * 100 + d;
+    const start = w.start[0] * 100 + w.start[1];
+    const end = w.end[0] * 100 + w.end[1];
 
-  async function buildAll(options = {}) {
-    const { sports = Object.keys(ESPN_MAP), onProgress = null } = options;
-    const log = makeLogger(onProgress);
-
-    const url = SUPABASE_URL();
-    const key = SUPABASE_KEY();
-    if (!url || !key) throw new Error('Supabase not connected');
-
-    const summary = { sports: {}, teams_processed: 0, players_processed: 0, errors: [] };
-
-    // Pull teams from power_ratings — this is our source of truth for
-    // which teams exist, their ids, and their canonical names.
-    let allTeams = [];
-    try {
-      const res = await fetch(
-        `${url}/rest/v1/power_ratings?select=sport,team_name,team_id&limit=1000`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      if (!res.ok) throw new Error('Failed to load teams');
-      allTeams = await res.json();
-    } catch (e) {
-      throw new Error('Cannot load teams: ' + e.message);
+    // Handle wrap-around seasons (e.g. NFL Sep→Feb, NHL Oct→Jun)
+    if (start <= end) {
+      return now >= start && now <= end;
     }
+    return now >= start || now <= end;
+  }
 
-    for (const sport of sports) {
-      if (!ESPN_MAP[sport]) continue;
-      const teams = allTeams.filter(t => t.sport === sport);
-      if (!teams.length) {
-        log(`${sport}: no teams in power_ratings`);
+  async function computeAllTeamRatings() {
+    const results = { teams: {}, coaching: {}, errors: [], counts: {}, skipped: [] };
+
+    const end = new Date();
+    const start = new Date(end.getTime() - LOOKBACK_DAYS * 86400000);
+    const startStr = fmtDate(start);
+    const endStr = fmtDate(end);
+
+    for (const [sport, path] of Object.entries(ESPN_MAP)) {
+      // Skip out-of-season sports
+      if (!isSportInSeason(sport)) {
+        results.skipped.push(sport);
+        results.counts[sport] = 0;
         continue;
       }
-      log(`${sport}: ${teams.length} teams`);
 
-      const rows = [];
-      for (const team of teams) {
-        try {
-          const roster = await fetchTeamRoster(sport, team.team_id);
-          if (!roster.players.length) continue;
+      let teamCount = 0;
+      try {
+        const events = await fetchGamesInRange(path, startStr, endStr);
+        if (!events.length) { results.counts[sport] = 0; continue; }
 
-          const players = computeRoster(sport, team.team_name, roster);
-          rows.push(...players);
-          summary.teams_processed += 1;
-          summary.players_processed += players.length;
-        } catch (e) {
-          summary.errors.push({ sport, team: team.team_name, error: e.message });
+        const teamMap = new Map();
+
+        events.forEach(e => {
+          const comp = e.competitions?.[0];
+          if (!comp) return;
+          const home = comp.competitors?.find(c => c.homeAway === 'home');
+          const away = comp.competitors?.find(c => c.homeAway === 'away');
+          if (!home || !away) return;
+
+          const homeName = home.team?.displayName;
+          const awayName = away.team?.displayName;
+          if (!homeName || !awayName) return;
+
+          const homeScore = parseInt(home.score || '0');
+          const awayScore = parseInt(away.score || '0');
+          if (homeScore === 0 && awayScore === 0) return;
+
+          pushGame(teamMap, homeName, home.team, homeScore, awayScore, true);
+          pushGame(teamMap, awayName, away.team, awayScore, homeScore, false);
+        });
+
+        for (const [teamName, state] of teamMap) {
+          if (state.games < 1) continue;
+          const rating = buildRating(sport, teamName, state);
+          if (rating) {
+            results.teams[`${sport}:${teamName}`] = rating;
+            teamCount++;
+          }
+          const coach = buildCoaching(sport, teamName, state);
+          if (coach) results.coaching[`${sport}:${teamName}`] = coach;
         }
+      } catch (err) {
+        results.errors.push({ sport, error: err.message });
       }
-
-      // Chunked upsert
-      const chunkSize = 500;
-      for (let i = 0; i < rows.length; i += chunkSize) {
-        const chunk = rows.slice(i, i + chunkSize);
-        try {
-          await fetch(`${url}/rest/v1/players`, {
-            method: 'POST',
-            headers: {
-              apikey: key,
-              Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json',
-              Prefer: 'resolution=merge-duplicates,return=minimal',
-            },
-            body: JSON.stringify(chunk),
-          });
-        } catch (e) {
-          summary.errors.push({ sport, chunk: i, error: e.message });
-        }
-      }
-
-      summary.sports[sport] = { teams: teams.length, players: rows.length };
-      log(`${sport}: wrote ${rows.length} players`);
+      results.counts[sport] = teamCount;
     }
 
-    return summary;
+    persistRatings(results).catch(() => {});
+    return results;
   }
 
-  // ============================================================
-  // ── BUILD ONE TEAM ──
-  // ============================================================
+  function pushGame(map, teamName, teamObj, scored, allowed, wasHome) {
+    if (!map.has(teamName)) {
+      map.set(teamName, {
+        team_id: String(teamObj?.id || teamName),
+        abbr: teamObj?.abbreviation || teamName.slice(0, 3).toUpperCase(),
+        games: 0, pf: 0, pa: 0, wins: 0, losses: 0,
+        homeW: 0, homeL: 0, awayW: 0, awayL: 0,
+        margins: [], closeGames: 0, closeWins: 0,
+      });
+    }
+    const t = map.get(teamName);
+    t.games++;
+    t.pf += scored;
+    t.pa += allowed;
+    t.margins.push(scored - allowed);
+    const won = scored > allowed;
+    if (won) t.wins++; else t.losses++;
+    if (wasHome) { won ? t.homeW++ : t.homeL++; }
+    else { won ? t.awayW++ : t.awayL++; }
+    if (Math.abs(scored - allowed) <= 7) {
+      t.closeGames++;
+      if (won) t.closeWins++;
+    }
+  }
 
-  async function buildTeam(sport, teamId, teamName) {
-    const url = SUPABASE_URL();
-    const key = SUPABASE_KEY();
-    if (!url || !key) throw new Error('Supabase not connected');
+  function buildRating(sport, teamName, state) {
+    const cfg = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
+    const games = state.games;
+    if (games === 0) return null;
 
-    const roster = await fetchTeamRoster(sport, teamId);
-    if (!roster.players.length) return [];
+    const avgPF = state.pf / games;
+    const avgPA = state.pa / games;
+    const avgMOV = (state.pf - state.pa) / games;
 
-    const rows = computeRoster(sport, teamName, roster);
+    const pythRaw = avgPA > 0
+      ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
+      : 0.5;
 
-    await fetch(`${url}/rest/v1/players`, {
-      method: 'POST',
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates,return=minimal',
+    const offenseRaw = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 25, 0, 100);
+    const defenseRaw = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 25, 0, 100);
+    const movRaw = clamp(50 + (avgMOV / cfg.scale) * 25, 0, 100);
+
+    const realWeight = games / (games + cfg.k);
+
+    const offense = clamp(50 + (offenseRaw - 50) * realWeight, 0, 100);
+    const defense = clamp(50 + (defenseRaw - 50) * realWeight, 0, 100);
+    const mov = clamp(50 + (movRaw - 50) * realWeight, 0, 100);
+    const pyth = 0.5 + (pythRaw - 0.5) * realWeight;
+
+    const winPct = state.wins / games;
+    const elo = 1500 + (winPct - 0.5) * 200 + avgMOV * 4;
+
+    const recent = state.margins.slice(-5);
+    const formWeights = [0.10, 0.15, 0.20, 0.25, 0.30];
+    let formScore = 0;
+    recent.forEach((m, i) => {
+      formScore += formWeights[i] * (m / cfg.scale) * 3;
+    });
+    formScore = clamp(formScore * realWeight, -20, 20);
+
+    const overall = round(
+      (pyth * 100 * 0.45) +
+      (offense * 0.20) +
+      (defense * 0.20) +
+      (mov * 0.15),
+      1
+    );
+
+    return {
+      team_id: state.team_id,
+      team_name: teamName,
+      abbr: state.abbr,
+      sport,
+      overall: clamp(overall, 0, 100),
+      offense: round(offense, 1),
+      defense: round(defense, 1),
+      pythagorean: round(pyth, 4),
+      srs: round(avgMOV, 2),
+      elo: Math.round(elo),
+      pace: round(avgPF, 1),
+      record: `${state.wins}-${state.losses}`,
+      home_record: `${state.homeW}-${state.homeL}`,
+      away_record: `${state.awayW}-${state.awayL}`,
+      last5_form: round(formScore, 2),
+      games_played: games,
+      raw_stats: {
+        avgPF: round(avgPF, 2),
+        avgPA: round(avgPA, 2),
+        avgMOV: round(avgMOV, 2),
+        realWeight: round(realWeight, 3),
       },
-      body: JSON.stringify(rows),
+    };
+  }
+
+  function buildCoaching(sport, teamName, state) {
+    const cfg = COACHING_WEIGHTS[sport] || COACHING_WEIGHTS.DEFAULT;
+    const closeWinPct = state.closeGames > 0 ? state.closeWins / state.closeGames : 0.5;
+    const realWeight = state.closeGames / (state.closeGames + 4);
+    const closeShrunk = 0.5 + (closeWinPct - 0.5) * realWeight;
+    const closeComponent = closeShrunk * 100 * 0.6;
+    const halftimeComponent = 50 * 0.4;
+    const overall = round(closeComponent + halftimeComponent, 1);
+
+    return {
+      coach_id: null,
+      coach_name: null,
+      team_id: state.team_id,
+      team_name: teamName,
+      sport,
+      overall: clamp(overall, 0, 100),
+      ats_as_favorite: null,
+      ats_as_underdog: null,
+      halftime_adjustment: 0,
+      close_game_record: round(closeShrunk, 3),
+      primetime_record: null,
+      raw_stats: { closeGames: state.closeGames, closeWins: state.closeWins, halves: 0 },
+      max_adjustment: cfg.maxAdj,
+    };
+  }
+
+  async function computeTeamRating(sport, teamName, teamId, espnEvents) {
+    const teamMap = new Map();
+    (espnEvents || []).forEach(e => {
+      const comp = e.competitions?.[0];
+      if (!comp) return;
+      const us = comp.competitors?.find(c => c.team?.displayName === teamName);
+      const opp = comp.competitors?.find(c => c.team?.displayName !== teamName);
+      if (!us || !opp) return;
+      const score = parseInt(us.score || 0);
+      const oppScore = parseInt(opp.score || 0);
+      if (score === 0 && oppScore === 0) return;
+      pushGame(teamMap, teamName, us.team, score, oppScore, us.homeAway === 'home');
     });
-
-    return rows;
+    const state = teamMap.get(teamName);
+    if (!state) return null;
+    return buildRating(sport, teamName, state);
   }
 
-  // ============================================================
-  // ── FETCH ROSTER FROM ESPN ──
-  // ============================================================
-
-  async function fetchTeamRoster(sport, teamId) {
-    const path = ESPN_MAP[sport];
-    if (!path || !teamId) return { players: [] };
-
-    const urls = [
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/teams/${teamId}/roster`,
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/teams/${teamId}?enable=roster`,
-    ];
-
-    for (const url of urls) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) continue;
-        const data = await res.json();
-        const players = extractAthletes(data);
-        if (players.length) return { players };
-      } catch {}
-    }
-
-    return { players: [] };
-  }
-
-  function extractAthletes(data) {
-    if (!data) return [];
-
-    // ESPN returns a few shapes:
-    // 1) { athletes: [ { fullName, position, ... }, ... ] }
-    // 2) { athletes: [ { position: 'QB', items: [ ... ] }, ... ] }
-    // 3) { team: { athletes: [ ... ] } }
-
-    let list = null;
-    if (Array.isArray(data.athletes)) list = data.athletes;
-    else if (Array.isArray(data.team?.athletes)) list = data.team.athletes;
-    else return [];
-
-    // Grouped form
-    if (list.length && list[0].items) {
-      return list.flatMap(g => g.items || []);
-    }
-
-    return list;
-  }
-
-  // ============================================================
-  // ── COMPUTE PLAYER RATINGS + CONTRIBUTIONS ──
-  // ============================================================
-
-  function computeRoster(sport, teamName, roster) {
-    const groups = POSITION_GROUPS[sport] || {};
-    const weights = POSITION_WEIGHTS[sport] || {};
-    const rows = [];
-
-    // Determine starters: if ESPN provides an explicit starter flag,
-    // use it. Otherwise treat the first player at each position as
-    // the starter, and any player with a non-zero depth chart order
-    // less than 2 as a starter.
-    const startersByPosition = {};
-    roster.players.forEach(p => {
-      const pos = positionAbbrev(p);
-      if (!pos) return;
-      const depth = parseInt(p.depthChartOrder || p.depth || '0', 10);
-      if (!startersByPosition[pos]) startersByPosition[pos] = [];
-      startersByPosition[pos].push({ player: p, depth });
+  async function computeCoachingRating(sport, teamName, teamId, espnEvents) {
+    const teamMap = new Map();
+    (espnEvents || []).forEach(e => {
+      const comp = e.competitions?.[0];
+      if (!comp) return;
+      const us = comp.competitors?.find(c => c.team?.displayName === teamName);
+      const opp = comp.competitors?.find(c => c.team?.displayName !== teamName);
+      if (!us || !opp) return;
+      const score = parseInt(us.score || 0);
+      const oppScore = parseInt(opp.score || 0);
+      if (score === 0 && oppScore === 0) return;
+      pushGame(teamMap, teamName, us.team, score, oppScore, us.homeAway === 'home');
     });
-
-    Object.keys(startersByPosition).forEach(pos => {
-      startersByPosition[pos].sort((a, b) => {
-        // Explicit starter flag wins
-        const sa = a.player.starter === true ? 0 : 1;
-        const sb = b.player.starter === true ? 0 : 1;
-        if (sa !== sb) return sa - sb;
-        // Otherwise sort by depth chart order
-        return (a.depth || 99) - (b.depth || 99);
-      });
-    });
-
-    roster.players.forEach(p => {
-      const name = p.fullName || p.displayName || p.name;
-      const playerId = String(p.id || '');
-      if (!name || !playerId) return;
-
-      const pos = positionAbbrev(p);
-      const group = groups[pos] || 'UNKNOWN';
-      const weight = weights[pos] || 0.25;
-      const experience = parseInt(p.experience?.years ?? p.experience ?? '0', 10) || 0;
-
-      // Starter determination
-      const isStarter = determineStarter(p, pos, startersByPosition);
-
-      // Base rating from available metadata. This is our seed. It will
-      // be refined when per-player stat enrichment is wired.
-      const rating = estimateRating({
-        experience,
-        isStarter,
-        position: pos,
-        group,
-        sport,
-      });
-
-      // Contribution splits: a player contributes to offense and/or
-      // defense based on their position group.
-      const { off, def } = contributionSplit(group, rating, weight);
-
-      rows.push({
-        sport,
-        team_name: teamName,
-        player_id: playerId,
-        name,
-        position: pos || null,
-        position_group: group,
-        jersey: p.jersey || null,
-        rating,
-        offensive_contribution: off,
-        defensive_contribution: def,
-        status: 'active',
-        is_starter: isStarter,
-        updated_at: new Date().toISOString(),
-      });
-    });
-
-    return rows;
+    const state = teamMap.get(teamName);
+    if (!state) return null;
+    return buildCoaching(sport, teamName, state);
   }
 
-  function positionAbbrev(player) {
-    return (
-      player.position?.abbreviation ||
-      player.position?.name ||
-      player.position ||
-      null
-    );
-  }
-
-  function determineStarter(player, pos, startersByPosition) {
-    if (player.starter === true) return true;
-    if (!pos) return false;
-    const list = startersByPosition[pos] || [];
-    if (!list.length) return false;
-    const idx = list.findIndex(e => e.player === player);
-    if (idx === -1) return false;
-    // First or second on the depth chart counts as a starter for
-    // positions that rotate heavily (NBA, MLB, NHL).
-    const starterDepth = ['NBA', 'NCAAB', 'MLB', 'NHL', 'MLS'].includes(player.sport) ? 5 : 2;
-    return idx < starterDepth;
-  }
-
-  // Simple seed rating. 50 = average. Rookies cap lower.
-  function estimateRating({ experience, isStarter, position, group, sport }) {
-    let rating = BASE_RATING;
-
-    if (isStarter) rating += 10;
-
-    // Experience curve
-    if (experience === 0) rating += 0;
-    else if (experience <= 2) rating += 3;
-    else if (experience <= 4) rating += 6;
-    else if (experience <= 7) rating += 8;
-    else if (experience <= 10) rating += 9;
-    else rating += 8; // slight decline beyond a decade
-
-    // Positional scarcity bonus
-    if (['QB', 'PG', 'SP', 'G', 'GK'].includes(position)) rating += 4;
-    else if (['WR', 'CB', 'EDGE', 'SS', 'AM', 'ST'].includes(position)) rating += 2;
-
-    // Rookies cap lower than veterans regardless of the metrics above
-    if (experience === 0) return Math.min(rating, ROOKIE_CEILING);
-
-    return Math.min(rating, VETERAN_CEILING);
-  }
-
-  function contributionSplit(group, rating, weight) {
-    // Offensive groups add to offense. Defensive groups add to defense.
-    // Two-way groups (rare) split evenly.
-    const offenseGroups = new Set([
-      'OFFENSE_SKILL', 'OFFENSE_LINE',
-      'GUARD', 'WING', 'BIG',
-      'PITCHER_START', 'PITCHER_RELIEF',
-      'CATCHER', 'INFIELD', 'OUTFIELD', 'DH',
-      'FORWARD', 'MIDFIELD',
-    ]);
-    const defenseGroups = new Set([
-      'DEFENSE_FRONT', 'DEFENSE_EDGE', 'DEFENSE_MID', 'DEFENSE_SECONDARY',
-      'GOALIE', 'GOALKEEPER', 'DEFENSE',
-    ]);
-
-    const contribution = rating * weight;
-
-    if (offenseGroups.has(group) && defenseGroups.has(group)) {
-      return { off: round(contribution / 2, 2), def: round(contribution / 2, 2) };
-    }
-    if (offenseGroups.has(group)) return { off: round(contribution, 2), def: 0 };
-    if (defenseGroups.has(group)) return { off: 0, def: round(contribution, 2) };
-    // Unknown group — split evenly so we never lose a player entirely
-    return { off: round(contribution / 2, 2), def: round(contribution / 2, 2) };
-  }
-
-  // ============================================================
-  // ── REFRESH (used by the pipeline to keep ratings current) ──
-  // ============================================================
-
-  async function refreshRatings(sport) {
-    const url = SUPABASE_URL();
-    const key = SUPABASE_KEY();
-    if (!url || !key) return { refreshed: 0 };
-
-    const res = await fetch(
-      `${url}/rest/v1/power_ratings?select=team_name,team_id&sport=eq.${sport}`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-    );
-    if (!res.ok) return { refreshed: 0 };
-    const teams = await res.json();
-
-    let count = 0;
-    for (const team of teams) {
-      try {
-        const rows = await buildTeam(sport, team.team_id, team.team_name);
-        count += rows.length;
-      } catch {}
-    }
-    return { refreshed: count };
-  }
-
-  // ============================================================
-  // ── LOOKUP (used by injury fragmentation) ──
-  // ============================================================
-
-  async function getTeamRoster(sport, teamName) {
-    const url = SUPABASE_URL();
-    const key = SUPABASE_KEY();
-    if (!url || !key) return [];
-
+  async function fetchGamesInRange(path, start, end) {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${start}-${end}&limit=1000`;
     try {
-      const res = await fetch(
-        `${url}/rest/v1/players?sport=eq.${sport}&team_name=eq.${encodeURIComponent(teamName)}&select=*`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      return res.ok ? await res.json() : [];
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events || [];
     } catch { return []; }
   }
 
-  // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
-
-  function makeLogger(onProgress) {
-    return (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
+  async function fetchTeamStats(sport) {
+    const path = ESPN_MAP[sport];
+    if (!path) return null;
+    try {
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
+      return res.ok ? await res.json() : null;
+    } catch { return null; }
   }
 
+  function computeDefenseMatchup(sport, homePower, awayPower) {
+    if (!homePower || !awayPower) {
+      return {
+        home_defense_score: 50, away_defense_score: 50,
+        scheme_advantage: 'neutral', adjustment_points: 0,
+        notes: ['Insufficient data'],
+      };
+    }
+    const homeOffVsAwayDef = (homePower.offense + (100 - awayPower.defense)) / 2;
+    const awayOffVsHomeDef = (awayPower.offense + (100 - homePower.defense)) / 2;
+    const differential = homeOffVsAwayDef - awayOffVsHomeDef;
+
+    const conversion = {
+      NFL: 0.06, NBA: 0.08, MLB: 0.02, NHL: 0.015,
+      NCAAF: 0.07, NCAAB: 0.08, MLS: 0.02,
+    }[sport] || 0.05;
+
+    const adjustment = round(differential * conversion, 2);
+    const schemeAdvantage = Math.abs(adjustment) < 0.5 ? 'neutral'
+                          : adjustment > 0 ? 'home' : 'away';
+    return {
+      home_defense_score: round(homeOffVsAwayDef, 1),
+      away_defense_score: round(awayOffVsHomeDef, 1),
+      scheme_advantage: schemeAdvantage,
+      adjustment_points: adjustment,
+      notes: [],
+    };
+  }
+
+  async function computeGamePrior(game, options = {}) {
+    const { homeStats, awayStats, market } = options;
+    if (!homeStats || !awayStats) throw new Error('computeGamePrior requires homeStats and awayStats');
+
+    const sport = game._sport || game.sport;
+    const defenseMatchup = computeDefenseMatchup(sport, homeStats, awayStats);
+
+    const ratingDelta = homeStats.overall - awayStats.overall;
+    const spreadConv = {
+      NFL: -0.28, NBA: -0.28, MLB: -0.08, NHL: -0.05,
+      NCAAF: -0.30, NCAAB: -0.28, MLS: -0.05,
+    }[sport] || -0.28;
+
+    const modelSpread = round(ratingDelta * spreadConv, 2);
+    const marketSpread = market?.current_spread ?? null;
+
+    const coachAdj = homeStats._coach_adj ?? 0;
+    const coachAdjAway = awayStats._coach_adj ?? 0;
+    const coachDelta = coachAdj - coachAdjAway;
+
+    const totalModelSpread = round(
+      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1),
+      2
+    );
+
+    const rawEdge = marketSpread !== null
+      ? round(marketSpread - totalModelSpread, 2)
+      : 0;
+
+    const probShiftPerPoint = {
+      NFL: 0.028, NBA: 0.032, MLB: 0.040, NHL: 0.035,
+      NCAAF: 0.028, NCAAB: 0.032, MLS: 0.040,
+    }[sport] || 0.030;
+
+    const priorHomeProb = clamp(0.5 + (rawEdge * probShiftPerPoint), 0.05, 0.95);
+
+    return {
+      game_id: game.id, sport,
+      home_team: game.home_team, away_team: game.away_team,
+      commence_time: game.commence_time,
+      market: {
+        open_spread: market?.open_spread ?? null,
+        current_spread: marketSpread,
+        total: market?.total ?? null,
+        home_ml: market?.home_ml ?? null,
+        away_ml: market?.away_ml ?? null,
+      },
+      home_power: homeStats,
+      away_power: awayStats,
+      defense_matchup: defenseMatchup,
+      model_spread: totalModelSpread,
+      raw_edge: rawEdge,
+      prior_home_prob: round(priorHomeProb, 4),
+      computed_at: new Date().toISOString(),
+    };
+  }
+
+  async function persistRatings(results) {
+    const url = SUPABASE_URL();
+    const key = SUPABASE_KEY();
+    if (!url || !key) return;
+
+    const teamRows = Object.values(results.teams);
+    const coachRows = Object.values(results.coaching);
+
+    try {
+      // Wipe the table and reinsert fresh — removes off-season sports
+      await fetch(`${url}/rest/v1/power_ratings?sport=not.is.null`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+      await fetch(`${url}/rest/v1/coaching_ratings?sport=not.is.null`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+
+      if (teamRows.length) {
+        await fetch(`${url}/rest/v1/power_ratings`, {
+          method: 'POST',
+          headers: {
+            apikey: key, Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(teamRows),
+        });
+      }
+      if (coachRows.length) {
+        await fetch(`${url}/rest/v1/coaching_ratings`, {
+          method: 'POST',
+          headers: {
+            apikey: key, Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify(coachRows),
+        });
+      }
+    } catch {}
+  }
+
+  async function getPowerRating(sport, teamName) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) return null;
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/power_ratings?sport=eq.${sport}&team_name=eq.${encodeURIComponent(teamName)}&limit=1`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      const rows = res.ok ? await res.json() : [];
+      return rows[0] || null;
+    } catch { return null; }
+  }
+
+  async function getCoachingRating(sport, teamName) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) return null;
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/coaching_ratings?sport=eq.${sport}&team_name=eq.${encodeURIComponent(teamName)}&limit=1`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      const rows = res.ok ? await res.json() : [];
+      return rows[0] || null;
+    } catch { return null; }
+  }
+
+  async function getGamePrior(gameId) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) return null;
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/game_priors?game_id=eq.${encodeURIComponent(gameId)}&limit=1`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      const rows = res.ok ? await res.json() : [];
+      return rows[0] || null;
+    } catch { return null; }
+  }
+
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
+  function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
 
 })();
 
-if (typeof window !== 'undefined') window.EDGE_ROSTER = EDGE_ROSTER;
+if (typeof window !== 'undefined') window.EDGE_POWER = EDGE_POWER;
