@@ -21,6 +21,7 @@
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
+  <script src="roster-engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -285,6 +286,19 @@
       </div>
     </div>
 
+<div class="pipeline-panel">
+  <div class="pipeline-head">
+    <div class="pipeline-title">Build Rosters</div>
+  </div>
+  <div class="pipeline-desc">
+    Fetches every team's roster from ESPN, assigns per-player ratings, computes offensive and defensive contribution. Feeds injury fragmentation.
+  </div>
+  <div class="pipeline-actions single">
+    <button class="pipeline-btn secondary" id="runRosterBtn" onclick="runRosterBuild()">▲ Build Rosters</button>
+  </div>
+  <div class="pipeline-log" id="rosterLog">Idle.</div>
+</div>
+
     <div class="section">
       <div class="sec-title">CONNECTION <em>STATUS</em></div>
       <div class="conn-grid">
@@ -494,6 +508,35 @@
 
     // ── RUN FULL PIPELINE ──
     async function runPipeline() {
+
+async function runRosterBuild() {
+  const btn = document.getElementById('runRosterBtn');
+  const logEl = document.getElementById('rosterLog');
+
+  if (!window.EDGE_ROSTER) {
+    showToast('Roster engine not loaded', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  logEl.textContent = 'Fetching rosters…\n';
+
+  const result = await window.EDGE_ROSTER.buildAll({
+    onProgress: (msg) => {
+      logEl.textContent += msg + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+    },
+  });
+
+  btn.disabled = false;
+
+  if (result.errors.length) {
+    logEl.textContent += `\n${result.errors.length} errors`;
+  }
+  logEl.textContent += `\n✓ ${result.teams_processed} teams · ${result.players_processed} players`;
+
+  showToast(`✓ ${result.players_processed} players rated`, '');
+}
       const btn = document.getElementById('runPipelineBtn');
       const logEl = document.getElementById('pipelineLog');
       const statusEl = document.getElementById('pipelineStatus');
