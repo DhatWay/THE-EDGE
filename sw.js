@@ -4,7 +4,7 @@
 // Network-first at runtime so a reload always gets fresh code.
 // ============================================================
 
-const VERSION = 'edge-v2';
+const VERSION = 'edge-v3';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -31,6 +31,10 @@ const SHELL_FILES = [
   './physics.js',
   './claude.js',
   './context-builder.js',
+  './roster-engine.js',
+  './roster-enrichment.js',
+  './injury-fragmentation.js',
+  './ats-tracker.js',
   './orchestrator.js',
   './learning.js',
   './parlay.js',
