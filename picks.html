@@ -18,6 +18,10 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="context-builder.js"></script>
+  <script src="roster-engine.js"></script>
+  <script src="roster-enrichment.js"></script>
+  <script src="injury-fragmentation.js"></script>
+  <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -96,8 +100,6 @@
     .pick-card.tier-high   { border-left: 3px solid var(--green); }
     .pick-card.tier-solid  { border-left: 3px solid var(--text-mid); }
     .pick-card.tier-lean   { border-left: 3px solid var(--text-dim); }
-    .pick-card.bet-real    { border-left-color: var(--gold); }
-    .pick-card.bet-sim     { border-left-color: var(--blue); }
     .pick-card.vetoed      { opacity: 0.5; }
     .pick-card.passed      { opacity: 0.55; }
 
@@ -136,12 +138,55 @@
     .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
     .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
 
-    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 12px; }
+    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
     .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
     .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
     .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
     .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
     .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
+
+    /* ── CONTEXT PANEL: injuries + ATS + H2H ── */
+    .context-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      border-radius: 2px;
+    }
+    .ctx-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(201,168,76,0.06);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.8px;
+    }
+    .ctx-row:last-child { border-bottom: none; }
+    .ctx-label {
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ctx-value { color: var(--text-mid); text-align: right; font-weight: 600; }
+    .ctx-value .pos { color: var(--green); }
+    .ctx-value .neg { color: var(--red); }
+    .ctx-value .gold { color: var(--gold); }
+    .ctx-value .blue { color: var(--blue); }
+
+    .inj-row { display: flex; gap: 8px; font-size: 11px; padding: 4px 0; align-items: center; }
+    .inj-status { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; padding: 1px 5px; border: 1px solid; min-width: 44px; text-align: center; }
+    .inj-status.out { border-color: rgba(231,76,60,0.5); color: var(--red); }
+    .inj-status.q   { border-color: rgba(201,168,76,0.5); color: var(--gold); }
+    .inj-status.d   { border-color: rgba(231,76,60,0.3); color: var(--red); }
+    .inj-name { color: var(--text-mid); flex: 1; }
+    .inj-pos { color: var(--text-dim); font-size: 10px; }
+    .inj-impact { color: var(--red); font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 1px; }
 
     .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
     .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
@@ -178,63 +223,20 @@
     .toast.blue { background: var(--blue); color: #fff; }
     .toast.red { background: var(--red); color: #fff; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
       --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
     }
-    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
-    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
-      box-shadow: var(--lift);
-      border-radius: 2px;
-      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
-      will-change: transform;
-    }
-    .pick-card, .clv-card, .game-card {
-      box-shadow: var(--lift-gold);
-    }
-    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-      box-shadow: var(--lift-high);
-      transform: translateY(-2px);
-    }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
-    }
+    .pick-card, .stat-card, .game-card, .context-panel { box-shadow: var(--lift); border-radius: 2px; transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease; }
+    .pick-card { box-shadow: var(--lift-gold); }
+    .pick-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
     @media (prefers-reduced-motion: reduce) {
-      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card {
-        transition: none;
-      }
-      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-        transform: none;
-      }
+      .pick-card { transition: none; }
+      .pick-card:hover { transform: none; }
     }
 
-    /* ── OFFLINE BANNER ── */
-    .offline-bar {
-      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
-      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
-      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
-      padding: 7px 20px; text-align: center;
-      transform: translateY(-100%); transition: transform 0.25s ease;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
-    }
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
     .offline-bar.show { transform: translateY(0); }
   </style>
 </head>
@@ -335,6 +337,9 @@
       <button class="fchip" data-filter="bet2u">BET 2U</button>
       <button class="fchip" data-filter="bet1u">BET 1U</button>
       <button class="fchip" data-filter="lean">Lean</button>
+      <button class="fchip" data-filter="hot">ATS Hot</button>
+      <button class="fchip" data-filter="cold">ATS Cold</button>
+      <button class="fchip" data-filter="hurt">Heavy Injuries</button>
       <button class="fchip" data-filter="NFL">NFL</button>
       <button class="fchip" data-filter="NBA">NBA</button>
       <button class="fchip" data-filter="NCAAF">NCAAF</button>
@@ -375,6 +380,7 @@
     let portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
     let currentFilter = 'all';
     let allPicks = [];
+    let contextIndex = {};  // game_id → { injuries, ats, h2h }
 
     function setPortfolio(p) {
       portfolio = p;
@@ -415,6 +421,7 @@
       }
     }
 
+    // ── LOAD PICKS + CONTEXT ──
     async function loadPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -434,6 +441,11 @@
         if (allPicks.length) showToast('Offline — showing last saved picks', '');
       }
       if (!allPicks.length) allPicks = loadCachedPicks();
+
+      // Load context for the teams in today's picks so the cards can
+      // show injury deductions, ATS form, and H2H data.
+      await loadContextIndex();
+
       renderPicks();
     }
 
@@ -444,6 +456,74 @@
       } catch { return []; }
     }
 
+    // ── LOAD CONTEXT FOR TODAY'S TEAMS ──
+    // One query per table, filtered to the teams on today's slate.
+    async function loadContextIndex() {
+      contextIndex = {};
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key || !allPicks.length) return;
+
+      const teamsBySport = {};
+      allPicks.forEach(p => {
+        const s = p.sport;
+        if (!s) return;
+        if (!teamsBySport[s]) teamsBySport[s] = new Set();
+        if (p.home_team) teamsBySport[s].add(p.home_team);
+        if (p.away_team) teamsBySport[s].add(p.away_team);
+      });
+
+      // ATS by team
+      for (const sport of Object.keys(teamsBySport)) {
+        const teams = Array.from(teamsBySport[sport]);
+        if (!teams.length) continue;
+        const inList = teams.map(t => `"${t}"`).join(',');
+        try {
+          const res = await fetch(
+            `${url}/rest/v1/team_ats?sport=eq.${sport}&team_name=in.(${inList})&select=*`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
+          if (res.ok) {
+            const rows = await res.json();
+            rows.forEach(r => {
+              const k = `${sport}:${r.team_name}`;
+              if (!contextIndex[k]) contextIndex[k] = {};
+              contextIndex[k].ats = r;
+            });
+          }
+        } catch {}
+      }
+
+      // H2H by matchup (using each pick's game_id)
+      const gameIds = allPicks.map(p => p.game_id).filter(Boolean);
+      if (gameIds.length) {
+        const inList = gameIds.map(id => `"${id}"`).join(',');
+        try {
+          const res = await fetch(
+            `${url}/rest/v1/matchup_ats?sport=neq.none&select=*&limit=200`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
+          if (res.ok) {
+            const rows = await res.json();
+            allPicks.forEach(p => {
+              if (!p.home_team || !p.away_team) return;
+              const [a, b] = [p.home_team, p.away_team].sort();
+              const match = rows.find(r => r.sport === p.sport && r.team_a === a && r.team_b === b);
+              if (match) {
+                const k = `${p.sport}:${p.home_team}`;
+                if (!contextIndex[k]) contextIndex[k] = {};
+                contextIndex[k].h2h = match;
+              }
+            });
+          }
+        } catch {}
+      }
+
+      // Injuries: read from the last run cache if present (the pipeline
+      // stores them inline in governor_snapshot for each pick).
+    }
+
+    // ── RUN PIPELINE ──
     async function runPipeline() {
       const btn = document.getElementById('runBtn');
       if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'red'); return; }
@@ -498,6 +578,7 @@
       }
     }
 
+    // ── COPY ──
     function copyPicks() {
       const visible = applyFilter(allPicks);
       if (!visible.length) { showToast('No picks to copy', 'red'); return; }
@@ -576,7 +657,46 @@
       if (currentFilter === 'bet2u') return picks.filter(p => p.decision === 'BET_2U' || (p.decision === 'BET' && (p.units || 0) >= 2));
       if (currentFilter === 'bet1u') return picks.filter(p => p.decision === 'BET_1U' || (p.decision === 'BET' && (p.units || 0) < 2));
       if (currentFilter === 'lean')  return picks.filter(p => p.decision === 'LEAN');
+      if (currentFilter === 'hot')   return picks.filter(p => pickHasHotAts(p));
+      if (currentFilter === 'cold')  return picks.filter(p => pickHasColdAts(p));
+      if (currentFilter === 'hurt')  return picks.filter(p => pickHasHeavyInjuries(p));
       return picks.filter(p => p.sport === currentFilter);
+    }
+
+    function pickHasHotAts(p) {
+      const ctx = getPickContext(p);
+      if (!ctx) return false;
+      const ats = ctx.ats;
+      if (!ats) return false;
+      return ats.trend_label === 'heating_up' || (ats.last10_cover_pct >= 0.65);
+    }
+
+    function pickHasColdAts(p) {
+      const ctx = getPickContext(p);
+      if (!ctx) return false;
+      const ats = ctx.ats;
+      if (!ats) return false;
+      return ats.trend_label === 'cooling_off' || (ats.last10_cover_pct != null && ats.last10_cover_pct <= 0.35);
+    }
+
+    function pickHasHeavyInjuries(p) {
+      const ph = p.physics_output || p;
+      const gs = ph.governor_snapshot || p.governor_snapshot || {};
+      // Look for injury family breakdown with a strong "no" vote
+      const bd = gs.breakdown || [];
+      const inj = bd.find(b => b.family === 'injury');
+      if (!inj) return false;
+      return inj.vote === 'no' && inj.confidence >= 0.7;
+    }
+
+    function getPickContext(p) {
+      const homeKey = `${p.sport}:${p.home_team}`;
+      const awayKey = `${p.sport}:${p.away_team}`;
+      return {
+        homeAts: contextIndex[homeKey]?.ats || null,
+        awayAts: contextIndex[awayKey]?.ats || null,
+        h2h: contextIndex[homeKey]?.h2h || null,
+      };
     }
 
     function tier(conf) {
@@ -609,6 +729,7 @@
       list.innerHTML = filtered.map(buildPickCard).join('');
     }
 
+    // ── BUILD PICK CARD ──
     function buildPickCard(p) {
       const conf = p.confidence || 0;
       const t = tier(conf);
@@ -642,10 +763,18 @@
           new Date(p.commence_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '—';
 
-      const breakdown = p.governor_snapshot?.breakdown || [];
-      const familyChips = breakdown.map(b =>
-        `<span class="family-chip ${b.vote}">${(b.family || '').replace('_',' ')} ${b.vote === 'yes' ? '▲' : b.vote === 'no' ? '▼' : '●'}</span>`
-      ).join('');
+      // Family chips from governor snapshot
+      const ph = p.physics_output || p;
+      const gs = p.governor_snapshot || ph.governor_snapshot || {};
+      const breakdown = gs.breakdown || [];
+      const familyChips = breakdown.map(b => {
+        const vote = b.vote === 'yes' ? '▲' : b.vote === 'no' ? '▼' : '●';
+        const label = (b.family || '').replace('_', ' ');
+        return `<span class="family-chip ${b.vote}">${label} ${vote}</span>`;
+      }).join('');
+
+      // Context panel: injuries, ATS, H2H
+      const contextPanel = buildContextPanel(p);
 
       const claudeNote = isAi && p.claude_output
         ? `<div class="claude-note">
@@ -733,13 +862,14 @@
             <div class="cons-row">
               <span class="cons-lbl">Consensus</span>
               <div class="cons-track">
-                <div class="cons-fill" style="width:${Math.min(Math.abs((p.governor_snapshot?.consensus_score || 0) * 100), 100)}%"></div>
+                <div class="cons-fill" style="width:${Math.min(Math.abs((gs.consensus_score || 0) * 100), 100)}%"></div>
               </div>
-              <span class="cons-num">${((p.governor_snapshot?.consensus_score || 0) * 100).toFixed(0)}%</span>
+              <span class="cons-num">${((gs.consensus_score || 0) * 100).toFixed(0)}%</span>
             </div>
 
             <div class="family-mini">${familyChips}</div>
 
+            ${contextPanel}
             ${claudeNote}
 
             <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
@@ -751,6 +881,63 @@
         </div>`;
     }
 
+    // ── CONTEXT PANEL: injuries + ATS + H2H ──
+    function buildContextPanel(p) {
+      const ctx = getPickContext(p);
+      const ph = p.physics_output || p;
+      const gs = p.governor_snapshot || ph.governor_snapshot || {};
+      const bd = gs.breakdown || [];
+
+      const rows = [];
+
+      // ── ATS form ──
+      const homeAts = ctx.homeAts;
+      const awayAts = ctx.awayAts;
+
+      if (homeAts || awayAts) {
+        rows.push(`<div class="ctx-row"><span class="ctx-label">ATS Form</span><span class="ctx-value">${formatAtsCompare(p, homeAts, awayAts)}</span></div>`);
+      }
+
+      // ── H2H ──
+      if (ctx.h2h && ctx.h2h.meetings >= 3) {
+        const homeIsA = ctx.h2h.team_a === p.home_team;
+        const homeCover = homeIsA ? ctx.h2h.team_a_cover_pct : ctx.h2h.team_b_cover_pct;
+        const awayCover = homeIsA ? ctx.h2h.team_b_cover_pct : ctx.h2h.team_a_cover_pct;
+        if (homeCover != null && awayCover != null) {
+          rows.push(`<div class="ctx-row"><span class="ctx-label">H2H (${ctx.h2h.meetings})</span><span class="ctx-value">Home <span class="gold">${(homeCover*100).toFixed(0)}%</span> · Away ${(awayCover*100).toFixed(0)}%</span></div>`);
+        }
+      }
+
+      // ── Injury impact ──
+      const inj = bd.find(b => b.family === 'injury');
+      if (inj && inj.vote !== 'neu') {
+        const data = inj.data || {};
+        const homeImp = data.home_impact != null ? data.home_impact.toFixed(1) : '—';
+        const awayImp = data.away_impact != null ? data.away_impact.toFixed(1) : '—';
+        const netImp = data.net_impact != null ? data.net_impact.toFixed(1) : '—';
+        const netCls = netImp > 0 ? 'pos' : netImp < 0 ? 'neg' : '';
+        const src = data.source === 'roster' ? ' · roster' : '';
+        rows.push(`<div class="ctx-row"><span class="ctx-label">Injuries${src}</span><span class="ctx-value">Home -${homeImp} · Away -${awayImp} · Net <span class="${netCls}">${netImp > 0 ? '+' : ''}${netImp}</span></span></div>`);
+      }
+
+      if (!rows.length) return '';
+
+      return `<div class="context-panel">${rows.join('')}</div>`;
+    }
+
+    function formatAtsCompare(p, homeAts, awayAts) {
+      const homeSide = `${p.home_team?.split(' ').slice(-1)[0] || 'Home'} `;
+      const awaySide = `${p.away_team?.split(' ').slice(-1)[0] || 'Away'} `;
+      const homeStr = homeAts && homeAts.last10_cover_pct != null
+        ? `<span class="${homeAts.last10_cover_pct >= 0.6 ? 'pos' : homeAts.last10_cover_pct <= 0.4 ? 'neg' : ''}">${(homeAts.last10_cover_pct*100).toFixed(0)}%</span>`
+        : '—';
+      const awayStr = awayAts && awayAts.last10_cover_pct != null
+        ? `<span class="${awayAts.last10_cover_pct >= 0.6 ? 'pos' : awayAts.last10_cover_pct <= 0.4 ? 'neg' : ''}">${(awayAts.last10_cover_pct*100).toFixed(0)}%</span>`
+        : '—';
+      return `${homeSide} ${homeStr} · ${awaySide} ${awayStr}`;
+    }
+
+    // ── PLACE BET ──
     async function placeBet(mode, pickId) {
       const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
       if (!pick) return;
@@ -879,7 +1066,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
