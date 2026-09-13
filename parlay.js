@@ -96,8 +96,71 @@ const EDGE_PARLAY = (() => {
     },
   ];
 
+  // ── HEAD-TO-HEAD TRENDS ──
+  // These are evaluated against matchup_ats — the actual meeting
+  // history between the two teams on the ticket, not a league-wide
+  // pattern. A pairing has to clear MIN_H2H_MEETINGS before any of
+  // them count.
+  const MIN_H2H_MEETINGS = 4;
+  const H2H_EDGE = 0.65;   // cover rate that makes a series trend real
+
+  const H2H_TRENDS = [
+    {
+      id: 'h2h_home_owns_series',
+      label: 'Home side owns this series ATS',
+      test: h => h.home_cover_pct != null && h.home_cover_pct >= H2H_EDGE,
+      describe: h => `Home team has covered ${pctText(h.home_cover_pct)} of the last ${h.meetings} meetings`,
+      side: 'home',
+    },
+    {
+      id: 'h2h_away_owns_series',
+      label: 'Road side owns this series ATS',
+      test: h => h.away_cover_pct != null && h.away_cover_pct >= H2H_EDGE,
+      describe: h => `Road team has covered ${pctText(h.away_cover_pct)} of the last ${h.meetings} meetings`,
+      side: 'away',
+    },
+    {
+      id: 'h2h_series_stays_close',
+      label: 'This series stays inside the number',
+      test: h => h.avg_home_cover_margin != null && Math.abs(h.avg_home_cover_margin) <= 2.5,
+      describe: h => `Average result lands ${Math.abs(h.avg_home_cover_margin)} from the spread`,
+      side: 'any',
+    },
+    {
+      id: 'h2h_series_goes_over',
+      label: 'This series goes over',
+      test: h => h.over_pct != null && h.over_pct >= H2H_EDGE && (h.overs + h.unders) >= MIN_H2H_MEETINGS,
+      describe: h => `${h.overs} of the last ${h.overs + h.unders} meetings went over`,
+      side: 'any',
+    },
+    {
+      id: 'h2h_series_goes_under',
+      label: 'This series goes under',
+      test: h => h.over_pct != null && h.over_pct <= (1 - H2H_EDGE) && (h.overs + h.unders) >= MIN_H2H_MEETINGS,
+      describe: h => `${h.unders} of the last ${h.overs + h.unders} meetings went under`,
+      side: 'any',
+    },
+    {
+      id: 'h2h_su_dominance',
+      label: 'One side dominates outright',
+      test: h => {
+        const total = (h.home_su_wins || 0) + (h.away_su_wins || 0);
+        if (total < MIN_H2H_MEETINGS) return false;
+        return Math.max(h.home_su_wins || 0, h.away_su_wins || 0) / total >= 0.75;
+      },
+      describe: h => {
+        const total = (h.home_su_wins || 0) + (h.away_su_wins || 0);
+        const leader = (h.home_su_wins || 0) >= (h.away_su_wins || 0) ? 'Home' : 'Road';
+        return `${leader} side has won ${Math.max(h.home_su_wins || 0, h.away_su_wins || 0)} of ${total} outright`;
+      },
+      side: 'any',
+    },
+  ];
+
   return {
     scoreTrends,
+    matchupTrends,
+    attachMatchupTrends,
     buildTrendBets,
     buildParlay,
     parlayOdds,
@@ -105,6 +168,8 @@ const EDGE_PARLAY = (() => {
     TRENDS,
     TREND_MIN_SAMPLE,
     TREND_MIN_HIT_RATE,
+    H2H_TRENDS,
+    MIN_H2H_MEETINGS,
   };
 
   // ============================================================
@@ -183,6 +248,88 @@ const EDGE_PARLAY = (() => {
   // into a correlation-safe parlay.
   // ============================================================
 
+  // ============================================================
+  // ── HEAD-TO-HEAD ──
+  // Every trend that actually occurred in the historical meetings
+  // between these two teams, with the meeting log behind it.
+  // ============================================================
+
+  async function matchupTrends(sport, homeTeam, awayTeam) {
+    if (!window.EDGE_ATS || typeof window.EDGE_ATS.getMatchupHistory !== 'function') {
+      return { available: false, reason: 'ATS tracker not loaded', trends: [], h2h: null };
+    }
+
+    const h2h = await window.EDGE_ATS.getMatchupHistory(sport, homeTeam, awayTeam);
+    if (!h2h) {
+      return { available: false, reason: 'No meeting history on file', trends: [], h2h: null };
+    }
+    if ((h2h.meetings || 0) < MIN_H2H_MEETINGS) {
+      return {
+        available: false,
+        reason: `Only ${h2h.meetings} meeting${h2h.meetings === 1 ? '' : 's'} on file — needs ${MIN_H2H_MEETINGS}`,
+        trends: [], h2h,
+      };
+    }
+
+    const hit = [];
+    H2H_TRENDS.forEach(t => {
+      let passes = false;
+      try { passes = !!t.test(h2h); } catch { passes = false; }
+      if (!passes) return;
+      hit.push({
+        id: t.id,
+        label: t.label,
+        detail: safeDescribe(t, h2h),
+        side: t.side,
+        meetings: h2h.meetings,
+      });
+    });
+
+    return {
+      available: true,
+      trends: hit,
+      h2h,
+      meetings: h2h.meetings,
+      last_meeting: h2h.last_meeting_date || null,
+      recent_meetings: h2h.recent_meetings || [],
+    };
+  }
+
+  // Attach series history to a list of picks in one pass, so a page
+  // can render every ticket's H2H without N round trips of its own.
+  async function attachMatchupTrends(picks) {
+    const unique = new Map();
+    picks.forEach(p => {
+      const home = p.home_team, away = p.away_team, sport = p.sport;
+      if (!home || !away || !sport) return;
+      const key = `${sport}:${[home, away].sort().join('|')}`;
+      if (!unique.has(key)) unique.set(key, { sport, home, away, picks: [] });
+      unique.get(key).picks.push(p);
+    });
+
+    const entries = Array.from(unique.values());
+    const results = await Promise.all(
+      entries.map(e => matchupTrends(e.sport, e.home, e.away).catch(() => null))
+    );
+
+    entries.forEach((entry, i) => {
+      const res = results[i];
+      entry.picks.forEach(p => { p.matchup_trends = res; });
+    });
+
+    return picks;
+  }
+
+  function safeDescribe(trend, h2h) {
+    try {
+      return typeof trend.describe === 'function' ? trend.describe(h2h) : String(trend.describe || '');
+    } catch { return ''; }
+  }
+
+  function pctText(v) {
+    return v == null ? '—' : `${Math.round(v * 100)}%`;
+  }
+
   async function buildTrendBets(todaysPicks, options = {}) {
     const {
       maxLegs = MAX_LEGS,
@@ -195,12 +342,17 @@ const EDGE_PARLAY = (() => {
     const active = scores.filter(t => t.qualified);
     const out = [];
 
+    // Load the meeting history for every game on today's board once,
+    // up front. Legs then carry the series trends that produced them.
+    const playable = todaysPicks.filter(p =>
+      p.decision && p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED');
+    try { await attachMatchupTrends(playable); } catch {}
+
     for (const score of active) {
       const trend = TRENDS.find(t => t.id === score.id);
       if (!trend) continue;
 
-      const eligible = todaysPicks
-        .filter(p => p.decision && p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED')
+      const eligible = playable
         .filter(p => num(p.confidence) >= minLegConfidence)
         .filter(p => { try { return trend.test(p); } catch { return false; } });
 
@@ -210,6 +362,39 @@ const EDGE_PARLAY = (() => {
       const parlay = buildParlay(legs, { trendId: score.id, trendLabel: score.label });
       parlay.trend = score;
       out.push(parlay);
+    }
+
+    // A ticket built purely from series history: every leg is a game
+    // where the two teams' own meeting record points the same way the
+    // model does. This is the head-to-head trend bet.
+    const h2hBacked = playable
+      .filter(p => num(p.confidence) >= minLegConfidence)
+      .filter(p => {
+        const mt = p.matchup_trends;
+        if (!mt?.available) return false;
+        return (mt.trends || []).some(t => t.side === 'any' || t.side === p.direction);
+      });
+
+    if (h2hBacked.length >= minLegs) {
+      const legs = selectUncorrelatedLegs(h2hBacked, maxLegs);
+      if (legs.length >= minLegs) {
+        const parlay = buildParlay(legs, {
+          trendId: 'h2h_series_backed',
+          trendLabel: 'Series history backs every leg',
+        });
+        // No league-wide sample behind this one — its evidence is the
+        // meeting log on each leg, which is reported per leg.
+        parlay.trend = {
+          id: 'h2h_series_backed',
+          label: 'Series history backs every leg',
+          describe: 'Each leg is a matchup whose own head-to-head record points the same way the model does',
+          sample: legs.reduce((s, l) => s + (l.h2h_meetings || 0), 0),
+          hit_rate: null, roi: null, qualified: true,
+          status: 'Head-to-head',
+          source: 'h2h',
+        };
+        out.push(parlay);
+      }
     }
 
     // Several trends often select the same legs. Keep one copy of each
@@ -258,10 +443,21 @@ const EDGE_PARLAY = (() => {
       const odds = legOdds(p);
       const modelProb = legProbability(p);
       const marketProb = americanToImplied(odds);
+      const mt = p.matchup_trends || null;
+      // Series trends that point the same way the model does.
+      const agreeing = (mt?.trends || []).filter(t =>
+        t.side === 'any' || t.side === p.direction);
+
       return {
         pick_id: p.pick_id || p.game_id,
         game_id: p.game_id,
         sport: p.sport,
+        h2h_meetings: mt?.meetings ?? 0,
+        h2h_trends: (mt?.trends || []).map(t => t.label),
+        h2h_supporting: agreeing.map(t => ({ label: t.label, detail: t.detail })),
+        h2h_last_meeting: mt?.last_meeting || null,
+        h2h_log: mt?.recent_meetings || [],
+        h2h_note: mt?.available ? null : (mt?.reason || 'No series history'),
         matchup: `${p.away_team || 'Away'} @ ${p.home_team || 'Home'}`,
         side: p.side_team || (p.direction === 'home' ? p.home_team : p.away_team) || p.direction,
         direction: p.direction,
