@@ -18,6 +18,10 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="context-builder.js"></script>
+  <script src="roster-engine.js"></script>
+  <script src="roster-enrichment.js"></script>
+  <script src="injury-fragmentation.js"></script>
+  <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -158,6 +162,16 @@
     @media (min-width: 640px) {
       .controls { grid-template-columns: repeat(4, 1fr); }
     }
+
+    /* ── SERIES HISTORY ── */
+    .h2h-block { padding: 10px 16px 12px; border-bottom: 1px solid rgba(201,168,76,0.07); background: rgba(201,168,76,0.025); }
+    .h2h-head { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--gold-dim); margin-bottom: 6px; }
+    .h2h-item { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--text-mid); font-weight: 300; line-height: 1.45; margin-bottom: 3px; }
+    .h2h-item .mark { color: var(--gold); flex-shrink: 0; }
+    .h2h-item b { color: var(--text); font-weight: 600; }
+    .h2h-empty { font-size: 12px; color: var(--text-dim); font-weight: 300; font-style: italic; }
+    .h2h-log { margin-top: 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 0.5px; color: var(--text-dim); }
+    .h2h-log span { color: var(--text-mid); }
   </style>
 </head>
 <body>
@@ -477,6 +491,7 @@
               <span class="parlay-verdict ${verdictCls}">${p.verdict}</span>
             </div>
             ${legs}
+            ${renderSeriesHistory(p)}
             <div class="parlay-metrics">
               <div class="pm"><div class="pm-v gold">${(p.model_probability * 100).toFixed(1)}%</div><div class="pm-l">Model</div></div>
               <div class="pm"><div class="pm-v">${(p.market_probability * 100).toFixed(1)}%</div><div class="pm-l">Market</div></div>
@@ -492,6 +507,40 @@
             </div>
           </div>`;
       }).join('');
+    }
+
+
+    // ── SERIES HISTORY ──
+    // Every trend that actually happened in the historical meetings
+    // between the two teams on each leg.
+    function renderSeriesHistory(p) {
+      const withHistory = p.legs.filter(l => (l.h2h_meetings || 0) > 0);
+      if (!withHistory.length) {
+        const note = p.legs.find(l => l.h2h_note)?.h2h_note || 'No meeting history on file';
+        return `<div class="h2h-block">
+          <div class="h2h-head">Series history</div>
+          <div class="h2h-empty">${note} — run Build ATS in Admin to populate it.</div>
+        </div>`;
+      }
+
+      const rows = withHistory.map(l => {
+        const trends = (l.h2h_supporting || []);
+        const header = `<div class="h2h-item"><span class="mark">◆</span><span><b>${l.side}</b> · ${l.h2h_meetings} meetings${l.h2h_last_meeting ? ' · last ' + l.h2h_last_meeting.slice(0, 10) : ''}</span></div>`;
+        if (!trends.length) {
+          return header + `<div class="h2h-item" style="padding-left:16px;"><span class="h2h-empty">No series trend backs this side</span></div>`;
+        }
+        const items = trends.map(t =>
+          `<div class="h2h-item" style="padding-left:16px;"><span class="mark">·</span><span><b>${t.label}</b> — ${t.detail}</span></div>`
+        ).join('');
+
+        const log = (l.h2h_log || []).slice(-3).map(g =>
+          `<span>${g.date}</span> ${g.away} @ ${g.home} ${g.score}${g.spread != null ? ' (' + (g.spread > 0 ? '+' : '') + g.spread + ')' : ''}`
+        ).join(' &nbsp;·&nbsp; ');
+
+        return header + items + (log ? `<div class="h2h-log">${log}</div>` : '');
+      }).join('');
+
+      return `<div class="h2h-block"><div class="h2h-head">Series history</div>${rows}</div>`;
     }
 
     function parlayKey(p) {
