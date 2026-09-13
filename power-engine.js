@@ -1,6 +1,7 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v3.2
-// Season-aware: skips out-of-season sports entirely
+// EDGE — POWER RATINGS ENGINE v4.0
+// Regular season only · chunked fetch (no silent truncation)
+// Opponent-adjusted SRS · sequential Elo · draws handled
 // ============================================================
 
 const EDGE_POWER = (() => {
@@ -18,27 +19,41 @@ const EDGE_POWER = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // ── SEASON WINDOWS (month/day ranges) ──
-  // Only sports whose window contains today get computed.
+  // ── SEASON WINDOWS (month/day) ──
+  // Only sports whose window contains today get computed. The start date is
+  // also the earliest date we pull games from, so last season never bleeds in.
   const SEASON_WINDOWS = {
-    NFL:   { start: [9, 1],   end: [2, 15]  },   // Sep 1 → Feb 15
-    NBA:   { start: [10, 15], end: [6, 30]  },   // Oct 15 → Jun 30
-    MLB:   { start: [3, 20],  end: [11, 5]  },   // Mar 20 → Nov 5
-    NHL:   { start: [10, 1],  end: [6, 30]  },   // Oct 1 → Jun 30
-    NCAAF: { start: [8, 15],  end: [1, 15]  },   // Aug 15 → Jan 15
-    NCAAB: { start: [11, 1],  end: [4, 10]  },   // Nov 1 → Apr 10
-    MLS:   { start: [2, 20],  end: [12, 15] },   // Feb 20 → Dec 15
+    NFL:   { start: [9, 1],   end: [2, 15]  },
+    NBA:   { start: [10, 15], end: [6, 30]  },
+    MLB:   { start: [3, 20],  end: [11, 5]  },
+    NHL:   { start: [10, 1],  end: [6, 30]  },
+    NCAAF: { start: [8, 15],  end: [1, 15]  },
+    NCAAB: { start: [11, 1],  end: [4, 10]  },
+    MLS:   { start: [2, 20],  end: [12, 15] },
   };
 
-  const SPORT_CONFIG = {
-    NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22, k: 8  },
-    NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 18, k: 15 },
-    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 3,  k: 20 },
-    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 2,  k: 15 },
-    NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 32, k: 6  },
-    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 20, k: 10 },
-    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1.2, k: 15 },
+  // Days per ESPN request. ESPN caps a scoreboard response at ~1000 events,
+  // so high-volume sports need narrower windows or games vanish silently.
+  const CHUNK_DAYS = {
+    NFL: 30, NCAAF: 21, MLS: 30,
+    MLB: 14, NBA: 14, NHL: 14,
+    NCAAB: 5,
   };
+
+  const MAX_CHUNKS = 40; // hard stop so a bad date can't spin forever
+
+  const SPORT_CONFIG = {
+    NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22,  k: 8,  movCap: 28, eloK: 20, eloHFA: 55  },
+    NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 18,  k: 15, movCap: 25, eloK: 20, eloHFA: 100 },
+    MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 3,   k: 20, movCap: 8,  eloK: 6,  eloHFA: 25  },
+    NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 2,   k: 15, movCap: 4,  eloK: 8,  eloHFA: 35  },
+    NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 32,  k: 6,  movCap: 35, eloK: 25, eloHFA: 65  },
+    NCAAB: { avgPF: 72,  avgPA: 72,  pyExp: 10.0,  scale: 20,  k: 10, movCap: 22, eloK: 25, eloHFA: 100 },
+    MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1.2, k: 15, movCap: 3,  eloK: 20, eloHFA: 60  },
+  };
+
+  // Sports where a regulation draw is a real outcome.
+  const DRAWS_POSSIBLE = new Set(['MLS', 'NFL', 'NCAAF']);
 
   const COACHING_WEIGHTS = {
     NFL:   { halftime: 1.5, close: 0.7, maxAdj: 3.5 },
@@ -48,7 +63,10 @@ const EDGE_POWER = (() => {
     DEFAULT: { halftime: 0.8, close: 0.5, maxAdj: 2.5 },
   };
 
-  const LOOKBACK_DAYS = 150;
+  // Margin that counts as a "close game" for the coaching rating.
+  const CLOSE_MARGIN = { NFL: 7, NCAAF: 7, NBA: 5, NCAAB: 5, MLB: 1, NHL: 1, MLS: 1, DEFAULT: 5 };
+
+  const MAX_LOOKBACK_DAYS = 400;
 
   return {
     computeGamePrior,
@@ -61,73 +79,79 @@ const EDGE_POWER = (() => {
     getCoachingRating,
     getGamePrior,
     isSportInSeason,
+    seasonStart,
     SPORT_CONFIG,
     ESPN_MAP,
     SEASON_WINDOWS,
   };
 
-  // ── Season check ──
+  // ============================================================
+  // ── SEASON HELPERS ──
+  // ============================================================
+
   function isSportInSeason(sport, date = new Date()) {
     const w = SEASON_WINDOWS[sport];
     if (!w) return true;
-    const m = date.getMonth() + 1;
-    const d = date.getDate();
-    const now = m * 100 + d;
+    const now = (date.getMonth() + 1) * 100 + date.getDate();
     const start = w.start[0] * 100 + w.start[1];
     const end = w.end[0] * 100 + w.end[1];
-
-    // Handle wrap-around seasons (e.g. NFL Sep→Feb, NHL Oct→Jun)
-    if (start <= end) {
-      return now >= start && now <= end;
-    }
+    if (start <= end) return now >= start && now <= end;
     return now >= start || now <= end;
   }
 
-  async function computeAllTeamRatings() {
-    const results = { teams: {}, coaching: {}, errors: [], counts: {}, skipped: [] };
+  // The most recent occurrence of this sport's season start, at or before now.
+  function seasonStart(sport, now = new Date()) {
+    const w = SEASON_WINDOWS[sport];
+    if (!w) return new Date(now.getTime() - MAX_LOOKBACK_DAYS * 86400000);
 
-    const end = new Date();
-    const start = new Date(end.getTime() - LOOKBACK_DAYS * 86400000);
-    const startStr = fmtDate(start);
-    const endStr = fmtDate(end);
+    const [m, d] = w.start;
+    let candidate = new Date(now.getFullYear(), m - 1, d);
+    if (candidate > now) candidate = new Date(now.getFullYear() - 1, m - 1, d);
+
+    const floor = new Date(now.getTime() - MAX_LOOKBACK_DAYS * 86400000);
+    return candidate < floor ? floor : candidate;
+  }
+
+  // ============================================================
+  // ── MAIN ──
+  // ============================================================
+
+  async function computeAllTeamRatings() {
+    const results = {
+      teams: {}, coaching: {}, errors: [], counts: {},
+      skipped: [], games_used: {}, window: {},
+    };
+
+    const now = new Date();
 
     for (const [sport, path] of Object.entries(ESPN_MAP)) {
-      // Skip out-of-season sports
-      if (!isSportInSeason(sport)) {
+      if (!isSportInSeason(sport, now)) {
         results.skipped.push(sport);
         results.counts[sport] = 0;
         continue;
       }
 
+      const start = seasonStart(sport, now);
+      results.window[sport] = { from: fmtDate(start), to: fmtDate(now) };
+
       let teamCount = 0;
       try {
-        const events = await fetchGamesInRange(path, startStr, endStr);
+        const events = await fetchSeasonEvents(sport, path, start, now);
+        results.games_used[sport] = events.length;
         if (!events.length) { results.counts[sport] = 0; continue; }
 
-        const teamMap = new Map();
+        const { teamMap, chronological } = buildTeamStates(sport, events);
+        if (!teamMap.size) { results.counts[sport] = 0; continue; }
 
-        events.forEach(e => {
-          const comp = e.competitions?.[0];
-          if (!comp) return;
-          const home = comp.competitors?.find(c => c.homeAway === 'home');
-          const away = comp.competitors?.find(c => c.homeAway === 'away');
-          if (!home || !away) return;
-
-          const homeName = home.team?.displayName;
-          const awayName = away.team?.displayName;
-          if (!homeName || !awayName) return;
-
-          const homeScore = parseInt(home.score || '0');
-          const awayScore = parseInt(away.score || '0');
-          if (homeScore === 0 && awayScore === 0) return;
-
-          pushGame(teamMap, homeName, home.team, homeScore, awayScore, true);
-          pushGame(teamMap, awayName, away.team, awayScore, homeScore, false);
-        });
+        const srsMap = computeSRS(sport, teamMap);
+        const eloMap = computeElo(sport, chronological);
 
         for (const [teamName, state] of teamMap) {
           if (state.games < 1) continue;
-          const rating = buildRating(sport, teamName, state);
+          const rating = buildRating(sport, teamName, state, {
+            srs: srsMap[teamName],
+            elo: eloMap[teamName],
+          });
           if (rating) {
             results.teams[`${sport}:${teamName}`] = rating;
             teamCount++;
@@ -145,14 +169,128 @@ const EDGE_POWER = (() => {
     return results;
   }
 
-  function pushGame(map, teamName, teamObj, scored, allowed, wasHome) {
+  // ============================================================
+  // ── FETCH ──
+  // Chunked so ESPN's ~1000-event response cap never truncates a
+  // season, and filtered to completed regular/post season games so
+  // preseason results never reach the ratings.
+  // ============================================================
+
+  async function fetchSeasonEvents(sport, path, start, end) {
+    const chunkDays = CHUNK_DAYS[sport] || 21;
+    const windows = [];
+
+    let cursor = new Date(start);
+    let guard = 0;
+    while (cursor < end && guard < MAX_CHUNKS) {
+      const chunkEnd = new Date(Math.min(cursor.getTime() + chunkDays * 86400000, end.getTime()));
+      windows.push([new Date(cursor), chunkEnd]);
+      cursor = new Date(chunkEnd.getTime() + 86400000);
+      guard++;
+    }
+
+    const batches = await Promise.all(
+      windows.map(([a, b]) => fetchGamesInRange(path, fmtDate(a), fmtDate(b)))
+    );
+
+    const byId = new Map();
+    batches.flat().forEach(e => {
+      if (!e || !e.id) return;
+      if (!isRatableEvent(e)) return;
+      if (!byId.has(e.id)) byId.set(e.id, e);
+    });
+
+    return Array.from(byId.values())
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+  }
+
+  // Preseason is season type 1. Only completed regular (2) and
+  // postseason (3) games are allowed to move a rating.
+  function isRatableEvent(e) {
+    const type = e.season?.type ?? e.competitions?.[0]?.season?.type;
+    if (type === 1) return false;
+    if (typeof type === 'number' && type !== 2 && type !== 3) return false;
+
+    const comp = e.competitions?.[0];
+    if (!comp) return false;
+    if (comp.status?.type?.completed !== true) return false;
+
+    const competitors = comp.competitors || [];
+    if (competitors.length < 2) return false;
+    if (competitors.some(c => c.score === null || c.score === undefined || c.score === '')) return false;
+
+    return true;
+  }
+
+  async function fetchGamesInRange(path, start, end) {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${start}-${end}&limit=1000&seasontype=2`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events || [];
+    } catch { return []; }
+  }
+
+  async function fetchTeamStats(sport) {
+    const path = ESPN_MAP[sport];
+    if (!path) return null;
+    try {
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
+      return res.ok ? await res.json() : null;
+    } catch { return null; }
+  }
+
+  // ============================================================
+  // ── TEAM STATE ──
+  // ============================================================
+
+  function buildTeamStates(sport, events) {
+    const teamMap = new Map();
+    const chronological = [];
+
+    events.forEach(e => {
+      const comp = e.competitions?.[0];
+      if (!comp) return;
+      const home = comp.competitors?.find(c => c.homeAway === 'home');
+      const away = comp.competitors?.find(c => c.homeAway === 'away');
+      if (!home || !away) return;
+
+      const homeName = home.team?.displayName;
+      const awayName = away.team?.displayName;
+      if (!homeName || !awayName) return;
+
+      const homeScore = parseInt(home.score, 10);
+      const awayScore = parseInt(away.score, 10);
+      if (!isFinite(homeScore) || !isFinite(awayScore)) return;
+
+      // A neutral-site game gets no home edge in the Elo pass.
+      const neutral = comp.neutralSite === true;
+
+      pushGame(sport, teamMap, homeName, home.team, homeScore, awayScore, true, awayName);
+      pushGame(sport, teamMap, awayName, away.team, awayScore, homeScore, false, homeName);
+
+      chronological.push({
+        date: e.date,
+        home: homeName, away: awayName,
+        homeScore, awayScore, neutral,
+      });
+    });
+
+    return { teamMap, chronological };
+  }
+
+  function pushGame(sport, map, teamName, teamObj, scored, allowed, wasHome, oppName) {
     if (!map.has(teamName)) {
       map.set(teamName, {
         team_id: String(teamObj?.id || teamName),
         abbr: teamObj?.abbreviation || teamName.slice(0, 3).toUpperCase(),
-        games: 0, pf: 0, pa: 0, wins: 0, losses: 0,
-        homeW: 0, homeL: 0, awayW: 0, awayL: 0,
-        margins: [], closeGames: 0, closeWins: 0,
+        games: 0, pf: 0, pa: 0,
+        wins: 0, losses: 0, draws: 0,
+        homeW: 0, homeL: 0, homeD: 0,
+        awayW: 0, awayL: 0, awayD: 0,
+        margins: [], opponents: [],
+        closeGames: 0, closeWins: 0,
       });
     }
     const t = map.get(teamName);
@@ -160,17 +298,110 @@ const EDGE_POWER = (() => {
     t.pf += scored;
     t.pa += allowed;
     t.margins.push(scored - allowed);
-    const won = scored > allowed;
-    if (won) t.wins++; else t.losses++;
-    if (wasHome) { won ? t.homeW++ : t.homeL++; }
-    else { won ? t.awayW++ : t.awayL++; }
-    if (Math.abs(scored - allowed) <= 7) {
+    if (oppName) t.opponents.push(oppName);
+
+    if (scored > allowed) {
+      t.wins++;
+      wasHome ? t.homeW++ : t.awayW++;
+    } else if (scored < allowed) {
+      t.losses++;
+      wasHome ? t.homeL++ : t.awayL++;
+    } else {
+      t.draws++;
+      wasHome ? t.homeD++ : t.awayD++;
+    }
+
+    const closeBy = CLOSE_MARGIN[sport] ?? CLOSE_MARGIN.DEFAULT;
+    if (Math.abs(scored - allowed) <= closeBy) {
       t.closeGames++;
-      if (won) t.closeWins++;
+      if (scored > allowed) t.closeWins++;
     }
   }
 
-  function buildRating(sport, teamName, state) {
+  // ============================================================
+  // ── SRS (opponent adjusted) ──
+  // rating = capped average margin + average opponent rating,
+  // solved iteratively then centred on zero.
+  // ============================================================
+
+  function computeSRS(sport, teamMap, iterations = 40) {
+    const cfg = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
+    const cap = cfg.movCap;
+
+    const names = Array.from(teamMap.keys());
+    const avgMargin = {};
+    const opponents = {};
+
+    names.forEach(n => {
+      const s = teamMap.get(n);
+      const capped = s.margins.map(m => Math.max(-cap, Math.min(cap, m)));
+      avgMargin[n] = capped.length ? capped.reduce((a, b) => a + b, 0) / capped.length : 0;
+      opponents[n] = s.opponents.filter(o => teamMap.has(o));
+    });
+
+    let rating = {};
+    names.forEach(n => { rating[n] = avgMargin[n]; });
+
+    for (let i = 0; i < iterations; i++) {
+      const next = {};
+      names.forEach(n => {
+        const opps = opponents[n];
+        if (!opps.length) { next[n] = avgMargin[n]; return; }
+        const oppSum = opps.reduce((acc, o) => acc + (rating[o] ?? 0), 0);
+        next[n] = avgMargin[n] + (oppSum / opps.length);
+      });
+      rating = next;
+    }
+
+    // Centre so the league averages zero.
+    const mean = names.length
+      ? names.reduce((acc, n) => acc + rating[n], 0) / names.length
+      : 0;
+    const out = {};
+    names.forEach(n => { out[n] = round(rating[n] - mean, 2); });
+    return out;
+  }
+
+  // ============================================================
+  // ── ELO (sequential, margin aware) ──
+  // ============================================================
+
+  function computeElo(sport, chronological) {
+    const cfg = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
+    const K = cfg.eloK;
+    const HFA = cfg.eloHFA;
+    const elo = {};
+
+    const get = t => (elo[t] === undefined ? (elo[t] = 1500) : elo[t]);
+
+    chronological.forEach(g => {
+      const hr = get(g.home);
+      const ar = get(g.away);
+      const hfa = g.neutral ? 0 : HFA;
+
+      const expectedHome = 1 / (1 + Math.pow(10, (ar - (hr + hfa)) / 400));
+      const margin = g.homeScore - g.awayScore;
+      const actualHome = margin > 0 ? 1 : margin < 0 ? 0 : 0.5;
+
+      const eloDiff = (hr + hfa) - ar;
+      const winnerDiff = actualHome === 1 ? eloDiff : -eloDiff;
+      const movMult = Math.log(Math.abs(margin) + 1) * (2.2 / (winnerDiff * 0.001 + 2.2));
+
+      const delta = K * movMult * (actualHome - expectedHome);
+      elo[g.home] = hr + delta;
+      elo[g.away] = ar - delta;
+    });
+
+    const out = {};
+    Object.keys(elo).forEach(t => { out[t] = Math.round(elo[t]); });
+    return out;
+  }
+
+  // ============================================================
+  // ── RATING ──
+  // ============================================================
+
+  function buildRating(sport, teamName, state, adjusted = {}) {
     const cfg = SPORT_CONFIG[sport] || SPORT_CONFIG.NFL;
     const games = state.games;
     if (games === 0) return null;
@@ -185,23 +416,21 @@ const EDGE_POWER = (() => {
 
     const offenseRaw = clamp(50 + ((avgPF - cfg.avgPF) / cfg.scale) * 25, 0, 100);
     const defenseRaw = clamp(50 - ((avgPA - cfg.avgPA) / cfg.scale) * 25, 0, 100);
-    const movRaw = clamp(50 + (avgMOV / cfg.scale) * 25, 0, 100);
+    const movRaw     = clamp(50 + (avgMOV / cfg.scale) * 25, 0, 100);
 
     const realWeight = games / (games + cfg.k);
 
     const offense = clamp(50 + (offenseRaw - 50) * realWeight, 0, 100);
     const defense = clamp(50 + (defenseRaw - 50) * realWeight, 0, 100);
-    const mov = clamp(50 + (movRaw - 50) * realWeight, 0, 100);
-    const pyth = 0.5 + (pythRaw - 0.5) * realWeight;
-
-    const winPct = state.wins / games;
-    const elo = 1500 + (winPct - 0.5) * 200 + avgMOV * 4;
+    const mov     = clamp(50 + (movRaw - 50) * realWeight, 0, 100);
+    const pyth    = 0.5 + (pythRaw - 0.5) * realWeight;
 
     const recent = state.margins.slice(-5);
     const formWeights = [0.10, 0.15, 0.20, 0.25, 0.30];
+    const offset = 5 - recent.length;
     let formScore = 0;
     recent.forEach((m, i) => {
-      formScore += formWeights[i] * (m / cfg.scale) * 3;
+      formScore += formWeights[offset + i] * (m / cfg.scale) * 3;
     });
     formScore = clamp(formScore * realWeight, -20, 20);
 
@@ -213,6 +442,17 @@ const EDGE_POWER = (() => {
       1
     );
 
+    const hasDraws = DRAWS_POSSIBLE.has(sport) && state.draws > 0;
+    const rec = hasDraws
+      ? `${state.wins}-${state.losses}-${state.draws}`
+      : `${state.wins}-${state.losses}`;
+    const homeRec = hasDraws
+      ? `${state.homeW}-${state.homeL}-${state.homeD}`
+      : `${state.homeW}-${state.homeL}`;
+    const awayRec = hasDraws
+      ? `${state.awayW}-${state.awayL}-${state.awayD}`
+      : `${state.awayW}-${state.awayL}`;
+
     return {
       team_id: state.team_id,
       team_name: teamName,
@@ -222,12 +462,15 @@ const EDGE_POWER = (() => {
       offense: round(offense, 1),
       defense: round(defense, 1),
       pythagorean: round(pyth, 4),
-      srs: round(avgMOV, 2),
-      elo: Math.round(elo),
+      srs: adjusted.srs ?? round(avgMOV, 2),
+      elo: adjusted.elo ?? 1500,
       pace: round(avgPF, 1),
-      record: `${state.wins}-${state.losses}`,
-      home_record: `${state.homeW}-${state.homeL}`,
-      away_record: `${state.awayW}-${state.awayL}`,
+      record: rec,
+      home_record: homeRec,
+      away_record: awayRec,
+      wins: state.wins,
+      losses: state.losses,
+      draws: state.draws,
       last5_form: round(formScore, 2),
       games_played: games,
       raw_stats: {
@@ -235,6 +478,7 @@ const EDGE_POWER = (() => {
         avgPA: round(avgPA, 2),
         avgMOV: round(avgMOV, 2),
         realWeight: round(realWeight, 3),
+        raw_srs: round(avgMOV, 2),
       },
     };
   }
@@ -244,9 +488,7 @@ const EDGE_POWER = (() => {
     const closeWinPct = state.closeGames > 0 ? state.closeWins / state.closeGames : 0.5;
     const realWeight = state.closeGames / (state.closeGames + 4);
     const closeShrunk = 0.5 + (closeWinPct - 0.5) * realWeight;
-    const closeComponent = closeShrunk * 100 * 0.6;
-    const halftimeComponent = 50 * 0.4;
-    const overall = round(closeComponent + halftimeComponent, 1);
+    const overall = round(closeShrunk * 100 * 0.6 + 50 * 0.4, 1);
 
     return {
       coach_id: null,
@@ -266,59 +508,26 @@ const EDGE_POWER = (() => {
   }
 
   async function computeTeamRating(sport, teamName, teamId, espnEvents) {
-    const teamMap = new Map();
-    (espnEvents || []).forEach(e => {
-      const comp = e.competitions?.[0];
-      if (!comp) return;
-      const us = comp.competitors?.find(c => c.team?.displayName === teamName);
-      const opp = comp.competitors?.find(c => c.team?.displayName !== teamName);
-      if (!us || !opp) return;
-      const score = parseInt(us.score || 0);
-      const oppScore = parseInt(opp.score || 0);
-      if (score === 0 && oppScore === 0) return;
-      pushGame(teamMap, teamName, us.team, score, oppScore, us.homeAway === 'home');
-    });
+    const usable = (espnEvents || []).filter(isRatableEvent);
+    const { teamMap, chronological } = buildTeamStates(sport, usable);
     const state = teamMap.get(teamName);
     if (!state) return null;
-    return buildRating(sport, teamName, state);
+    const srsMap = computeSRS(sport, teamMap);
+    const eloMap = computeElo(sport, chronological);
+    return buildRating(sport, teamName, state, { srs: srsMap[teamName], elo: eloMap[teamName] });
   }
 
   async function computeCoachingRating(sport, teamName, teamId, espnEvents) {
-    const teamMap = new Map();
-    (espnEvents || []).forEach(e => {
-      const comp = e.competitions?.[0];
-      if (!comp) return;
-      const us = comp.competitors?.find(c => c.team?.displayName === teamName);
-      const opp = comp.competitors?.find(c => c.team?.displayName !== teamName);
-      if (!us || !opp) return;
-      const score = parseInt(us.score || 0);
-      const oppScore = parseInt(opp.score || 0);
-      if (score === 0 && oppScore === 0) return;
-      pushGame(teamMap, teamName, us.team, score, oppScore, us.homeAway === 'home');
-    });
+    const usable = (espnEvents || []).filter(isRatableEvent);
+    const { teamMap } = buildTeamStates(sport, usable);
     const state = teamMap.get(teamName);
     if (!state) return null;
     return buildCoaching(sport, teamName, state);
   }
 
-  async function fetchGamesInRange(path, start, end) {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${start}-${end}&limit=1000`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.events || [];
-    } catch { return []; }
-  }
-
-  async function fetchTeamStats(sport) {
-    const path = ESPN_MAP[sport];
-    if (!path) return null;
-    try {
-      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`);
-      return res.ok ? await res.json() : null;
-    } catch { return null; }
-  }
+  // ============================================================
+  // ── MATCHUP + PRIOR ──
+  // ============================================================
 
   function computeDefenseMatchup(sport, homePower, awayPower) {
     if (!homePower || !awayPower) {
@@ -374,9 +583,7 @@ const EDGE_POWER = (() => {
       2
     );
 
-    const rawEdge = marketSpread !== null
-      ? round(marketSpread - totalModelSpread, 2)
-      : 0;
+    const rawEdge = marketSpread !== null ? round(marketSpread - totalModelSpread, 2) : 0;
 
     const probShiftPerPoint = {
       NFL: 0.028, NBA: 0.032, MLB: 0.040, NHL: 0.035,
@@ -386,10 +593,17 @@ const EDGE_POWER = (() => {
     const priorHomeProb = clamp(0.5 + (rawEdge * probShiftPerPoint), 0.05, 0.95);
 
     return {
-      game_id: game.id, sport,
-      home_team: game.home_team, away_team: game.away_team,
-      commence_time: game.commence_time,
+      game_id: game.id,
+      sport,
+      home_team: game.home_team || game.home,
+      away_team: game.away_team || game.away,
+      commence_time: game.commence_time || game.time || null,
+      // Pass the market through whole. The caller decides what's on it —
+      // spread prices, which book quoted them, the deep link — and
+      // whitelisting five fields here silently dropped the rest before
+      // physics could stamp them onto the pick.
       market: {
+        ...(market || {}),
         open_spread: market?.open_spread ?? null,
         current_spread: marketSpread,
         total: market?.total ?? null,
@@ -406,6 +620,10 @@ const EDGE_POWER = (() => {
     };
   }
 
+  // ============================================================
+  // ── PERSIST ──
+  // ============================================================
+
   async function persistRatings(results) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -414,40 +632,37 @@ const EDGE_POWER = (() => {
     const teamRows = Object.values(results.teams);
     const coachRows = Object.values(results.coaching);
 
+    // Nothing rated means something upstream failed. Never wipe a good
+    // table and replace it with nothing.
+    if (!teamRows.length) return;
+
+    const headers = {
+      apikey: key, Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json', Prefer: 'return=minimal',
+    };
+
     try {
-      // Wipe the table and reinsert fresh — removes off-season sports
       await fetch(`${url}/rest/v1/power_ratings?sport=not.is.null`, {
-        method: 'DELETE',
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
       });
       await fetch(`${url}/rest/v1/coaching_ratings?sport=not.is.null`, {
-        method: 'DELETE',
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
       });
 
-      if (teamRows.length) {
-        await fetch(`${url}/rest/v1/power_ratings`, {
-          method: 'POST',
-          headers: {
-            apikey: key, Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(teamRows),
-        });
-      }
+      await postInChunks(`${url}/rest/v1/power_ratings`, headers, teamRows);
       if (coachRows.length) {
-        await fetch(`${url}/rest/v1/coaching_ratings`, {
-          method: 'POST',
-          headers: {
-            apikey: key, Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(coachRows),
-        });
+        await postInChunks(`${url}/rest/v1/coaching_ratings`, headers, coachRows);
       }
     } catch {}
+  }
+
+  async function postInChunks(endpoint, headers, rows, size = 200) {
+    for (let i = 0; i < rows.length; i += size) {
+      await fetch(endpoint, {
+        method: 'POST', headers,
+        body: JSON.stringify(rows.slice(i, i + size)),
+      });
+    }
   }
 
   async function getPowerRating(sport, teamName) {
