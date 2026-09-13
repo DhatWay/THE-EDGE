@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trend Bets — EDGE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="power-engine.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="governor.js"></script>
+  <script src="physics.js"></script>
+  <script src="claude.js"></script>
+  <script src="context-builder.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="parlay.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg3: #141414; --bg4: #1C1C1C; --surface: #111111;
+      --border: rgba(201,168,76,0.12); --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8; --text-dim: #7A7060; --text-mid: #A89878;
+      --green: #27AE60; --red: #E74C3C; --blue: #4A90D9;
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
+      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+    body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 70% 40% at 50% 0%, rgba(201,168,76,0.05) 0%, transparent 70%); pointer-events: none; z-index: 0; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%, 85% 0%, 100% 15%, 100% 85%, 85% 100%, 15% 100%, 0% 85%, 0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { position: relative; z-index: 1; padding-top: 60px; }
+
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; margin-bottom: 6px; }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: 42px; letter-spacing: 3px; line-height: 1; }
+    .page-title em { color: var(--gold); font-style: normal; }
+    .page-sub { font-size: 13px; color: var(--text-dim); font-weight: 300; line-height: 1.55; margin-top: 10px; max-width: 62ch; }
+
+    .section { padding: 22px 20px; border-bottom: 1px solid var(--border); }
+    .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; }
+    .sec-title em { color: var(--gold); font-style: normal; }
+    .sec-count { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+
+    /* CONTROLS */
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .ctrl { background: var(--surface); border: 1px solid var(--border); padding: 12px 12px; border-radius: 2px; box-shadow: var(--lift); }
+    .ctrl-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 7px; }
+    .ctrl select, .ctrl input { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 14px; padding: 8px 9px; border-radius: 2px; }
+    .run-row { display: flex; gap: 8px; }
+    .run-btn { flex: 1; background: var(--gold); border: none; color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; padding: 14px; cursor: pointer; border-radius: 2px; box-shadow: var(--lift-gold); transition: all 0.2s; }
+    .run-btn:hover:not(:disabled) { background: var(--gold-bright); box-shadow: var(--lift-high); transform: translateY(-2px); }
+    .run-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .run-btn.ghost { background: var(--bg4); color: var(--text-mid); border: 1px solid var(--border); box-shadow: var(--lift); }
+    .run-btn.ghost:hover { border-color: var(--gold); color: var(--gold); }
+
+    /* TREND ROWS */
+    .trend-row-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; margin-bottom: 9px; border-radius: 2px; box-shadow: var(--lift); transition: all 0.22s ease; }
+    .trend-row-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
+    .trend-row-card.active { border-color: var(--border-bright); }
+    .trend-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .trend-name { font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; line-height: 1.2; }
+    .trend-desc { font-size: 12.5px; color: var(--text-dim); font-weight: 300; margin-top: 3px; line-height: 1.45; }
+    .trend-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 4px 9px; border: 1px solid; white-space: nowrap; flex-shrink: 0; }
+    .trend-badge.on { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .trend-badge.off { border-color: var(--text-dim); color: var(--text-dim); }
+    .trend-badge.thin { border-color: var(--gold-dim); color: var(--gold); }
+    .trend-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-top: 12px; }
+    .tstat { text-align: center; }
+    .tstat-v { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; line-height: 1; }
+    .tstat-v.green { color: var(--green); } .tstat-v.red { color: var(--red); } .tstat-v.gold { color: var(--gold); }
+    .tstat-l { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+
+    /* PARLAY CARDS */
+    .parlay-card { background: var(--surface); border: 1px solid var(--border-bright); margin-bottom: 14px; border-radius: 2px; overflow: hidden; box-shadow: var(--lift-gold); transition: all 0.22s ease; }
+    .parlay-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
+    .parlay-head { padding: 15px 16px 13px; border-bottom: 1px solid var(--border); }
+    .parlay-trend { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--gold); margin-bottom: 5px; }
+    .parlay-title { font-family: 'Bebas Neue', sans-serif; font-size: 25px; letter-spacing: 2px; line-height: 1; }
+    .parlay-verdict { display: inline-block; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; margin-top: 8px; }
+    .parlay-verdict.STRONG { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .parlay-verdict.PLAYABLE { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+    .parlay-verdict.none { border-color: var(--red); color: var(--red); background: rgba(231,76,60,0.07); }
+
+    .leg { display: flex; align-items: center; gap: 11px; padding: 12px 16px; border-bottom: 1px solid rgba(201,168,76,0.07); }
+    .leg-num { width: 20px; height: 20px; flex-shrink: 0; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; display: flex; align-items: center; justify-content: center; }
+    .leg-body { flex: 1; min-width: 0; }
+    .leg-side { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.5px; color: var(--gold); line-height: 1.2; }
+    .leg-match { font-size: 12px; color: var(--text-dim); font-weight: 300; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .leg-right { text-align: right; flex-shrink: 0; }
+    .leg-odds { font-family: 'Bebas Neue', sans-serif; font-size: 17px; letter-spacing: 1px; }
+    .leg-conf { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; color: var(--text-dim); text-transform: uppercase; }
+
+    .parlay-metrics { display: grid; grid-template-columns: repeat(4,1fr); gap: 0; border-top: 1px solid var(--border); }
+    .pm { padding: 13px 6px; text-align: center; border-right: 1px solid var(--border); }
+    .pm:last-child { border-right: none; }
+    .pm-v { font-family: 'Bebas Neue', sans-serif; font-size: 21px; letter-spacing: 1px; line-height: 1; }
+    .pm-v.gold { color: var(--gold); } .pm-v.green { color: var(--green); } .pm-v.red { color: var(--red); }
+    .pm-l { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
+
+    .parlay-actions { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
+    .pa-btn { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px 8px; cursor: pointer; border-radius: 2px; transition: all 0.2s; }
+    .pa-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .pa-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
+    .pa-btn.done { opacity: 0.5; cursor: default; }
+
+    .empty-state { padding: 44px 20px; text-align: center; }
+    .empty-icon { font-size: 34px; color: var(--gold-dim); margin-bottom: 12px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; margin-bottom: 7px; }
+    .empty-sub { font-size: 13px; color: var(--text-dim); font-weight: 300; line-height: 1.55; max-width: 46ch; margin: 0 auto; }
+    .empty-sub a { color: var(--gold); }
+
+    .note { font-size: 12.5px; color: var(--text-dim); font-weight: 300; line-height: 1.55; margin-top: 12px; }
+
+    .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(120px); background: var(--bg4); border: 1px solid var(--border-bright); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; padding: 11px 20px; z-index: 200; transition: transform 0.3s; box-shadow: var(--lift-high); }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.red { border-color: var(--red); color: var(--red); }
+
+    footer { padding: 30px 20px 44px; text-align: center; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 5px; color: var(--gold-dim); }
+    .foot-txt { font-size: 11px; color: var(--text-dim); margin-top: 5px; }
+
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
+    .offline-bar.show { transform: translateY(0); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .trend-row-card, .parlay-card, .run-btn { transition: none; }
+      .trend-row-card:hover, .parlay-card:hover, .run-btn:hover:not(:disabled) { transform: none; }
+    }
+    @media (min-width: 640px) {
+      .controls { grid-template-columns: repeat(4, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html" class="active"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <main>
+
+    <div class="page-header">
+      <div class="page-eye">Correlation-safe multi-leg</div>
+      <div class="page-title">TREND <em>BETS</em></div>
+      <p class="page-sub">
+        A trend only becomes bettable once it has a graded track record. Each parlay below stacks
+        today's picks that match a trend still clearing its hit-rate threshold, one leg per game,
+        priced against the market rather than against the model's own optimism.
+      </p>
+    </div>
+
+    <div class="section">
+      <div class="controls">
+        <div class="ctrl">
+          <div class="ctrl-lbl">Max legs</div>
+          <select id="maxLegs">
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <div class="ctrl-lbl">Min leg confidence</div>
+          <select id="minLegConf">
+            <option value="0">Any</option>
+            <option value="55">55%</option>
+            <option value="60" selected>60%</option>
+            <option value="65">65%</option>
+            <option value="70">70%</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <div class="ctrl-lbl">History window</div>
+          <select id="histDays">
+            <option value="60">60 days</option>
+            <option value="120" selected>120 days</option>
+            <option value="365">1 year</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <div class="ctrl-lbl">Value filter</div>
+          <select id="valueFilter">
+            <option value="positive" selected>Positive EV only</option>
+            <option value="all">Show all</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="run-row">
+        <button class="run-btn" id="buildBtn" onclick="buildAll()">Build trend bets</button>
+        <button class="run-btn ghost" onclick="copyAll()">Copy</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sec-head">
+        <div class="sec-title">TREND <em>SCOREBOARD</em></div>
+        <div class="sec-count" id="trendCount">—</div>
+      </div>
+      <div id="trendList">
+        <div class="empty-state">
+          <div class="empty-icon">◷</div>
+          <div class="empty-title">NOT SCORED YET</div>
+          <div class="empty-sub">Tap build to grade every trend against your settled picks.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sec-head">
+        <div class="sec-title">TODAY'S <em>PARLAYS</em></div>
+        <div class="sec-count" id="parlayCount">—</div>
+      </div>
+      <div id="parlayList">
+        <div class="empty-state">
+          <div class="empty-icon">⧉</div>
+          <div class="empty-title">NOTHING BUILT</div>
+          <div class="empty-sub">Run today's picks first, then build. Parlays need at least two qualifying legs from separate games.</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-logo">EDGE</div>
+      <div class="foot-txt">Trend engine · correlation-adjusted · © 2026</div>
+    </footer>
+
+  </main>
+
+  <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
+  <script>
+    // ── PWA / OFFLINE ──
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('sw.js').catch(function () {});
+        });
+      }
+      var bar = document.getElementById('offlineBar');
+      function sync() {
+        if (!bar) return;
+        bar.classList.toggle('show', !navigator.onLine);
+        document.body.classList.toggle('is-offline', !navigator.onLine);
+      }
+      window.addEventListener('online', sync);
+      window.addEventListener('offline', sync);
+      sync();
+    })();
+  </script>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    let trendScores = [];
+    let parlays = [];
+
+    // ── LOAD TODAY'S PICKS ──
+    async function loadTodaysPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+
+      if (url && key) {
+        try {
+          const todayStart = new Date();
+          todayStart.setHours(0, 0, 0, 0);
+          const res = await fetch(
+            `${url}/rest/v1/shadow_picks?select=*&created_at=gte.${todayStart.toISOString()}&order=confidence.desc&limit=200`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
+          if (res.ok) {
+            const rows = await res.json();
+            if (rows.length) return rows;
+          }
+        } catch {}
+      }
+
+      try {
+        const last = JSON.parse(localStorage.getItem('edge_last_run') || 'null');
+        return last && Array.isArray(last.picks) ? last.picks : [];
+      } catch { return []; }
+    }
+
+    // ── BUILD ──
+    async function buildAll() {
+      const btn = document.getElementById('buildBtn');
+      btn.disabled = true;
+      btn.textContent = 'Building…';
+
+      try {
+        const days = parseInt(document.getElementById('histDays').value);
+        trendScores = await EDGE_PARLAY.scoreTrends({ days });
+        renderTrends();
+
+        const picks = await loadTodaysPicks();
+        if (!picks.length) {
+          parlays = [];
+          renderParlays('no-picks');
+          return;
+        }
+
+        const built = await EDGE_PARLAY.buildTrendBets(picks, {
+          maxLegs: parseInt(document.getElementById('maxLegs').value),
+          minLegs: 2,
+          minLegConfidence: parseFloat(document.getElementById('minLegConf').value),
+          trendScores,
+        });
+
+        parlays = document.getElementById('valueFilter').value === 'positive'
+          ? built.filter(p => p.expected_value > 0)
+          : built;
+
+        renderParlays();
+      } catch (e) {
+        showToast('Build failed: ' + e.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Build trend bets';
+      }
+    }
+
+    // ── RENDER TRENDS ──
+    function renderTrends() {
+      const el = document.getElementById('trendList');
+      const active = trendScores.filter(t => t.qualified).length;
+      document.getElementById('trendCount').textContent =
+        `${active} of ${trendScores.length} active`;
+
+      el.innerHTML = trendScores.map(t => {
+        const badge = t.qualified ? 'on'
+                    : t.sample < EDGE_PARLAY.TREND_MIN_SAMPLE ? 'thin' : 'off';
+        const hit = t.hit_rate !== null ? (t.hit_rate * 100).toFixed(1) + '%' : '—';
+        const roi = t.roi !== null ? (t.roi > 0 ? '+' : '') + (t.roi * 100).toFixed(1) + '%' : '—';
+        const roiCls = t.roi === null ? '' : t.roi > 0 ? 'green' : t.roi < 0 ? 'red' : '';
+        const hitCls = t.hit_rate === null ? '' : t.hit_rate >= EDGE_PARLAY.TREND_MIN_HIT_RATE ? 'green' : 'red';
+        return `
+          <div class="trend-row-card ${t.qualified ? 'active' : ''}">
+            <div class="trend-top">
+              <div>
+                <div class="trend-name">${t.label}</div>
+                <div class="trend-desc">${t.describe}</div>
+              </div>
+              <span class="trend-badge ${badge}">${t.status}</span>
+            </div>
+            <div class="trend-stats">
+              <div class="tstat"><div class="tstat-v">${t.sample}</div><div class="tstat-l">Sample</div></div>
+              <div class="tstat"><div class="tstat-v">${t.wins}-${t.losses}</div><div class="tstat-l">Record</div></div>
+              <div class="tstat"><div class="tstat-v ${hitCls}">${hit}</div><div class="tstat-l">Hit rate</div></div>
+              <div class="tstat"><div class="tstat-v ${roiCls}">${roi}</div><div class="tstat-l">ROI</div></div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    // ── RENDER PARLAYS ──
+    function renderParlays(reason) {
+      const el = document.getElementById('parlayList');
+      document.getElementById('parlayCount').textContent =
+        parlays.length ? `${parlays.length} built` : '0 built';
+
+      if (!parlays.length) {
+        const activeTrends = trendScores.filter(t => t.qualified).length;
+        let title = 'NO PARLAYS';
+        let sub = 'No trend produced two qualifying legs from separate games today.';
+
+        if (reason === 'no-picks') {
+          title = 'NO PICKS TODAY';
+          sub = 'Run the pipeline on <a href="picks.html">today&rsquo;s picks</a> first, then build here.';
+        } else if (!activeTrends) {
+          title = 'NO ACTIVE TRENDS';
+          sub = `Every trend needs ${EDGE_PARLAY.TREND_MIN_SAMPLE} graded picks and a ${(EDGE_PARLAY.TREND_MIN_HIT_RATE * 100).toFixed(0)}% hit rate before it can be stacked. Keep grading results and they will open up.`;
+        }
+
+        el.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">⧉</div>
+            <div class="empty-title">${title}</div>
+            <div class="empty-sub">${sub}</div>
+          </div>`;
+        return;
+      }
+
+      el.innerHTML = parlays.map((p, i) => {
+        const odds = p.american_odds > 0 ? '+' + p.american_odds : String(p.american_odds);
+        const verdictCls = p.verdict === 'STRONG' ? 'STRONG' : p.verdict === 'PLAYABLE' ? 'PLAYABLE' : 'none';
+        const evCls = p.expected_value > 0 ? 'green' : 'red';
+        const placed = localStorage.getItem('edge_parlay_placed_' + parlayKey(p)) === 'true';
+
+        const legs = p.legs.map((l, n) => `
+          <div class="leg">
+            <div class="leg-num">${n + 1}</div>
+            <div class="leg-body">
+              <div class="leg-side">${l.side || '—'}</div>
+              <div class="leg-match">${l.matchup}${l.spread != null ? ' · ' + (l.spread > 0 ? '+' : '') + l.spread : ''}</div>
+            </div>
+            <div class="leg-right">
+              <div class="leg-odds">${l.odds > 0 ? '+' + l.odds : l.odds}</div>
+              <div class="leg-conf">${Math.round(l.confidence)}% · ${l.sport}</div>
+            </div>
+          </div>`).join('');
+
+        return `
+          <div class="parlay-card">
+            <div class="parlay-head">
+              <div class="parlay-trend">${p.trend_label || 'Trend'}${p.also_matches && p.also_matches.length ? ' + ' + p.also_matches.length + ' more' : ''}</div>
+              <div class="parlay-title">${p.leg_count}-LEG ${odds}</div>
+              <span class="parlay-verdict ${verdictCls}">${p.verdict}</span>
+            </div>
+            ${legs}
+            <div class="parlay-metrics">
+              <div class="pm"><div class="pm-v gold">${(p.model_probability * 100).toFixed(1)}%</div><div class="pm-l">Model</div></div>
+              <div class="pm"><div class="pm-v">${(p.market_probability * 100).toFixed(1)}%</div><div class="pm-l">Market</div></div>
+              <div class="pm"><div class="pm-v ${evCls}">${p.expected_value > 0 ? '+' : ''}${(p.expected_value * 100).toFixed(1)}%</div><div class="pm-l">Edge</div></div>
+              <div class="pm"><div class="pm-v gold">${p.units}u</div><div class="pm-l">Stake</div></div>
+            </div>
+            <div class="parlay-actions">
+              ${placed
+                ? `<button class="pa-btn done" disabled>✓ Logged</button>
+                   <button class="pa-btn" onclick="unlogParlay(${i})">Undo</button>`
+                : `<button class="pa-btn primary" onclick="logParlay(${i})" ${p.units <= 0 ? 'disabled' : ''}>Log ${p.units}u · $${p.stake_dollars.toFixed(0)}</button>`}
+              <button class="pa-btn" onclick="copyParlay(${i})">Copy slip</button>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function parlayKey(p) {
+      return (p.trend_id || 'x') + '_' + p.legs.map(l => l.game_id).sort().join('-');
+    }
+
+    // ── LOG A PARLAY ──
+    async function logParlay(i) {
+      const p = parlays[i];
+      if (!p || p.units <= 0) return;
+
+      const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
+      const isSim = portfolio === 'sim';
+      const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
+      const bankroll = parseFloat(localStorage.getItem(bankrollKey) || (isSim ? '10000' : '0'));
+
+      if (bankroll <= 0) { showToast('Set a bankroll in Settings first', true); return; }
+      if (p.stake_dollars > bankroll) { showToast('Stake exceeds bankroll', true); return; }
+      if (p.stake_dollars > bankroll * 0.05) { showToast('Stake exceeds 5% of bankroll', true); return; }
+
+      localStorage.setItem(bankrollKey, String(bankroll - p.stake_dollars));
+      localStorage.setItem('edge_parlay_placed_' + parlayKey(p), 'true');
+
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (url && key) {
+        try {
+          await fetch(`${url}/rest/v1/bet_log`, {
+            method: 'POST',
+            headers: {
+              apikey: key, Authorization: `Bearer ${key}`,
+              'Content-Type': 'application/json', Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({
+              mode: isSim ? 'sim' : 'real',
+              date: new Date().toISOString().split('T')[0],
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              sport: 'PARLAY',
+              matchup: p.legs.map(l => l.side).join(' + '),
+              pick_label: `${p.leg_count}-leg ${p.trend_label || 'trend'}`,
+              pick_type: 'PARLAY',
+              line: '',
+              odds: p.american_odds,
+              confidence: Math.round(p.model_probability * 100),
+              edge: p.expected_value,
+              units: p.units,
+              amount: p.stake_dollars,
+              status: 'pending',
+              game_id: p.legs.map(l => l.game_id).join(','),
+            }),
+          });
+        } catch {}
+      }
+
+      renderParlays();
+      showToast(`Logged ${p.units}u parlay`);
+    }
+
+    function unlogParlay(i) {
+      const p = parlays[i];
+      if (!p) return;
+      const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
+      const isSim = portfolio === 'sim';
+      const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
+      const bankroll = parseFloat(localStorage.getItem(bankrollKey) || '0');
+      localStorage.setItem(bankrollKey, String(bankroll + p.stake_dollars));
+      localStorage.removeItem('edge_parlay_placed_' + parlayKey(p));
+      renderParlays();
+      showToast('Parlay undone');
+    }
+
+    // ── COPY ──
+    function slipText(p) {
+      const odds = p.american_odds > 0 ? '+' + p.american_odds : String(p.american_odds);
+      const legs = p.legs.map((l, n) =>
+        `  ${n + 1}. ${l.side} — ${l.matchup}${l.spread != null ? ' (' + (l.spread > 0 ? '+' : '') + l.spread + ')' : ''} @ ${l.odds > 0 ? '+' + l.odds : l.odds}`
+      ).join('\n');
+      return `${p.leg_count}-LEG ${odds} — ${p.trend_label || 'Trend'}\n${legs}\n  Model ${(p.model_probability * 100).toFixed(1)}% · Market ${(p.market_probability * 100).toFixed(1)}% · Edge ${(p.expected_value * 100).toFixed(1)}%\n  Stake ${p.units}u ($${p.stake_dollars.toFixed(0)}) to win $${p.to_win.toFixed(0)}`;
+    }
+
+    function copyParlay(i) {
+      const p = parlays[i];
+      if (!p) return;
+      copyText(slipText(p), '1 slip');
+    }
+
+    function copyAll() {
+      if (!parlays.length) { showToast('Nothing to copy', true); return; }
+      const text = 'EDGE — Trend Bets · ' + new Date().toLocaleDateString() + '\n' +
+                   '='.repeat(52) + '\n\n' +
+                   parlays.map(slipText).join('\n\n');
+      copyText(text, `${parlays.length} slips`);
+    }
+
+    function copyText(text, label) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => showToast('Copied ' + label))
+          .catch(() => fallbackCopy(text, label));
+      } else {
+        fallbackCopy(text, label);
+      }
+    }
+
+    function fallbackCopy(text, label) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showToast('Copied ' + label); }
+      catch { showToast('Copy failed — long-press to select', true); }
+      document.body.removeChild(ta);
+    }
+
+    // ── TOAST ──
+    function showToast(msg, isError) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (isError ? ' red' : '');
+      setTimeout(() => t.className = 'toast', 2400);
+    }
+
+    // ── INIT ──
+    buildAll();
+  </script>
+</body>
+</html>
