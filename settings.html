@@ -7,14 +7,20 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="context-builder.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="engine.js"></script>
+  <script src="parlay.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -154,6 +160,81 @@
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    /* ── ELEVATION ─────────────────────────────────────────────
+       Cards sit above the page rather than sharing its plane.
+       Two depths: resting, and raised on interaction. */
+    :root {
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
+      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+    }
+    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
+    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
+    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
+    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
+    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
+    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
+      box-shadow: var(--lift);
+      border-radius: 2px;
+      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
+      will-change: transform;
+    }
+    .pick-card, .clv-card, .game-card {
+      box-shadow: var(--lift-gold);
+    }
+    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
+    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
+    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+      box-shadow: var(--lift-high);
+      transform: translateY(-2px);
+    }
+    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
+      box-shadow: var(--lift-high);
+      transform: translateY(-1px);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
+      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
+      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
+      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
+      .parlay-card, .trend-row-card {
+        transition: none;
+      }
+      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
+      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
+      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+        transform: none;
+      }
+    }
+
+    /* ── OFFLINE BANNER ── */
+    .offline-bar {
+      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
+      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
+      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+      padding: 7px 20px; text-align: center;
+      transform: translateY(-100%); transition: transform 0.25s ease;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .offline-bar.show { transform: translateY(0); }
+
+    /* ── CONNECTIONS ── */
+    .conn-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+    .conn-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .conn-dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+    .conn-dot.busy { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+    .conn-state { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
+    .conn-state.ok { color: var(--green); }
+    .conn-state.err { color: var(--red); }
+    .key-actions { display: flex; gap: 8px; margin-top: 8px; }
+    .key-btn { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 9px 10px; cursor: pointer; transition: all 0.2s; }
+    .key-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .key-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
+    .reveal-btn { background: none; border: none; color: var(--gold-dim); font-size: 11px; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; padding: 0; }
+    .conn-note { font-size: 12px; color: var(--text-dim); font-weight: 300; line-height: 1.55; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -177,6 +258,7 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -207,6 +289,76 @@
     </div>
 
     <!-- DECISION ENGINE -->
+
+    <!-- CONNECTIONS -->
+    <div class="section">
+      <div class="sec-title">CONNE<em>CTIONS</em></div>
+
+      <div class="field">
+        <div class="conn-row">
+          <span class="conn-dot" id="dotSupabase"></span>
+          <span class="conn-state" id="stateSupabase">Not connected</span>
+        </div>
+        <div class="field-lbl">Supabase Project URL</div>
+        <input type="text" class="field-input" id="supabaseUrl" placeholder="https://yourproject.supabase.co" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Supabase anon key <button class="reveal-btn" onclick="toggleReveal('supabaseKey')">show</button></div>
+        <input type="password" class="field-input" id="supabaseKey" placeholder="eyJhbGciOi…" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <div class="key-actions">
+          <button class="key-btn" onclick="testConnection('supabase')">Test Supabase</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="conn-row">
+          <span class="conn-dot" id="dotOdds"></span>
+          <span class="conn-state" id="stateOdds">Not connected</span>
+        </div>
+        <div class="field-lbl">The Odds API key <button class="reveal-btn" onclick="toggleReveal('oddsKey')">show</button></div>
+        <input type="password" class="field-input" id="oddsKey" placeholder="Your the-odds-api.com key" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <div class="key-actions">
+          <button class="key-btn" onclick="testConnection('odds')">Test Odds API</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="conn-row">
+          <span class="conn-dot" id="dotClaude"></span>
+          <span class="conn-state" id="stateClaude">Not connected</span>
+        </div>
+        <div class="field-lbl">Anthropic API key <span class="field-hint">AI-assisted mode only</span> <button class="reveal-btn" onclick="toggleReveal('claudeKey')">show</button></div>
+        <input type="password" class="field-input" id="claudeKey" placeholder="sk-ant-…" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <div class="key-actions">
+          <button class="key-btn" onclick="testConnection('claude')">Test Anthropic</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="conn-row">
+          <span class="conn-dot" id="dotEspn"></span>
+          <span class="conn-state" id="stateEspn">Not checked</span>
+        </div>
+        <div class="field-lbl">ESPN <span class="field-hint">public, no key needed</span></div>
+        <div class="key-actions">
+          <button class="key-btn" onclick="testConnection('espn')">Test ESPN</button>
+          <button class="key-btn" onclick="testConnection('all')">Test all</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-lbl">Edge Function proxy URL <span class="field-hint">optional</span></div>
+        <input type="text" class="field-input" id="proxyUrl" placeholder="https://yourproject.supabase.co/functions/v1/edge-proxy" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <div class="conn-note">Set this to route Odds API and Anthropic calls through a Supabase Edge Function so those keys live in Supabase secrets instead of this browser. Leave blank to call both services directly with the keys above.</div>
+      </div>
+
+      <div class="key-actions">
+        <button class="key-btn primary" onclick="saveConnections()">Save connections</button>
+        <button class="key-btn" onclick="clearConnections()">Clear all keys</button>
+      </div>
+    </div>
+
     <div class="section">
       <div class="sec-title">DECISION <em>ENGINE</em></div>
       <div class="sec-sub">Deterministic always runs. AI overlays when enabled.</div>
@@ -462,6 +614,155 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+
+    // ── CONNECTIONS ──
+    const CONN_FIELDS = [
+      { input: 'supabaseUrl', store: 'edge_supabase_url' },
+      { input: 'supabaseKey', store: 'edge_supabase_key' },
+      { input: 'oddsKey',     store: 'edge_odds_api_key' },
+      { input: 'claudeKey',   store: 'edge_claude_api_key' },
+      { input: 'proxyUrl',    store: 'edge_proxy_url' },
+    ];
+
+    function toggleReveal(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.type = el.type === 'password' ? 'text' : 'password';
+    }
+
+    function loadConnections() {
+      CONN_FIELDS.forEach(({ input, store }) => {
+        const el = document.getElementById(input);
+        if (el) el.value = localStorage.getItem(store) || '';
+      });
+      refreshConnectionDots();
+    }
+
+    function saveConnections() {
+      CONN_FIELDS.forEach(({ input, store }) => {
+        const el = document.getElementById(input);
+        if (!el) return;
+        const val = el.value.trim().replace(/\/+$/, '');
+        if (val) localStorage.setItem(store, val);
+        else localStorage.removeItem(store);
+      });
+      refreshConnectionDots();
+      markSaved();
+      showToast('Connections saved');
+    }
+
+    function clearConnections() {
+      if (!confirm('Remove every saved API key from this browser?')) return;
+      CONN_FIELDS.forEach(({ store }) => localStorage.removeItem(store));
+      CONN_FIELDS.forEach(({ input }) => {
+        const el = document.getElementById(input);
+        if (el) el.value = '';
+      });
+      refreshConnectionDots();
+      showToast('Keys removed');
+    }
+
+    function refreshConnectionDots() {
+      setConn('Supabase', localStorage.getItem('edge_supabase_url') && localStorage.getItem('edge_supabase_key') ? 'saved' : 'unset');
+      setConn('Odds', localStorage.getItem('edge_odds_api_key') ? 'saved' : 'unset');
+      setConn('Claude', localStorage.getItem('edge_claude_api_key') ? 'saved' : 'unset');
+    }
+
+    function setConn(name, state, text) {
+      const dot = document.getElementById('dot' + name);
+      const lbl = document.getElementById('state' + name);
+      if (!dot || !lbl) return;
+      const map = {
+        saved:   ['', 'Key saved — not tested'],
+        unset:   ['', 'Not connected'],
+        busy:    ['busy', 'Testing…'],
+        ok:      ['ok', 'Connected'],
+        err:     ['err', 'Failed'],
+      };
+      const [cls, def] = map[state] || ['', ''];
+      dot.className = 'conn-dot ' + cls;
+      lbl.className = 'conn-state ' + cls;
+      lbl.textContent = text || def;
+    }
+
+    async function testConnection(which) {
+      if (which === 'all') {
+        await testConnection('supabase');
+        await testConnection('odds');
+        await testConnection('espn');
+        await testConnection('claude');
+        return;
+      }
+
+      if (which === 'supabase') {
+        const url = document.getElementById('supabaseUrl').value.trim().replace(/\/+$/, '');
+        const key = document.getElementById('supabaseKey').value.trim();
+        if (!url || !key) { setConn('Supabase', 'err', 'Enter URL and key'); return; }
+        setConn('Supabase', 'busy');
+        try {
+          const res = await fetch(`${url}/rest/v1/shadow_picks?select=id&limit=1`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          if (res.ok) setConn('Supabase', 'ok');
+          else setConn('Supabase', 'err', 'HTTP ' + res.status);
+        } catch { setConn('Supabase', 'err', 'Unreachable'); }
+        return;
+      }
+
+      if (which === 'odds') {
+        const key = document.getElementById('oddsKey').value.trim();
+        if (!key) { setConn('Odds', 'err', 'Enter a key'); return; }
+        setConn('Odds', 'busy');
+        try {
+          const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
+          if (res.ok) {
+            const remaining = res.headers.get('x-requests-remaining');
+            setConn('Odds', 'ok', remaining ? `Connected — ${remaining} requests left` : 'Connected');
+          } else {
+            setConn('Odds', 'err', res.status === 401 ? 'Invalid key' : 'HTTP ' + res.status);
+          }
+        } catch { setConn('Odds', 'err', 'Unreachable'); }
+        return;
+      }
+
+      if (which === 'espn') {
+        setConn('Espn', 'busy');
+        try {
+          const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+          setConn('Espn', res.ok ? 'ok' : 'err', res.ok ? 'Reachable' : 'HTTP ' + res.status);
+        } catch { setConn('Espn', 'err', 'Unreachable'); }
+        return;
+      }
+
+      if (which === 'claude') {
+        const key = document.getElementById('claudeKey').value.trim();
+        const proxy = document.getElementById('proxyUrl').value.trim();
+        if (!key && !proxy) { setConn('Claude', 'err', 'Enter a key or proxy URL'); return; }
+        setConn('Claude', 'busy');
+        try {
+          const endpoint = proxy ? proxy.replace(/\/+$/, '') + '/messages' : 'https://api.anthropic.com/v1/messages';
+          const headers = { 'Content-Type': 'application/json' };
+          if (!proxy) {
+            headers['x-api-key'] = key;
+            headers['anthropic-version'] = '2023-06-01';
+            headers['anthropic-dangerous-direct-browser-access'] = 'true';
+          }
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 8,
+              messages: [{ role: 'user', content: 'ping' }],
+            }),
+          });
+          if (res.ok) setConn('Claude', 'ok', proxy ? 'Connected via proxy' : 'Connected');
+          else setConn('Claude', 'err', res.status === 401 ? 'Invalid key' : 'HTTP ' + res.status);
+        } catch { setConn('Claude', 'err', 'Blocked or unreachable'); }
+        return;
+      }
+    }
+
     // ── SPORTS ──
     const SPORTS = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
 
@@ -569,6 +870,14 @@
         const el = document.getElementById(id);
         if (el) localStorage.setItem('edge_' + id, el.checked);
       });
+
+      CONN_FIELDS.forEach(({ input, store }) => {
+        const el = document.getElementById(input);
+        if (!el) return;
+        const v = el.value.trim().replace(/\/+$/, '');
+        if (v) localStorage.setItem(store, v); else localStorage.removeItem(store);
+      });
+      refreshConnectionDots();
 
       syncToSupabase();
       markSaved();
@@ -709,7 +1018,29 @@
     // ── INIT ──
     buildSportToggles();
     loadAll();
+    loadConnections();
     markSaved();
+  </script>
+
+  <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
+  <script>
+    // ── PWA / OFFLINE ──
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('sw.js').catch(function () {});
+        });
+      }
+      var bar = document.getElementById('offlineBar');
+      function sync() {
+        if (!bar) return;
+        bar.classList.toggle('show', !navigator.onLine);
+        document.body.classList.toggle('is-offline', !navigator.onLine);
+      }
+      window.addEventListener('online', sync);
+      window.addEventListener('offline', sync);
+      sync();
+    })();
   </script>
 </body>
 </html>
