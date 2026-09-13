@@ -147,6 +147,34 @@ const EDGE_ORCHESTRATOR = (() => {
 
       summary.completed_at = new Date().toISOString();
       summary.duration_ms = Date.now() - startedAt;
+
+      try {
+        localStorage.setItem('edge_last_run', JSON.stringify({
+          run_id: runId,
+          mode,
+          completed_at: summary.completed_at,
+          picks: picks.map(p => ({
+            pick_id: p.pick_id,
+            game_id: p.game_id,
+            sport: p.sport,
+            decision: p.decision,
+            direction: p.direction,
+            side_team: p.side_label?.team || null,
+            home_team: priorFor(priors, p.game_id)?.home_team || null,
+            away_team: priorFor(priors, p.game_id)?.away_team || null,
+            commence_time: priorFor(priors, p.game_id)?.commence_time || null,
+            confidence: p.confidence,
+            edge: p.edge,
+            units: p.units,
+            market_spread: p.market_snapshot?.spread ?? null,
+            market_home_ml: p.market_snapshot?.home_ml ?? null,
+            market_away_ml: p.market_snapshot?.away_ml ?? null,
+            governor_snapshot: p.governor_snapshot || null,
+            reasons: p.reasons || [],
+          })),
+        }));
+      } catch {}
+
       log(`Done · ${picks.length} picks · ${summary.duration_ms}ms`);
       return summary;
 
@@ -220,7 +248,7 @@ const EDGE_ORCHESTRATOR = (() => {
           homeStats: homePower,
           awayStats: awayPower,
           market: {
-            open_spread: game.open_spread ?? null,
+            open_spread: game.open_spread ?? game.opening_spread ?? null,
             current_spread: game.spread ?? null,
             total: game.total ?? null,
             home_ml: game.ml ?? null,
@@ -388,7 +416,8 @@ const EDGE_ORCHESTRATOR = (() => {
         units: p.units,
         stake_dollars: p.stake_dollars,
         governor_snapshot: p.governor_snapshot || null,
-        physics_output: p,
+        physics_output: slimPhysics(p),
+        pick_id: p.pick_id || p.game_id || null,
         claude_output: p.claude || null,
         reasons: p.reasons || [],
         market_spread: p.market_snapshot?.spread ?? null,
@@ -425,6 +454,16 @@ const EDGE_ORCHESTRATOR = (() => {
     const isSim = portfolio === 'sim';
     let placed = 0;
 
+    // Auto placement only ever fires at or above the configured confidence.
+    const autoThreshold = parseFloat(localStorage.getItem('edge_auto_threshold') || '0');
+    if (autoThreshold > 0) {
+      picks = picks.filter(p => (p.confidence || 0) >= autoThreshold);
+      if (!picks.length) return 0;
+    }
+
+    const maxBets = parseInt(localStorage.getItem('edge_max_bets') || '0');
+    let betsUsed = parseInt(localStorage.getItem('edge_bets_used') || '0');
+
     const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
     const unitSizeKey = isSim ? 'edge_sim_unit_size' : 'edge_unit_size';
     let bankroll = parseFloat(localStorage.getItem(bankrollKey) || (isSim ? '10000' : '0'));
@@ -446,12 +485,14 @@ const EDGE_ORCHESTRATOR = (() => {
       const units = pick.units || 1;
       const stake = units * unitSize;
 
+      if (maxBets > 0 && betsUsed >= maxBets) break;
       if (dailyCap > 0 && dailyUsed + stake > dailyCap) continue;
       if (stake > bankroll * 0.05) continue;
       if (stake > bankroll) continue;
 
       bankroll -= stake;
       dailyUsed += stake;
+      betsUsed += 1;
       localStorage.setItem(flagKey, 'true');
       placedBets.push({
         pick_id: pick.pick_id, game_id: pick.game_id, sport: pick.sport,
@@ -466,6 +507,7 @@ const EDGE_ORCHESTRATOR = (() => {
 
     localStorage.setItem(bankrollKey, String(bankroll));
     localStorage.setItem(dailyUsedKey, String(dailyUsed));
+    if (!isSim) localStorage.setItem('edge_bets_used', String(betsUsed));
 
     try {
       const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
@@ -520,7 +562,19 @@ const EDGE_ORCHESTRATOR = (() => {
     catch { return []; }
   }
 
+  function priorFor(priors, gameId) {
+    return priors.find(p => p.game_id === gameId) || null;
+  }
+
   function makePickId(prior) { return prior.game_id; }
+
+  // The full breakdown is already stored in the governor_snapshot column.
+  // Strip it from the nested copy so every row doesn't carry it twice.
+  function slimPhysics(p) {
+    if (!p || !p.governor_snapshot) return p;
+    const { breakdown, ...rest } = p.governor_snapshot;
+    return { ...p, governor_snapshot: rest };
+  }
 
   function makeLogger(onProgress) {
     return (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
