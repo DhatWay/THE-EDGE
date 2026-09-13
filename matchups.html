@@ -55,6 +55,16 @@
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; color: var(--text); }
     .page-title em { color: var(--gold); font-style: normal; }
+
+    /* TIME WINDOW */
+    .time-bar { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); align-items: center; }
+    .time-bar::-webkit-scrollbar { display: none; }
+    .time-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
+    .time-btn { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 7px 14px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .time-btn:hover { border-color: var(--border-bright); color: var(--text-mid); }
+    .time-btn.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+    .time-info { margin-left: auto; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
+
     .filter-bar { display: flex; gap: 0; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
     .filter-bar::-webkit-scrollbar { display: none; }
     .filter-btn { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 14px 18px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
@@ -119,9 +129,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -166,7 +173,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -223,6 +229,16 @@
       <div class="page-title">LIVE <em>MATCHUPS</em></div>
     </div>
 
+    <div class="time-bar" id="timeBar">
+      <span class="time-lbl">Window</span>
+      <button class="time-btn" data-window="today">Today</button>
+      <button class="time-btn" data-window="48h">48 Hours</button>
+      <button class="time-btn active" data-window="week">This Week</button>
+      <button class="time-btn" data-window="next7">Next 7 Days</button>
+      <button class="time-btn" data-window="all">All Upcoming</button>
+      <span class="time-info" id="timeInfo">—</span>
+    </div>
+
     <div class="filter-bar" id="filterBar">
       <button class="filter-btn active" data-sport="all">All <span class="filter-count" id="cnt-all">0</span></button>
       <button class="filter-btn" data-sport="NFL">NFL <span class="filter-count" id="cnt-NFL">0</span></button>
@@ -270,27 +286,22 @@
     const ham = document.getElementById('ham');
     const drawer = document.getElementById('drawer');
     const overlay = document.getElementById('overlay');
-
-    function toggleDrawer() {
-      ham.classList.toggle('open');
-      drawer.classList.toggle('open');
-      overlay.classList.toggle('open');
-    }
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
     ham.addEventListener('click', toggleDrawer);
     overlay.addEventListener('click', toggleDrawer);
     drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
-      ham.classList.remove('open');
-      drawer.classList.remove('open');
-      overlay.classList.remove('open');
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
     // ── STATE ──
     let currentSport = 'all';
-    let allGames = [];
-    let pickIndex = {}; // game_id → pick summary
-    let openIndex = {}; // game_id → opening line data
+    let currentWindow = localStorage.getItem('edge_game_window') || 'week';
+    let allGamesRaw = [];   // everything ever fetched, unfiltered
+    let allGames = [];      // what's shown after time + sport filter
+    let pickIndex = {};
+    let openIndex = {};
 
-    const CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+    const CACHE_TTL_MS = 5 * 60 * 1000;
     const SPORTS = [
       { key: 'americanfootball_nfl',   label: 'NFL' },
       { key: 'basketball_nba',         label: 'NBA' },
@@ -301,7 +312,98 @@
       { key: 'soccer_usa_mls',         label: 'MLS' },
     ];
 
-    // ── FILTERS ──
+    // ── TIME WINDOW ──
+    const TIME_WINDOWS = {
+      today:  { label: 'Today',          days: null },
+      '48h':  { label: 'Next 48 Hours',  days: 2 },
+      week:   { label: 'This Week',      days: null },
+      next7:  { label: 'Next 7 Days',    days: 7 },
+      all:    { label: 'All Upcoming',   days: null },
+    };
+
+    function windowBounds() {
+      const now = new Date();
+      if (currentWindow === 'today') {
+        const start = new Date(now); start.setHours(0, 0, 0, 0);
+        const end = new Date(now); end.setHours(23, 59, 59, 999);
+        return { start, end };
+      }
+      if (currentWindow === '48h') {
+        return { start: now, end: new Date(now.getTime() + 2 * 86400000) };
+      }
+      if (currentWindow === 'week') {
+        // Through end of this week (Sunday 11:59pm local)
+        const end = new Date(now);
+        const dow = end.getDay(); // 0=Sun
+        const daysUntilSun = dow === 0 ? 0 : 7 - dow;
+        end.setDate(end.getDate() + daysUntilSun);
+        end.setHours(23, 59, 59, 999);
+        return { start: now, end };
+      }
+      if (currentWindow === 'next7') {
+        return { start: now, end: new Date(now.getTime() + 7 * 86400000) };
+      }
+      // all
+      return { start: now, end: new Date(now.getTime() + 365 * 86400000) };
+    }
+
+    function filterByWindow(games) {
+      const { start, end } = windowBounds();
+      return games.filter(g => {
+        const t = new Date(g.commence_time || g.time).getTime();
+        if (!isFinite(t)) return false;
+        // Always keep live games (already started but not finished)
+        if (t < start.getTime()) {
+          return !g.completed && t >= start.getTime() - 4 * 3600000;
+        }
+        return t <= end.getTime();
+      });
+    }
+
+    function applyWindow() {
+      allGames = filterByWindow(allGamesRaw);
+      updateCounts();
+      renderGames();
+      writeFilteredToStorage();
+      updateTimeInfo();
+    }
+
+    function updateTimeInfo() {
+      const el = document.getElementById('timeInfo');
+      if (!el) return;
+      const { start, end } = windowBounds();
+      const w = TIME_WINDOWS[currentWindow];
+      if (currentWindow === 'all') {
+        el.textContent = `${allGames.length} upcoming`;
+      } else {
+        const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        el.textContent = `${fmt(start)} → ${fmt(end)} · ${allGames.length} games`;
+      }
+    }
+
+    function writeFilteredToStorage() {
+      try {
+        localStorage.setItem('edge_todays_games', JSON.stringify(allGames));
+        localStorage.setItem('edge_todays_games_ts', String(Date.now()));
+        localStorage.setItem('edge_game_window', currentWindow);
+      } catch {}
+    }
+
+    document.getElementById('timeBar').querySelectorAll('.time-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentWindow = btn.dataset.window;
+        applyWindow();
+      });
+    });
+
+    // Restore active state on load
+    document.querySelectorAll('.time-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.window === currentWindow);
+    });
+
+    // ── SPORT FILTERS ──
     document.getElementById('filterBar').querySelectorAll('.filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -315,23 +417,21 @@
     async function fetchMatchups(opts = {}) {
       const force = opts.force === true;
       const apiKey = localStorage.getItem('edge_odds_api_key');
+      const proxy = (localStorage.getItem('edge_proxy_url') || '').trim();
       const statusEl = document.getElementById('refreshStatus');
 
-      const proxy = (localStorage.getItem('edge_proxy_url') || '').trim();
       if (!apiKey && !proxy) {
         statusEl.textContent = 'Add your Odds API key in Settings';
         renderGames();
         return;
       }
 
-      // Serve cache if fresh and not forced
       if (!force) {
         const cached = readCache();
         if (cached) {
-          allGames = cached.games;
-          updateCounts();
+          allGamesRaw = cached.games;
+          applyWindow();
           await loadContextIndexes();
-          renderGames();
           statusEl.textContent = 'Cached · ' + new Date(cached.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           return;
         }
@@ -345,7 +445,7 @@
 
       for (const sport of SPORTS) {
         try {
-          const res = await fetch(oddsEndpoint(sport.key, apiKey), { cache: 'no-store' });
+          const res = await fetch(oddsEndpoint(sport.key, apiKey, proxy), { cache: 'no-store' });
           if (!res.ok) { failedSports++; continue; }
           const data = await res.json();
           data.forEach(g => {
@@ -364,30 +464,27 @@
         return;
       }
 
-      allGames = fetched;
+      allGamesRaw = fetched;
+      writeRawCache(allGamesRaw);
+
+      applyWindow();
+
       await saveLineSnapshots(allGames);
       await loadContextIndexes();
-      writeCache(allGames);
-      updateCounts();
-      renderGames();
 
-      statusEl.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${allGames.length} games`;
+      statusEl.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${allGames.length} games in window`;
       document.getElementById('refreshBtn').disabled = false;
     }
 
-    // Route through the Edge Function proxy when one is configured, so the
-    // Odds API key can live in Supabase secrets instead of this browser.
-    function oddsEndpoint(sportKey, apiKey) {
-      const proxy = (localStorage.getItem('edge_proxy_url') || '').trim().replace(/\/+$/, '');
+    function oddsEndpoint(sportKey, apiKey, proxy) {
       const query = 'regions=us&markets=spreads,h2h,totals&oddsFormat=american';
-      if (proxy) return `${proxy}/odds?sport=${encodeURIComponent(sportKey)}&${query}`;
+      if (proxy) return `${proxy.replace(/\/+$/, '')}/odds?sport=${encodeURIComponent(sportKey)}&${query}`;
       return `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${apiKey}&${query}`;
     }
 
-    // ── NORMALIZE A GAME ──
+    // ── NORMALIZE ──
     function normalizeGame(raw, sportLabel) {
       if (!raw || !raw.id) return null;
-
       const books = raw.bookmakers || [];
       if (!books.length) return null;
 
@@ -403,31 +500,20 @@
 
       return {
         id: raw.id,
-        _sport: sportLabel,
-        sport: sportLabel,
-        home_team: raw.home_team,
-        away_team: raw.away_team,
-        home: raw.home_team,
-        away: raw.away_team,
-        commence_time: raw.commence_time,
-        time: raw.commence_time,
-        spread: homeSpread,
-        home_spread: homeSpread,
-        away_spread: awaySpread,
-        total: total,
-        ml: homeML,
-        home_ml: homeML,
-        away_ml: awayML,
+        _sport: sportLabel, sport: sportLabel,
+        home_team: raw.home_team, away_team: raw.away_team,
+        home: raw.home_team, away: raw.away_team,
+        commence_time: raw.commence_time, time: raw.commence_time,
+        spread: homeSpread, home_spread: homeSpread, away_spread: awaySpread,
+        total, ml: homeML, home_ml: homeML, away_ml: awayML,
         bookmaker_count: books.length,
         bookmaker: books[0]?.title || '—',
         completed: raw.completed === true,
       };
     }
 
-    // ── CONSENSUS MARKET (median across bookmakers) ──
     function consensusMarket(books, marketKey) {
-      const nameMap = new Map(); // outcome name → [values]
-
+      const nameMap = new Map();
       books.forEach(b => {
         const mkt = b.markets?.find(m => m.key === marketKey);
         if (!mkt) return;
@@ -436,7 +522,6 @@
           nameMap.get(o.name).push({ point: o.point, price: o.price });
         });
       });
-
       if (!nameMap.size) return null;
 
       const out = [];
@@ -459,31 +544,29 @@
       return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     }
 
-    // ── CACHE ──
-    function writeCache(games) {
-      try {
-        localStorage.setItem('edge_todays_games', JSON.stringify(games));
-        localStorage.setItem('edge_todays_games_ts', String(Date.now()));
-      } catch {}
+    // ── CACHE (raw, unfiltered) ──
+    function writeRawCache(games) {
+      try { localStorage.setItem('edge_all_games_raw', JSON.stringify(games)); }
+      catch {}
     }
 
     function readCache() {
       try {
         const ts = parseInt(localStorage.getItem('edge_todays_games_ts') || '0');
         if (!ts || Date.now() - ts > CACHE_TTL_MS) return null;
-        const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+        const raw = localStorage.getItem('edge_all_games_raw');
+        const games = raw ? JSON.parse(raw) : JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
         if (!Array.isArray(games) || !games.length) return null;
         return { games, ts };
       } catch { return null; }
     }
 
-    // ── LINE SNAPSHOTS (to Supabase line_history) ──
+    // ── LINE SNAPSHOTS ──
     async function saveLineSnapshots(games) {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key || !games.length) return;
 
-      // Read the most recent snapshot per game so we only write real movement.
       const latest = {};
       try {
         const inList = games.map(g => g.id).filter(Boolean).map(id => `"${id}"`).join(',');
@@ -504,13 +587,9 @@
         if (!prev) return true;
         return prev.spread !== g.spread || prev.total !== g.total || prev.ml !== g.ml;
       }).map(g => ({
-        game_id: g.id,
-        sport: g._sport,
-        home: g.home_team,
-        away: g.away_team,
-        spread: g.spread,
-        total: g.total,
-        ml: g.ml,
+        game_id: g.id, sport: g._sport,
+        home: g.home_team, away: g.away_team,
+        spread: g.spread, total: g.total, ml: g.ml,
       }));
 
       if (!rows.length) return;
@@ -519,17 +598,15 @@
         await fetch(`${url}/rest/v1/line_history`, {
           method: 'POST',
           headers: {
-            apikey: key,
-            Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
+            apikey: key, Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json', Prefer: 'return=minimal',
           },
           body: JSON.stringify(rows),
         });
       } catch {}
     }
 
-    // ── LOAD CONTEXT (opening lines + existing picks) ──
+    // ── CONTEXT INDEXES ──
     async function loadContextIndexes() {
       openIndex = {};
       pickIndex = {};
@@ -541,7 +618,6 @@
       const gameIds = allGames.map(g => g.id).filter(Boolean);
       if (!gameIds.length) return;
 
-      // Opening lines: earliest snapshot per game
       try {
         const inList = gameIds.map(id => `"${id}"`).join(',');
         const res = await fetch(
@@ -550,13 +626,10 @@
         );
         if (res.ok) {
           const rows = await res.json();
-          rows.forEach(r => {
-            if (!openIndex[r.game_id]) openIndex[r.game_id] = r;
-          });
+          rows.forEach(r => { if (!openIndex[r.game_id]) openIndex[r.game_id] = r; });
         }
       } catch {}
 
-      // Existing shadow picks for these games
       try {
         const inList = gameIds.map(id => `"${id}"`).join(',');
         const res = await fetch(
@@ -573,16 +646,10 @@
         }
       } catch {}
 
-      // Attach opening spread to each game
       allGames.forEach(g => {
         const open = openIndex[g.id];
-        if (open) {
-          g.open_spread = open.spread;
-          g.open_total = open.total;
-        } else {
-          g.open_spread = g.spread;
-          g.open_total = g.total;
-        }
+        if (open) { g.open_spread = open.spread; g.open_total = open.total; }
+        else { g.open_spread = g.spread; g.open_total = g.total; }
       });
     }
 
@@ -624,13 +691,11 @@
         container.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">⚡</div>
-            <div class="empty-title">NO GAMES LOADED</div>
+            <div class="empty-title">NO GAMES IN WINDOW</div>
             <div class="empty-sub">
-              Connect The Odds API in Admin<br>
-              to load live matchups, scores,<br>
-              and betting lines
+              Nothing matches your time window.<br>
+              Try a wider window or hit Refresh.
             </div>
-            <a href="admin.html" class="connect-btn">Go to Admin →</a>
           </div>`;
         return;
       }
@@ -657,19 +722,9 @@
       container.innerHTML = html;
     }
 
-    function abbr(name) {
-      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3);
-    }
-
-    function fmtSpread(v) {
-      if (v === null || v === undefined) return '—';
-      return (v > 0 ? '+' : '') + v;
-    }
-
-    function fmtOdds(v) {
-      if (v === null || v === undefined) return '—';
-      return (v > 0 ? '+' : '') + v;
-    }
+    function abbr(name) { return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3); }
+    function fmtSpread(v) { if (v === null || v === undefined) return '—'; return (v > 0 ? '+' : '') + v; }
+    function fmtOdds(v) { if (v === null || v === undefined) return '—'; return (v > 0 ? '+' : '') + v; }
 
     function buildCard(game, statusCls) {
       const status = gameStatusLabel(game);
@@ -683,11 +738,8 @@
       ].filter(Boolean).join(' ');
 
       const enc = encodeURIComponent(JSON.stringify({
-        id: game.id,
-        home: game.home_team,
-        away: game.away_team,
-        sport: game._sport,
-        time: game.commence_time,
+        id: game.id, home: game.home_team, away: game.away_team,
+        sport: game._sport, time: game.commence_time,
       }));
 
       const pickBadge = hasPick
@@ -774,8 +826,13 @@
         return;
       }
 
-      if (!allGames.length) {
-        statusEl.textContent = 'No games to run';
+      // Run only on the visible window, not every game ever fetched.
+      const gamesToRun = currentSport === 'all'
+        ? allGames
+        : allGames.filter(g => g._sport === currentSport);
+
+      if (!gamesToRun.length) {
+        statusEl.textContent = 'No games in window to run';
         return;
       }
 
@@ -783,7 +840,7 @@
       const mode = window.EDGE_ORCHESTRATOR.getMode();
 
       const result = await window.EDGE_ORCHESTRATOR.run({
-        games: allGames,
+        games: gamesToRun,
         onProgress: (msg) => { statusEl.textContent = msg; },
       });
 
@@ -794,21 +851,19 @@
         return;
       }
 
-      // Refresh pick index and re-render
       await loadContextIndexes();
       renderGames();
 
       const pickCount = result.picks.length;
-      statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} · ${mode === 'ai_assisted' ? 'AI-assisted' : 'Deterministic'} · ${result.duration_ms}ms`;
+      const scope = currentSport === 'all' ? 'window' : currentSport;
+      statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games · ${result.duration_ms}ms`;
     }
 
     // ── AUTO REFRESH ──
     function scheduleRefresh() {
       const hasLive = allGames.some(g => gameStatusLabel(g).cls === 'live');
       if (hasLive) {
-        setTimeout(() => {
-          fetchMatchups().then(scheduleRefresh);
-        }, 30000);
+        setTimeout(() => { fetchMatchups().then(scheduleRefresh); }, 30000);
       }
     }
 
@@ -818,7 +873,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
