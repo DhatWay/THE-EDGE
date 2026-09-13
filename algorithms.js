@@ -1,8 +1,11 @@
 // ============================================================
-// EDGE — ALGORITHMS ENGINE v1.0
+// EDGE — ALGORITHMS ENGINE v1.1
 // 9 signal families · Each consumes a GamePrior from EDGE_POWER
 // Returns: { family, vote, confidence, edge, reason, subs }
 // Deterministic. No Claude. Pure math.
+//
+// v1.1 — familyInjury now reads exact per-player deductions
+// from the roster-based fragmentation engine when available.
 // ============================================================
 
 const EDGE_ALGOS = (() => {
@@ -116,23 +119,19 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 1: TEAM QUALITY ──
-  // Lead: Elo · Supporting: SRS, Pythagorean
   // ============================================================
 
   function familyTeamQuality(prior) {
     const home = prior.home_power;
     const away = prior.away_power;
 
-    // Sub 1: Elo differential
     const eloDiff = (home.elo || 1500) - (away.elo || 1500);
-    const eloSpread = eloDiff / 25; // ~25 Elo pts = 1 spread pt
+    const eloSpread = eloDiff / 25;
     const eloVote = signalVote(eloSpread, 3, 8);
 
-    // Sub 2: SRS differential
     const srsDiff = (home.srs || 0) - (away.srs || 0);
     const srsVote = signalVote(srsDiff, 2, 6);
 
-    // Sub 3: Pythagorean differential
     const pythDiff = ((home.pythagorean || 0.5) - (away.pythagorean || 0.5)) * 100;
     const pythVote = signalVote(pythDiff, 5, 15);
 
@@ -145,25 +144,21 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 2: OFFENSE / DEFENSE ──
-  // Lead: Pace-adjusted net rating · Supporting: scheme matchup
   // ============================================================
 
   function familyOffenseDefense(prior) {
     const home = prior.home_power;
     const away = prior.away_power;
 
-    // Sub 1: Net rating differential
     const homeNet = (home.offense || 50) - (100 - (home.defense || 50));
     const awayNet = (away.offense || 50) - (100 - (away.defense || 50));
     const netDiff = homeNet - awayNet;
     const netVote = signalVote(netDiff, 8, 25);
 
-    // Sub 2: Defense matchup adjustment
     const dm = prior.defense_matchup || {};
     const dmAdj = dm.adjustment_points || 0;
     const dmVote = signalVote(dmAdj, 1, 4);
 
-    // Sub 3: Offensive efficiency delta
     const offDiff = (home.offense || 50) - (away.offense || 50);
     const offVote = signalVote(offDiff, 6, 18);
 
@@ -177,22 +172,18 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 3: COACHING ──
-  // Lead: Situational · Supporting: Halftime adj, Close-game record
   // ============================================================
 
   function familyCoaching(prior) {
     const homeC = prior.home_power?._coach || {};
     const awayC = prior.away_power?._coach || {};
 
-    // Sub 1: Composite coaching rating differential
     const coachDiff = (homeC.overall || 50) - (awayC.overall || 50);
     const coachVote = signalVote(coachDiff, 10, 30);
 
-    // Sub 2: Halftime adjustment differential
     const htDiff = (homeC.halftime_adjustment || 0) - (awayC.halftime_adjustment || 0);
     const htVote = signalVote(htDiff, 1, 3);
 
-    // Sub 3: Close-game record differential
     const closeDiff = ((homeC.close_game_record || 0.5) - (awayC.close_game_record || 0.5)) * 100;
     const closeVote = signalVote(closeDiff, 8, 20);
 
@@ -205,7 +196,6 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 4: MARKET INTELLIGENCE ──
-  // Lead: CLV · Supporting: Sharp money, RLM
   // ============================================================
 
   function familyMarket(prior, context) {
@@ -216,7 +206,6 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // Sub 1: CLV — line move in our favor
     if (open !== null && current !== null && open !== current) {
       const move = current - open;
       const clvVote = signalVote(-move, 1, 3);
@@ -225,16 +214,14 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No line movement data'));
     }
 
-    // Sub 2: Sharp money %
     const sharpPct = hist.sharp_pct;
     if (typeof sharpPct === 'number') {
-      const sharpVal = (sharpPct - 50) / 10; // 60% sharp → +1 signal
+      const sharpVal = (sharpPct - 50) / 10;
       subs.push(signalVote(sharpVal, 0.5, 2));
     } else {
       subs.push(neutral('No sharp money data'));
     }
 
-    // Sub 3: Reverse line movement
     const publicPct = hist.public_pct;
     if (typeof publicPct === 'number' && open !== null && current !== null) {
       const publicOnHome = publicPct > 60;
@@ -263,7 +250,6 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 5: LINE DYNAMICS ──
-  // Lead: Steam move · Supporting: Open-to-close, Public fade
   // ============================================================
 
   function familyLineDynamics(prior, context) {
@@ -274,7 +260,6 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // Sub 1: Steam move — rapid 2pt+ move
     if (open !== null && current !== null) {
       const diff = Math.abs(current - open);
       const hoursOut = context.hoursToGame ?? 999;
@@ -299,7 +284,6 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No line data'));
     }
 
-    // Sub 2: Open-to-close magnitude
     if (open !== null && current !== null) {
       const move = current - open;
       const o2cVote = signalVote(-move, 1.5, 4);
@@ -308,7 +292,6 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No O2C data'));
     }
 
-    // Sub 3: Public fade
     const publicPct = hist.public_pct;
     if (typeof publicPct === 'number' && publicPct >= 75) {
       subs.push({
@@ -330,7 +313,6 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 6: FATIGUE ──
-  // Lead: Rest + travel composite
   // ============================================================
 
   function familyFatigue(prior, context) {
@@ -341,7 +323,6 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // Sub 1: Rest differential
     if (homeRest !== null && awayRest !== null) {
       const restDiff = homeRest - awayRest;
       const restVote = signalVote(restDiff, 1, 3);
@@ -350,7 +331,6 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No rest data'));
     }
 
-    // Sub 2: Travel fatigue (away team penalty)
     if (travelMiles !== null) {
       const travelPenalty = travelMiles > 2000 ? -2
                          : travelMiles > 1000 ? -1
@@ -360,7 +340,6 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No travel data'));
     }
 
-    // Sub 3: Timezone shift
     if (timezones !== null && Math.abs(timezones) >= 2) {
       subs.push({
         vote: 'yes',
@@ -382,7 +361,6 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 7: ENVIRONMENT ──
-  // Lead: Weather · Supporting: Venue factors
   // ============================================================
 
   function familyEnvironment(prior, context) {
@@ -404,8 +382,7 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // Sub 1: Wind
-    const wind = weather.wind_mph;
+    const wind = weather.wind_effect_mph ?? weather.wind_mph;
     if (typeof wind === 'number' && wind >= 15) {
       subs.push({
         vote: 'no',
@@ -417,7 +394,6 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('Wind normal'));
     }
 
-    // Sub 2: Temperature
     const temp = weather.temp_f;
     if (typeof temp === 'number' && temp <= 25) {
       subs.push({
@@ -430,29 +406,29 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('Temp normal'));
     }
 
-    // Sub 3: Precipitation
     const precip = weather.precip_pct;
     if (typeof precip === 'number' && precip >= 60) {
+      const kind = weather.precip_type === 'snow' ? 'snow' : weather.precip_type === 'rain' ? 'rain' : 'precip';
       subs.push({
         vote: 'no',
         confidence: 0.64,
         edge: 0.04,
-        reason: `${precip}% precip — under lean`,
+        reason: `${precip}% ${kind} — under lean`,
       });
     } else {
       subs.push(neutral('No precip'));
     }
 
     return resolveFamily('environment', subs, {
-      wind_mph: wind ?? null,
+      wind_effect_mph: wind ?? null,
       temp_f: temp ?? null,
       precip_pct: precip ?? null,
+      precip_type: weather.precip_type ?? null,
     });
   }
 
   // ============================================================
   // ── FAMILY 8: TREND ──
-  // Lead: Recent form · Supporting: Regression to mean
   // ============================================================
 
   function familyTrend(prior, context) {
@@ -461,22 +437,18 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // Sub 1: Recent form differential (last 5)
     const formDiff = (home.last5_form || 0) - (away.last5_form || 0);
     const formVote = signalVote(formDiff, 4, 12);
     subs.push(formVote);
 
-    // Sub 2: Regression signal — actual vs Pythagorean
     const homeReg = regressionSignal(home);
     const awayReg = regressionSignal(away);
-    const regDiff = awayReg - homeReg; // if away is overperforming more, bet against away
+    const regDiff = awayReg - homeReg;
     const regVote = signalVote(regDiff, 5, 15);
     subs.push(regVote);
 
-    // Sub 3: Home/away split differential
     const homeSplit = parseSplit(home.home_record) - parseSplit(home.away_record);
     const awaySplit = parseSplit(away.home_record) - parseSplit(away.away_record);
-    // Home team benefits from being home; away team's road record matters more
     const splitSignal = (awaySplit < -0.15) ? 1 : (awaySplit > 0.15) ? -0.5 : 0;
     subs.push(signalVote(splitSignal, 0.3, 1));
 
@@ -491,7 +463,6 @@ const EDGE_ALGOS = (() => {
     if (!team) return 0;
     const actual = parseSplit(team.record);
     const expected = team.pythagorean || 0.5;
-    // Positive = team overperforming (fade signal)
     return actual - expected;
   }
 
@@ -504,15 +475,32 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 9: INJURY ──
-  // Lead: Injury impact score
+  // Uses exact per-player deductions from the roster table via
+  // EDGE_INJURY. Falls back to flat estimates when fragmentation
+  // data isn't available for this game.
   // ============================================================
 
   function familyInjury(prior, context) {
     const homeInj = context.homeInjuries || [];
     const awayInj = context.awayInjuries || [];
 
-    const homeImpact = sumInjuryImpact(homeInj);
-    const awayImpact = sumInjuryImpact(awayInj);
+    const hasFragmentation =
+      typeof context.homeOffDeduction === 'number' ||
+      typeof context.homeDefDeduction === 'number' ||
+      typeof context.awayOffDeduction === 'number' ||
+      typeof context.awayDefDeduction === 'number';
+
+    let homeImpact;
+    let awayImpact;
+
+    if (hasFragmentation) {
+      homeImpact = (context.homeOffDeduction || 0) + (context.homeDefDeduction || 0);
+      awayImpact = (context.awayOffDeduction || 0) + (context.awayDefDeduction || 0);
+    } else {
+      homeImpact = sumInjuryImpactFallback(homeInj);
+      awayImpact = sumInjuryImpactFallback(awayInj);
+    }
+
     const diff = awayImpact - homeImpact; // positive favors home
 
     if (homeInj.length === 0 && awayInj.length === 0) {
@@ -523,7 +511,7 @@ const EDGE_ALGOS = (() => {
         edge: 0,
         reason: 'No injury data',
         subs: [],
-        data: { home_impact: 0, away_impact: 0 },
+        data: { home_impact: 0, away_impact: 0, source: 'none' },
       };
     }
 
@@ -532,24 +520,25 @@ const EDGE_ALGOS = (() => {
     return resolveFamily('injury', [sub], {
       home_impact: round(homeImpact, 2),
       away_impact: round(awayImpact, 2),
+      net_impact: round(diff, 2),
       home_count: homeInj.length,
       away_count: awayInj.length,
+      source: hasFragmentation ? 'roster' : 'fallback',
     });
   }
 
-  function sumInjuryImpact(injuries) {
+  // Fallback path for games where EDGE_INJURY didn't produce
+  // fragmentation. Uses coarse positional values.
+  function sumInjuryImpactFallback(injuries) {
     const VORP = {
-      QB: 7, RB: 1.5, WR1: 2, TE: 1,
-      LT: 3, C: 1.5, EDGE1: 2.5, CB1: 2.5,
+      QB: 7, RB: 1.5, WR: 2, TE: 1,
+      LT: 3, C: 1.5, EDGE: 2.5, CB: 2.5,
       STAR: 5, STARTER: 3, ROLE: 1,
     };
     return injuries.reduce((sum, inj) => {
-      if (inj.status === 'out' || inj.status === 'doubtful') {
-        return sum + (VORP[inj.position] || 1);
-      }
-      if (inj.status === 'questionable') {
-        return sum + (VORP[inj.position] || 1) * 0.5;
-      }
+      const base = VORP[inj.position] || 1;
+      if (inj.status === 'out' || inj.status === 'doubtful') return sum + base;
+      if (inj.status === 'questionable') return sum + base * 0.5;
       return sum;
     }, 0);
   }
@@ -575,7 +564,7 @@ const EDGE_ALGOS = (() => {
       return { family, vote: 'neu', confidence: 0.5, edge: 0, reason: 'No signals', subs, data };
     }
 
-    const net = (yesScore - noScore) / totalWeight; // -1 to +1
+    const net = (yesScore - noScore) / totalWeight;
     const vote = Math.abs(net) < 0.1 ? 'neu' : net > 0 ? 'yes' : 'no';
     const confidence = clamp(0.5 + Math.abs(net) * 0.5, 0.5, 1.0);
     const edge = edgeSum / subs.length;
