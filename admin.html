@@ -18,12 +18,11 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="context-builder.js"></script>
-  <script src="orchestrator.js"></script>
-  <script src="learning.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
   <script src="roster-engine.js"></script>
   <script src="injury-fragmentation.js"></script>
+  <script src="orchestrator.js"></script>
+  <script src="learning.js"></script>
+  <script src="parlay.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -135,9 +134,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -154,9 +150,7 @@
       transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
       will-change: transform;
     }
-    .pick-card, .clv-card, .game-card {
-      box-shadow: var(--lift-gold);
-    }
+    .pick-card, .clv-card, .game-card { box-shadow: var(--lift-gold); }
     .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
     .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
     .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
@@ -172,26 +166,13 @@
       .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
       .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
       .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card {
-        transition: none;
-      }
+      .parlay-card, .trend-row-card { transition: none; }
       .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
       .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-        transform: none;
-      }
+      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover { transform: none; }
     }
 
-    /* ── OFFLINE BANNER ── */
-    .offline-bar {
-      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
-      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
-      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
-      padding: 7px 20px; text-align: center;
-      transform: translateY(-100%); transition: transform 0.25s ease;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
-    }
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
     .offline-bar.show { transform: translateY(0); }
   </style>
 </head>
@@ -225,7 +206,7 @@
     <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
-    <a href="diagnostic.html"><span class="ico">⚡</span> Fix </a>
+    <a href="diagnostic.html"><span class="ico">⚡</span> Fix</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
@@ -279,27 +260,40 @@
           <div class="pipeline-title">Power Ratings</div>
         </div>
         <div class="pipeline-desc">
-          Fetches ESPN data for all 7 sports, computes team + coaching + defense matchup ratings, upserts to Supabase.
+          Fetches ESPN data for all in-season sports, computes team + coaching + defense matchup ratings, upserts to Supabase.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runPowerBtn" onclick="runPowerRatings()">▲ Recompute Ratings</button>
         </div>
         <div class="pipeline-log" id="powerLog">Idle.</div>
       </div>
-    </div>
 
-<div class="pipeline-panel">
-  <div class="pipeline-head">
-    <div class="pipeline-title">Build Rosters</div>
-  </div>
-  <div class="pipeline-desc">
-    Fetches every team's roster from ESPN, assigns per-player ratings, computes offensive and defensive contribution. Feeds injury fragmentation.
-  </div>
-  <div class="pipeline-actions single">
-    <button class="pipeline-btn secondary" id="runRosterBtn" onclick="runRosterBuild()">▲ Build Rosters</button>
-  </div>
-  <div class="pipeline-log" id="rosterLog">Idle.</div>
-</div>
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Build Rosters</div>
+        </div>
+        <div class="pipeline-desc">
+          Fetches every team's roster from ESPN, assigns per-player ratings, computes offensive and defensive contribution. Feeds injury fragmentation.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runRosterBtn" onclick="runRosterBuild()">▲ Build Rosters</button>
+        </div>
+        <div class="pipeline-log" id="rosterLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Refresh Injuries</div>
+        </div>
+        <div class="pipeline-desc">
+          Force-refresh the ESPN injury cache so the injury family reads the latest player status on the next pipeline run.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runInjuryBtn" onclick="refreshInjuries()">↻ Refresh Injuries</button>
+        </div>
+        <div class="pipeline-log" id="injuryLog">Idle.</div>
+      </div>
+    </div>
 
     <div class="section">
       <div class="sec-title">CONNECTION <em>STATUS</em></div>
@@ -446,6 +440,7 @@
         <button class="raw-tab" data-tab="shadow" onclick="setRawTab('shadow',this)">Shadow Picks</button>
         <button class="raw-tab" data-tab="weights" onclick="setRawTab('weights',this)">Algo Weights</button>
         <button class="raw-tab" data-tab="power" onclick="setRawTab('power',this)">Power Ratings</button>
+        <button class="raw-tab" data-tab="players" onclick="setRawTab('players',this)">Players</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -457,6 +452,7 @@
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="clearAllKeys()">Remove All API Keys</button>
       <button class="danger-btn" onclick="clearShadowPicks()">Clear All Shadow Picks</button>
+      <button class="danger-btn" onclick="clearInjuryCache()">Clear Injury Cache</button>
       <button class="danger-btn" onclick="clearLocalStorage()">Wipe Local Storage (keeps API keys)</button>
     </div>
 
@@ -510,35 +506,6 @@
 
     // ── RUN FULL PIPELINE ──
     async function runPipeline() {
-
-async function runRosterBuild() {
-  const btn = document.getElementById('runRosterBtn');
-  const logEl = document.getElementById('rosterLog');
-
-  if (!window.EDGE_ROSTER) {
-    showToast('Roster engine not loaded', 'error');
-    return;
-  }
-
-  btn.disabled = true;
-  logEl.textContent = 'Fetching rosters…\n';
-
-  const result = await window.EDGE_ROSTER.buildAll({
-    onProgress: (msg) => {
-      logEl.textContent += msg + '\n';
-      logEl.scrollTop = logEl.scrollHeight;
-    },
-  });
-
-  btn.disabled = false;
-
-  if (result.errors.length) {
-    logEl.textContent += `\n${result.errors.length} errors`;
-  }
-  logEl.textContent += `\n✓ ${result.teams_processed} teams · ${result.players_processed} players`;
-
-  showToast(`✓ ${result.players_processed} players rated`, '');
-}
       const btn = document.getElementById('runPipelineBtn');
       const logEl = document.getElementById('pipelineLog');
       const statusEl = document.getElementById('pipelineStatus');
@@ -627,7 +594,7 @@ async function runRosterBuild() {
       }
 
       btn.disabled = true;
-      logEl.textContent = 'Fetching ESPN data for all sports…\n';
+      logEl.textContent = 'Fetching ESPN data for all in-season sports…\n';
 
       const result = await window.EDGE_POWER.computeAllTeamRatings();
 
@@ -635,11 +602,61 @@ async function runRosterBuild() {
 
       const teamsCount = Object.keys(result.teams || {}).length;
       const coachesCount = Object.keys(result.coaching || {}).length;
+      const skipped = (result.skipped || []).join(', ');
 
       logEl.textContent += `✓ ${teamsCount} teams · ${coachesCount} coaches rated\n`;
+      if (skipped) logEl.textContent += `Skipped (out of season): ${skipped}\n`;
       if (result.errors?.length) logEl.textContent += `Errors: ${result.errors.length}`;
 
       showToast(`✓ ${teamsCount} teams rated`, '');
+    }
+
+    // ── BUILD ROSTERS ──
+    async function runRosterBuild() {
+      const btn = document.getElementById('runRosterBtn');
+      const logEl = document.getElementById('rosterLog');
+
+      if (!window.EDGE_ROSTER) {
+        showToast('Roster engine not loaded', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      logEl.textContent = 'Fetching rosters…\n';
+
+      const result = await window.EDGE_ROSTER.buildAll({
+        onProgress: (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      btn.disabled = false;
+
+      if (result.errors.length) {
+        logEl.textContent += `\n${result.errors.length} errors`;
+      }
+      logEl.textContent += `\n✓ ${result.teams_processed} teams · ${result.players_processed} players`;
+
+      showToast(`✓ ${result.players_processed} players rated`, '');
+    }
+
+    // ── REFRESH INJURIES ──
+    async function refreshInjuries() {
+      const btn = document.getElementById('runInjuryBtn');
+      const logEl = document.getElementById('injuryLog');
+
+      if (!window.EDGE_INJURY) {
+        showToast('Injury engine not loaded', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      logEl.textContent = 'Clearing cache…\n';
+      window.EDGE_INJURY.invalidateCache();
+      logEl.textContent += 'Cache cleared. Next pipeline run will fetch fresh injuries.\n';
+      btn.disabled = false;
+      showToast('Injury cache cleared', '');
     }
 
     // ── SAVE KEY ──
@@ -850,6 +867,16 @@ async function runRosterBuild() {
           return;
         }
 
+        if (currentRawTab === 'players') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/players?select=*&limit=30&order=rating.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
         if (currentRawTab === 'odds') {
           const oddsKey = localStorage.getItem('edge_odds_api_key');
           if (!oddsKey) { out.textContent = 'No Odds API key'; return; }
@@ -891,6 +918,12 @@ async function runRosterBuild() {
         });
         showToast('Shadow picks cleared');
       } catch { showToast('Error clearing', 'error'); }
+    }
+
+    function clearInjuryCache() {
+      localStorage.removeItem('edge_injury_cache_v1');
+      localStorage.removeItem('edge_injury_cache_v2');
+      showToast('Injury cache cleared');
     }
 
     function clearLocalStorage() {
@@ -943,9 +976,6 @@ async function runRosterBuild() {
     // ── INIT ──
     function init() {
       document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
-
-      // Credentials are entered by the operator and persist in this browser.
-      // Nothing is hardcoded here — saved values are never overwritten on load.
       loadSavedIndicators();
       checkConnections();
       updatePipelineMode();
@@ -959,7 +989,6 @@ async function runRosterBuild() {
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
