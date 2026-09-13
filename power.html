@@ -7,14 +7,20 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="context-builder.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="engine.js"></script>
+  <script src="parlay.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -144,6 +150,65 @@
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    /* ── ELEVATION ─────────────────────────────────────────────
+       Cards sit above the page rather than sharing its plane.
+       Two depths: resting, and raised on interaction. */
+    :root {
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
+      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+    }
+    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
+    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
+    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
+    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
+    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
+    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
+      box-shadow: var(--lift);
+      border-radius: 2px;
+      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
+      will-change: transform;
+    }
+    .pick-card, .clv-card, .game-card {
+      box-shadow: var(--lift-gold);
+    }
+    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
+    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
+    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+      box-shadow: var(--lift-high);
+      transform: translateY(-2px);
+    }
+    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
+      box-shadow: var(--lift-high);
+      transform: translateY(-1px);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
+      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
+      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
+      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
+      .parlay-card, .trend-row-card {
+        transition: none;
+      }
+      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
+      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
+      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+        transform: none;
+      }
+    }
+
+    /* ── OFFLINE BANNER ── */
+    .offline-bar {
+      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
+      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
+      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+      padding: 7px 20px; text-align: center;
+      transform: translateY(-100%); transition: transform 0.25s ease;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .offline-bar.show { transform: translateY(0); }
   </style>
 </head>
 <body>
@@ -167,6 +232,7 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -548,6 +614,27 @@
       }
       renderRatings();
       populateCompareSelects();
+    })();
+  </script>
+
+  <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
+  <script>
+    // ── PWA / OFFLINE ──
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('sw.js').catch(function () {});
+        });
+      }
+      var bar = document.getElementById('offlineBar');
+      function sync() {
+        if (!bar) return;
+        bar.classList.toggle('show', !navigator.onLine);
+        document.body.classList.toggle('is-offline', !navigator.onLine);
+      }
+      window.addEventListener('online', sync);
+      window.addEventListener('offline', sync);
+      sync();
     })();
   </script>
 </body>
