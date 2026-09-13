@@ -18,6 +18,10 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="context-builder.js"></script>
+  <script src="roster-engine.js"></script>
+  <script src="roster-enrichment.js"></script>
+  <script src="injury-fragmentation.js"></script>
+  <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -476,8 +480,19 @@
       document.getElementById('refreshBtn').disabled = false;
     }
 
+    // The book the operator actually holds an account with. When set,
+    // every price on this page and every price the pipeline grades
+    // against comes from that book rather than a blended consensus.
+    function activeBook() {
+      return (localStorage.getItem('edge_book_key') || '').trim().toLowerCase();
+    }
+
     function oddsEndpoint(sportKey, apiKey, proxy) {
-      const query = 'regions=us&markets=spreads,h2h,totals&oddsFormat=american';
+      let query = 'regions=us&markets=spreads,h2h,totals&oddsFormat=american';
+      const book = activeBook();
+      // Always request the full board as well — if the chosen book has
+      // not priced a game we still want the consensus fallback.
+      if (book) query += `&bookmakers=${encodeURIComponent(book)}&includeLinks=true`;
       if (proxy) return `${proxy.replace(/\/+$/, '')}/odds?sport=${encodeURIComponent(sportKey)}&${query}`;
       return `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${apiKey}&${query}`;
     }
@@ -488,15 +503,41 @@
       const books = raw.bookmakers || [];
       if (!books.length) return null;
 
-      const spreadMkt = consensusMarket(books, 'spreads');
-      const totalMkt  = consensusMarket(books, 'totals');
-      const h2hMkt    = consensusMarket(books, 'h2h');
+      const bookKey = activeBook();
+      const mine = bookKey ? books.find(b => b.key === bookKey) : null;
+
+      // Price against the operator's own book when it has priced the
+      // game. v1 took books[0] — whichever book the API happened to
+      // list first — so the number modelled was rarely the number
+      // available to bet.
+      const pick = (marketKey) => {
+        if (mine) {
+          const mkt = mine.markets?.find(k => k.key === marketKey);
+          if (mkt?.outcomes?.length) return { outcomes: mkt.outcomes, source: 'book' };
+        }
+        const consensus = consensusMarket(books, marketKey);
+        return consensus ? { outcomes: consensus, source: 'consensus' } : null;
+      };
+
+      const spreadPick = pick('spreads');
+      const totalPick  = pick('totals');
+      const h2hPick    = pick('h2h');
+
+      const spreadMkt = spreadPick?.outcomes || null;
+      const totalMkt  = totalPick?.outcomes || null;
+      const h2hMkt    = h2hPick?.outcomes || null;
 
       const homeSpread = spreadMkt?.find(o => o.name === raw.home_team)?.point ?? null;
       const awaySpread = spreadMkt?.find(o => o.name === raw.away_team)?.point ?? null;
+      const homeSpreadPrice = spreadMkt?.find(o => o.name === raw.home_team)?.price ?? null;
+      const awaySpreadPrice = spreadMkt?.find(o => o.name === raw.away_team)?.price ?? null;
       const total      = totalMkt?.find(o => o.name === 'Over')?.point ?? null;
+      const overPrice  = totalMkt?.find(o => o.name === 'Over')?.price ?? null;
+      const underPrice = totalMkt?.find(o => o.name === 'Under')?.price ?? null;
       const homeML     = h2hMkt?.find(o => o.name === raw.home_team)?.price ?? null;
       const awayML     = h2hMkt?.find(o => o.name === raw.away_team)?.price ?? null;
+
+      const priceSource = spreadPick?.source || 'consensus';
 
       return {
         id: raw.id,
@@ -505,9 +546,15 @@
         home: raw.home_team, away: raw.away_team,
         commence_time: raw.commence_time, time: raw.commence_time,
         spread: homeSpread, home_spread: homeSpread, away_spread: awaySpread,
-        total, ml: homeML, home_ml: homeML, away_ml: awayML,
+        home_spread_price: homeSpreadPrice, away_spread_price: awaySpreadPrice,
+        total, over_price: overPrice, under_price: underPrice,
+        ml: homeML, home_ml: homeML, away_ml: awayML,
         bookmaker_count: books.length,
-        bookmaker: books[0]?.title || '—',
+        bookmaker: mine?.title || books[0]?.title || '—',
+        book_key: mine?.key || books[0]?.key || null,
+        price_source: priceSource,
+        book_link: mine?.link || null,
+        last_update: mine?.last_update || books[0]?.last_update || null,
         completed: raw.completed === true,
       };
     }
