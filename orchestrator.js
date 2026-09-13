@@ -262,6 +262,14 @@ const EDGE_ORCHESTRATOR = (() => {
             total: game.total ?? null,
             home_ml: game.ml ?? null,
             away_ml: game.away_ml ?? null,
+            home_spread_price: game.home_spread_price ?? null,
+            away_spread_price: game.away_spread_price ?? null,
+            over_price: game.over_price ?? null,
+            under_price: game.under_price ?? null,
+            book: game.bookmaker ?? null,
+            book_key: game.book_key ?? null,
+            book_link: game.book_link ?? null,
+            price_source: game.price_source ?? 'consensus',
           },
         });
         prior._raw_game = game;
