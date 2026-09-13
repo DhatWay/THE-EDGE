@@ -1,22 +1,23 @@
 {
-  "name": "THE EDGE — AI Sports Betting Intelligence",
+  "name": "THE EDGE — Sports Betting Intelligence",
   "short_name": "EDGE",
-  "description": "25-algorithm AI sports betting intelligence platform",
- "start_url": "/THE-EDGE/index.html",
+  "description": "Nine-family algorithmic sports betting intelligence with trend parlays and offline access",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "the-edge",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#080808",
   "theme_color": "#C9A84C",
+  "categories": ["sports", "finance", "utilities"],
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Today's Picks", "url": "./picks.html" },
+    { "name": "Trend Bets", "url": "./parlay.html" },
+    { "name": "Live Matchups", "url": "./matchups.html" }
   ]
 }
