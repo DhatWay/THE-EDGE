@@ -71,8 +71,10 @@
     <div class="header">
       <div class="title">FULL <em>DIAGNOSTIC</em></div>
       <div class="btn-bar">
-        <button class="btn" id="runBtn" onclick="runAll()">▶ RUN</button>
+        <button class="btn" id="verifyBtn" onclick="runVerify()">✓ VERIFY DEPLOY</button>
+        <button class="btn" id="runBtn" onclick="runAll()">▶ FULL RUN</button>
         <button class="btn secondary" id="copyBtn" onclick="copyAll()">⧉ COPY ALL</button>
+        <button class="btn secondary" id="purgeBtn" onclick="purgeCache()">⟳ PURGE CACHE</button>
       </div>
     </div>
 
@@ -113,6 +115,314 @@
       t.className = 'toast show' + (isErr ? ' err' : '');
       setTimeout(() => t.className = 'toast', 2200);
     };
+
+
+    // ============================================================
+    // DEPLOY VERIFICATION
+    // Ordered, dependency-aware readiness check. Every step states
+    // PASS / FAIL / WARN and the report ends with the single next
+    // action to take.
+    // ============================================================
+
+    const V = { pass: 0, fail: 0, warn: 0, blockers: [], next: null };
+
+    function vres(label, state, detail) {
+      const mark = state === 'PASS' ? '✓' : state === 'FAIL' ? '✗' : '!';
+      const cls  = state === 'PASS' ? 'ok'  : state === 'FAIL' ? 'err' : 'warn';
+      out('  ' + mark + ' ' + String(label).padEnd(34) + (detail || ''), cls);
+      if (state === 'PASS') V.pass++;
+      else if (state === 'FAIL') { V.fail++; V.blockers.push(label); }
+      else V.warn++;
+    }
+
+    async function runVerify() {
+      lines.length = 0;
+      V.pass = 0; V.fail = 0; V.warn = 0; V.blockers = []; V.next = null;
+      document.getElementById('verifyBtn').disabled = true;
+      setStatus('Verifying…', true);
+
+      out('EDGE DEPLOY VERIFICATION');
+      out('Generated: ' + new Date().toISOString());
+
+      await vStep1_Cache();
+      await vStep2_Modules();
+      await vStep3_Served();
+      await vStep4_Credentials();
+      await vStep5_Tables();
+      await vStep6_Freshness();
+      vStep7_Verdict();
+
+      setStatus('Done · ' + new Date().toLocaleTimeString(), false);
+      document.getElementById('verifyBtn').disabled = false;
+      render();
+    }
+
+    // ── 1. Stale cache is the most common reason a deploy looks inert ──
+    async function vStep1_Cache() {
+      section('1. SERVICE WORKER / CACHE');
+      if (!('serviceWorker' in navigator)) {
+        vres('Service worker', 'WARN', 'unsupported — no cache to go stale');
+        return;
+      }
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        vres('Registrations', regs.length ? 'PASS' : 'WARN',
+             regs.length + ' active');
+
+        const keys = await caches.keys();
+        out('  cache buckets: ' + (keys.join(', ') || 'none'));
+
+        const stale = keys.filter(k => /edge-v1|edge-v2/.test(k));
+        if (stale.length) {
+          vres('Shell cache version', 'FAIL',
+               'stale (' + stale.join(', ') + ') — old modules will be served');
+          V.next = V.next || 'Tap PURGE CACHE below, then reload this page.';
+        } else {
+          vres('Shell cache version', 'PASS', keys.length ? 'current' : 'not yet cached');
+        }
+      } catch (e) {
+        vres('Cache inspection', 'WARN', e.message);
+      }
+    }
+
+    // ── 2. Every module the pipeline needs ──
+    async function vStep2_Modules() {
+      section('2. MODULES');
+      const required = [
+        ['EDGE_POWER',         'power-engine.js',         true],
+        ['EDGE_ALGOS',         'algorithms.js',           true],
+        ['EDGE_GOVERNOR',      'governor.js',             true],
+        ['EDGE_PHYSICS',       'physics.js',              true],
+        ['EDGE_ORCHESTRATOR',  'orchestrator.js',         true],
+        ['EDGE_CONTEXT',       'context-builder.js',      true],
+        ['EDGE_CLAUDE',        'claude.js',               false],
+        ['EDGE_LEARNING',      'learning.js',             false],
+        ['EDGE_PARLAY',        'parlay.js',               false],
+        ['EDGE_ROSTER',        'roster-engine.js',        false],
+        ['EDGE_ROSTER_ENRICH', 'roster-enrichment.js',    false],
+        ['EDGE_INJURY',        'injury-fragmentation.js', false],
+        ['EDGE_ATS',           'ats-tracker.js',          false],
+      ];
+      required.forEach(([name, file, critical]) => {
+        const mod = window[name];
+        if (typeof mod === 'undefined') {
+          vres(name, critical ? 'FAIL' : 'WARN', file + ' did not load');
+        } else {
+          vres(name, 'PASS', Object.keys(mod).length + ' exports');
+        }
+      });
+
+      // The specific failure that killed the whole pipeline last build.
+      if (window.EDGE_POWER && typeof window.EDGE_POWER.computeGamePrior !== 'function') {
+        vres('EDGE_POWER.computeGamePrior', 'FAIL', 'wrong file deployed as power-engine.js');
+      }
+    }
+
+    // ── 3. Confirm the served files are the new ones ──
+    async function vStep3_Served() {
+      section('3. SERVED FILE VERSIONS');
+      const checks = [
+        ['power-engine.js',      'computeAllTeamRatings', 'v4 power engine'],
+        ['power-engine.js',      'seasonStart',           'season-clamped lookback'],
+        ['ats-tracker.js',       'resolveGameOdds',       'core-API odds source'],
+        ['roster-engine.js',     'EDGE_ROSTER_ENGINE',    'roster builder present'],
+        ['roster-enrichment.js', 'buildNormalisers',      'z-scored enrichment'],
+        ['parlay.js',            'matchupTrends',         'H2H trend engine'],
+        ['matchups.html',        'activeBook',            'book-filtered odds'],
+      ];
+      const cache = {};
+      for (const [file, token, label] of checks) {
+        try {
+          if (!(file in cache)) {
+            const res = await fetch(file + '?v=' + Date.now(), { cache: 'no-store' });
+            cache[file] = res.ok ? await res.text() : null;
+          }
+          const body = cache[file];
+          if (body === null) vres(label, 'FAIL', file + ' not found (404)');
+          else vres(label, body.includes(token) ? 'PASS' : 'FAIL',
+                    body.includes(token) ? file : file + ' is the old version');
+        } catch (e) {
+          vres(label, 'FAIL', e.message);
+        }
+      }
+    }
+
+    // ── 4. Credentials ──
+    async function vStep4_Credentials() {
+      section('4. CREDENTIALS');
+      const url  = localStorage.getItem('edge_supabase_url');
+      const key  = localStorage.getItem('edge_supabase_key');
+      const odds = localStorage.getItem('edge_odds_api_key');
+      const book = localStorage.getItem('edge_book_key');
+
+      vres('Supabase URL', url ? 'PASS' : 'FAIL', url || 'not set — Settings › Connections');
+      vres('Supabase key', key ? 'PASS' : 'FAIL', key ? 'set' : 'not set');
+
+      if (url && key) {
+        try {
+          const res = await fetch(url + '/rest/v1/power_ratings?select=id&limit=1',
+            { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+          vres('Supabase reachable', res.ok ? 'PASS' : 'FAIL', 'HTTP ' + res.status);
+        } catch (e) { vres('Supabase reachable', 'FAIL', e.message); }
+      }
+
+      if (odds) {
+        try {
+          const res = await fetch('https://api.the-odds-api.com/v4/sports/?apiKey=' + odds);
+          const left = res.headers.get('x-requests-remaining');
+          vres('Odds API', res.ok ? 'PASS' : 'FAIL',
+               res.ok ? (left ? left + ' requests left' : 'connected') : 'HTTP ' + res.status);
+        } catch (e) { vres('Odds API', 'FAIL', e.message); }
+      } else {
+        vres('Odds API', 'FAIL', 'not set — Settings › Connections');
+      }
+
+      vres('Sportsbook', book ? 'PASS' : 'WARN',
+           book ? 'pricing against ' + book : 'using consensus — Admin › Sportsbook to pick yours');
+
+      try {
+        const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+        vres('ESPN', res.ok ? 'PASS' : 'FAIL', 'HTTP ' + res.status);
+      } catch (e) { vres('ESPN', 'FAIL', e.message); }
+    }
+
+    // ── 5. Tables, in the order the pipeline fills them ──
+    async function vStep5_Tables() {
+      section('5. DATA TABLES');
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { out('  skipped — Supabase not connected'); return; }
+
+      const tables = [
+        ['power_ratings',  'Build Power Ratings', true],
+        ['players',        'Build Rosters',       false],
+        ['team_ats',       'Build ATS',           false],
+        ['matchup_ats',    'Build ATS',           false],
+        ['historical_odds','Build ATS',           false],
+        ['shadow_picks',   'Run pipeline',        false],
+      ];
+
+      for (const [table, action, critical] of tables) {
+        try {
+          const res = await fetch(url + '/rest/v1/' + table + '?select=*&limit=1',
+            { headers: { apikey: key, Authorization: 'Bearer ' + key, Prefer: 'count=exact' } });
+          if (!res.ok) {
+            vres(table, 'FAIL', 'HTTP ' + res.status + ' — table missing?');
+            continue;
+          }
+          const range = res.headers.get('content-range') || '';
+          const count = parseInt(range.split('/')[1] || '0', 10);
+          if (count > 0) vres(table, 'PASS', count.toLocaleString() + ' rows');
+          else {
+            vres(table, critical ? 'FAIL' : 'WARN', 'empty — run Admin › ' + action);
+            V.next = V.next || 'Admin › ' + action;
+          }
+        } catch (e) { vres(table, 'FAIL', e.message); }
+      }
+    }
+
+    // ── 6. Is the data current and clean ──
+    async function vStep6_Freshness() {
+      section('6. DATA QUALITY');
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { out('  skipped — Supabase not connected'); return; }
+
+      try {
+        const res = await fetch(
+          url + '/rest/v1/power_ratings?select=sport,team_name,games_played,record,updated_at&order=updated_at.desc&limit=400',
+          { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+        if (!res.ok) { vres('Power ratings read', 'FAIL', 'HTTP ' + res.status); return; }
+        const rows = await res.json();
+        if (!rows.length) { vres('Power ratings', 'FAIL', 'no rows'); return; }
+
+        const ageHrs = (Date.now() - new Date(rows[0].updated_at)) / 3600000;
+        vres('Last rebuild', ageHrs < 36 ? 'PASS' : 'WARN', ageHrs.toFixed(1) + ' hours ago');
+
+        const sports = {};
+        rows.forEach(r => { (sports[r.sport] = sports[r.sport] || []).push(r); });
+        Object.entries(sports).forEach(([sp, list]) => {
+          const avg = list.reduce((a, r) => a + (r.games_played || 0), 0) / list.length;
+          out('    ' + sp.padEnd(7) + list.length + ' teams · ' + avg.toFixed(1) + ' games avg');
+        });
+
+        // Preseason contamination signature: NFL teams carrying more
+        // games than weeks elapsed since the season opened.
+        const nfl = sports.NFL || [];
+        if (nfl.length) {
+          const opener = new Date(new Date().getFullYear(), 8, 4);
+          const weeks = Math.max(0, Math.floor((Date.now() - opener) / (7 * 86400000)));
+          const maxGames = Math.max(...nfl.map(r => r.games_played || 0));
+          if (maxGames > weeks + 1) {
+            vres('NFL preseason filter', 'FAIL',
+                 maxGames + ' games vs ~' + weeks + ' weeks played — preseason is leaking in');
+          } else {
+            vres('NFL preseason filter', 'PASS', maxGames + ' games max, ~' + weeks + ' weeks in');
+          }
+        }
+
+        const mlb = sports.MLB || [];
+        if (mlb.length) {
+          const avg = mlb.reduce((a, r) => a + (r.games_played || 0), 0) / mlb.length;
+          const month = new Date().getMonth() + 1;
+          const expected = month >= 9 ? 140 : month >= 7 ? 90 : 40;
+          vres('MLB season coverage', avg >= expected * 0.8 ? 'PASS' : 'FAIL',
+               avg.toFixed(0) + ' games avg, expected ~' + expected);
+        }
+      } catch (e) { vres('Data quality', 'FAIL', e.message); }
+    }
+
+    // ── 7. Verdict and the single next action ──
+    function vStep7_Verdict() {
+      section('7. VERDICT');
+      out('  ' + V.pass + ' passed · ' + V.warn + ' warnings · ' + V.fail + ' failed',
+          V.fail ? 'err' : 'ok');
+
+      if (V.blockers.length) {
+        out('');
+        out('  Blocking:', 'err');
+        V.blockers.forEach(b => out('    · ' + b, 'err'));
+      }
+
+      out('');
+      if (V.fail === 0 && V.warn === 0) {
+        out('  READY — run the pipeline from Today\u2019s Picks.', 'ok');
+      } else if (V.next) {
+        out('  NEXT: ' + V.next, 'warn');
+      } else if (V.fail) {
+        out('  NEXT: clear the blocking items above, then verify again.', 'warn');
+      } else {
+        out('  Usable. Warnings above are optional features.', 'warn');
+      }
+
+      out('');
+      out('  Recommended order on a fresh deploy:');
+      out('    1. Purge cache, reload');
+      out('    2. Settings › Connections — Supabase, Odds API');
+      out('    3. Admin › Sportsbook — pick your book');
+      out('    4. Admin › Build Power Ratings');
+      out('    5. Admin › Build Rosters, then Enrich Rosters');
+      out('    6. Admin › Build ATS  (long, resumable — run twice)');
+      out('    7. Matchups — refresh the board');
+      out('    8. Today\u2019s Picks — run the pipeline');
+      out('    9. Trend Bets — build');
+    }
+
+    // ── Cache purge ──
+    async function purgeCache() {
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        }
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+        showToast('Cache purged — reloading');
+        setTimeout(() => location.reload(true), 900);
+      } catch (e) {
+        showToast('Purge failed: ' + e.message, true);
+      }
+    }
 
     // ============================================================
     // MAIN
