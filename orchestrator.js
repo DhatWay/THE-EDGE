@@ -1,10 +1,7 @@
 // ============================================================
-// EDGE — ORCHESTRATOR v2.4
-// Context-aware · dedup-safe · auto-sim-bet
-//
-// v2.4 — passes exact per-player injury deductions to the
-// injury family via buildGameContext. Writes last_run cache
-// with full governor snapshot for offline rendering.
+// EDGE — ORCHESTRATOR v2.5
+// Passes ATS + H2H trend data through to algorithms so the
+// trend family can vote on real form and matchup history.
 // ============================================================
 
 const EDGE_ORCHESTRATOR = (() => {
@@ -69,12 +66,16 @@ const EDGE_ORCHESTRATOR = (() => {
           travel: Object.keys(builtContext.travelByGame || {}).length,
           weather: Object.keys(builtContext.weatherByGame || {}).length,
           injuries: Object.keys(builtContext.injuriesByGame || {}).length,
+          ats: Object.keys(builtContext.atsByTeam || {}).length,
+          h2h: Object.keys(builtContext.h2hByGame || {}).length,
         };
         log(`  Line history: ${summary.stages.context_loaded.line_history} games`);
         log(`  Rest: ${summary.stages.context_loaded.rest} teams`);
         log(`  Travel: ${summary.stages.context_loaded.travel} games`);
         log(`  Weather: ${summary.stages.context_loaded.weather} games`);
         log(`  Injuries: ${summary.stages.context_loaded.injuries} games`);
+        log(`  ATS teams: ${summary.stages.context_loaded.ats}`);
+        log(`  H2H matchups: ${summary.stages.context_loaded.h2h}`);
       } else {
         log('  context-builder.js not loaded — running with empty context');
       }
@@ -156,7 +157,6 @@ const EDGE_ORCHESTRATOR = (() => {
       summary.completed_at = new Date().toISOString();
       summary.duration_ms = Date.now() - startedAt;
 
-      // Cache last run for offline / fallback rendering.
       try {
         localStorage.setItem('edge_last_run', JSON.stringify({
           run_id: runId,
@@ -298,28 +298,17 @@ const EDGE_ORCHESTRATOR = (() => {
     return results;
   }
 
-  // ============================================================
-  // ── GAME CONTEXT ──
-  // Packs everything the algorithms need for a single game into
-  // a flat object. Roster-based injury deductions are passed
-  // through here so the injury family can use real per-player
-  // contributions instead of flat position estimates.
-  // ============================================================
-
   function buildGameContext(prior, sharedContext) {
     const ctx = { ...sharedContext };
 
-    // Line history for this game
     if (sharedContext.lineHistoryByGame?.[prior.game_id]) {
       ctx.lineHistory = sharedContext.lineHistoryByGame[prior.game_id];
     }
 
-    // Weather
     if (sharedContext.weatherByGame?.[prior.game_id]) {
       ctx.weather = sharedContext.weatherByGame[prior.game_id];
     }
 
-    // Injuries — carry both the raw list and the exact deductions
     if (sharedContext.injuriesByGame?.[prior.game_id]) {
       const inj = sharedContext.injuriesByGame[prior.game_id];
       ctx.homeInjuries = inj.home || [];
@@ -332,19 +321,16 @@ const EDGE_ORCHESTRATOR = (() => {
       ctx.injuryNetDefEdge = inj.net_def_edge || 0;
     }
 
-    // Rest days
     if (sharedContext.restByTeam) {
       ctx.homeRestDays = sharedContext.restByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
       ctx.awayRestDays = sharedContext.restByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
     }
 
-    // Practice days (rest minus travel/recovery)
     if (sharedContext.practiceDaysByTeam) {
       ctx.homePracticeDays = sharedContext.practiceDaysByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
       ctx.awayPracticeDays = sharedContext.practiceDaysByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
     }
 
-    // Road-trip context
     if (sharedContext.roadTripLengthByTeam) {
       ctx.homeRoadTripLength = sharedContext.roadTripLengthByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
       ctx.awayRoadTripLength = sharedContext.roadTripLengthByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
@@ -354,13 +340,20 @@ const EDGE_ORCHESTRATOR = (() => {
       ctx.awayTravelType = sharedContext.travelTypeByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
     }
 
-    // Travel distance for this game
     if (sharedContext.travelByGame?.[prior.game_id]) {
       ctx.travelMiles = sharedContext.travelByGame[prior.game_id].miles ?? null;
       ctx.timezoneShift = sharedContext.travelByGame[prior.game_id].timezones ?? null;
     }
 
-    // Time to game (drives steam detection)
+    // ATS + H2H trends
+    if (sharedContext.atsByTeam) {
+      ctx.homeAts = sharedContext.atsByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
+      ctx.awayAts = sharedContext.atsByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
+    }
+    if (sharedContext.h2hByGame?.[prior.game_id]) {
+      ctx.h2h = sharedContext.h2hByGame[prior.game_id];
+    }
+
     if (prior.commence_time) {
       ctx.hoursToGame = Math.max(0, (new Date(prior.commence_time) - Date.now()) / 3600000);
     }
@@ -404,10 +397,9 @@ const EDGE_ORCHESTRATOR = (() => {
             lineHistory: ctx.lineHistory || null,
             weather: ctx.weather || null,
             injuries: { home: ctx.homeInjuries || [], away: ctx.awayInjuries || [] },
-            rest: {
-              home: ctx.homeRestDays,
-              away: ctx.awayRestDays,
-            },
+            rest: { home: ctx.homeRestDays, away: ctx.awayRestDays },
+            ats: { home: ctx.homeAts, away: ctx.awayAts },
+            h2h: ctx.h2h || null,
           },
         };
       });
