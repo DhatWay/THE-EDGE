@@ -19,7 +19,9 @@
   <script src="claude.js"></script>
   <script src="context-builder.js"></script>
   <script src="roster-engine.js"></script>
+  <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
+  <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -244,6 +246,19 @@
 
       <div class="pipeline-panel">
         <div class="pipeline-head">
+          <div class="pipeline-title">Full Data Refresh</div>
+        </div>
+        <div class="pipeline-desc">
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Refresh Injuries. Takes 3-5 minutes. Use this before a fresh pipeline run.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
+        </div>
+        <div class="pipeline-log" id="fullRefreshLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
           <div class="pipeline-title">Learning Loop</div>
         </div>
         <div class="pipeline-desc">
@@ -273,12 +288,38 @@
           <div class="pipeline-title">Build Rosters</div>
         </div>
         <div class="pipeline-desc">
-          Fetches every team's roster from ESPN, assigns per-player ratings, computes offensive and defensive contribution. Feeds injury fragmentation.
+          Fetches every team's roster from ESPN, assigns per-player ratings, computes offensive and defensive contribution. Seeds the players table.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runRosterBtn" onclick="runRosterBuild()">▲ Build Rosters</button>
         </div>
         <div class="pipeline-log" id="rosterLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Enrich Rosters</div>
+        </div>
+        <div class="pipeline-desc">
+          Pulls real per-player production stats from ESPN and refines ratings from the 50 baseline to a 40-95 scale based on percentile rank within position group. Run after Build Rosters.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runEnrichBtn" onclick="runRosterEnrich()">▲ Enrich Rosters</button>
+        </div>
+        <div class="pipeline-log" id="enrichLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Build ATS & H2H</div>
+        </div>
+        <div class="pipeline-desc">
+          Builds team ATS form and head-to-head spread history from two seasons of results. Feeds the trend family and the analysis page.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runAtsBtn" onclick="runAtsBuild()">▲ Build ATS & H2H</button>
+        </div>
+        <div class="pipeline-log" id="atsLog">Idle.</div>
       </div>
 
       <div class="pipeline-panel">
@@ -441,6 +482,8 @@
         <button class="raw-tab" data-tab="weights" onclick="setRawTab('weights',this)">Algo Weights</button>
         <button class="raw-tab" data-tab="power" onclick="setRawTab('power',this)">Power Ratings</button>
         <button class="raw-tab" data-tab="players" onclick="setRawTab('players',this)">Players</button>
+        <button class="raw-tab" data-tab="ats" onclick="setRawTab('ats',this)">Team ATS</button>
+        <button class="raw-tab" data-tab="h2h" onclick="setRawTab('h2h',this)">Matchup ATS</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -502,6 +545,38 @@
       localStorage.setItem('edge_decision_mode', next);
       updatePipelineMode();
       showToast('Decision mode: ' + (next === 'ai_assisted' ? 'AI-Assisted' : 'Deterministic'), next === 'ai_assisted' ? 'blue' : '');
+    }
+
+    // ── FULL REFRESH ──
+    async function runFullRefresh() {
+      const btn = document.getElementById('runFullRefreshBtn');
+      const logEl = document.getElementById('fullRefreshLog');
+      btn.disabled = true;
+      logEl.textContent = '';
+
+      const log = (msg) => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      log('Stage 1/5 · Power Ratings');
+      try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 2/5 · Build Rosters');
+      try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 3/5 · Enrich Rosters');
+      try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 4/5 · Build ATS & H2H');
+      try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 5/5 · Refresh Injuries');
+      try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
+
+      log('✓ Full refresh complete');
+      btn.disabled = false;
+      showToast('✓ Full refresh complete', '');
     }
 
     // ── RUN FULL PIPELINE ──
@@ -584,77 +659,104 @@
     }
 
     // ── RUN POWER RATINGS ──
-    async function runPowerRatings() {
+    async function runPowerRatings(silent = false) {
       const btn = document.getElementById('runPowerBtn');
       const logEl = document.getElementById('powerLog');
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching ESPN data…\n'; }
 
-      if (!window.EDGE_POWER) {
-        showToast('Power engine not loaded', 'error');
-        return;
-      }
-
-      btn.disabled = true;
-      logEl.textContent = 'Fetching ESPN data for all in-season sports…\n';
+      if (!window.EDGE_POWER) { showToast('Power engine not loaded', 'error'); return; }
 
       const result = await window.EDGE_POWER.computeAllTeamRatings();
 
-      btn.disabled = false;
+      if (!silent) btn.disabled = false;
 
       const teamsCount = Object.keys(result.teams || {}).length;
       const coachesCount = Object.keys(result.coaching || {}).length;
       const skipped = (result.skipped || []).join(', ');
 
-      logEl.textContent += `✓ ${teamsCount} teams · ${coachesCount} coaches rated\n`;
-      if (skipped) logEl.textContent += `Skipped (out of season): ${skipped}\n`;
-      if (result.errors?.length) logEl.textContent += `Errors: ${result.errors.length}`;
-
-      showToast(`✓ ${teamsCount} teams rated`, '');
+      if (!silent) {
+        logEl.textContent += `✓ ${teamsCount} teams · ${coachesCount} coaches\n`;
+        if (skipped) logEl.textContent += `Skipped: ${skipped}\n`;
+        showToast(`✓ ${teamsCount} teams rated`, '');
+      }
+      return result;
     }
 
     // ── BUILD ROSTERS ──
-    async function runRosterBuild() {
+    async function runRosterBuild(silent = false) {
       const btn = document.getElementById('runRosterBtn');
       const logEl = document.getElementById('rosterLog');
-
-      if (!window.EDGE_ROSTER) {
-        showToast('Roster engine not loaded', 'error');
-        return;
-      }
-
-      btn.disabled = true;
-      logEl.textContent = 'Fetching rosters…\n';
+      if (!window.EDGE_ROSTER) { showToast('Roster engine not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching rosters…\n'; }
 
       const result = await window.EDGE_ROSTER.buildAll({
-        onProgress: (msg) => {
+        onProgress: silent ? null : (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
         },
       });
 
-      btn.disabled = false;
-
-      if (result.errors.length) {
-        logEl.textContent += `\n${result.errors.length} errors`;
+      if (!silent) {
+        btn.disabled = false;
+        logEl.textContent += `\n✓ ${result.teams_processed} teams · ${result.players_processed} players`;
+        showToast(`✓ ${result.players_processed} players rated`, '');
       }
-      logEl.textContent += `\n✓ ${result.teams_processed} teams · ${result.players_processed} players`;
+      return result;
+    }
 
-      showToast(`✓ ${result.players_processed} players rated`, '');
+    // ── ENRICH ROSTERS ──
+    async function runRosterEnrich(silent = false) {
+      const btn = document.getElementById('runEnrichBtn');
+      const logEl = document.getElementById('enrichLog');
+      if (!window.EDGE_ROSTER_ENRICH) { showToast('Enrichment engine not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching player stats…\n'; }
+
+      const result = await window.EDGE_ROSTER_ENRICH.enrichAll({
+        onProgress: silent ? null : (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      if (!silent) {
+        btn.disabled = false;
+        logEl.textContent += `\n✓ ${result.totals.enriched} players enriched`;
+        showToast(`✓ ${result.totals.enriched} players enriched`, '');
+      }
+      return result;
+    }
+
+    // ── BUILD ATS ──
+    async function runAtsBuild(silent = false) {
+      const btn = document.getElementById('runAtsBtn');
+      const logEl = document.getElementById('atsLog');
+      if (!window.EDGE_ATS) { showToast('ATS tracker not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Building ATS tables…\n'; }
+
+      const result = await window.EDGE_ATS.buildAll({
+        onProgress: silent ? null : (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      if (!silent) {
+        btn.disabled = false;
+        logEl.textContent += `\n✓ ${result.totals.teams} team rows · ${result.totals.matchups} matchup rows`;
+        showToast(`✓ ATS: ${result.totals.teams} teams · ${result.totals.matchups} matchups`, '');
+      }
+      return result;
     }
 
     // ── REFRESH INJURIES ──
     async function refreshInjuries() {
       const btn = document.getElementById('runInjuryBtn');
       const logEl = document.getElementById('injuryLog');
-
-      if (!window.EDGE_INJURY) {
-        showToast('Injury engine not loaded', 'error');
-        return;
-      }
-
+      if (!window.EDGE_INJURY) { showToast('Injury engine not loaded', 'error'); return; }
       btn.disabled = true;
       logEl.textContent = 'Clearing cache…\n';
       window.EDGE_INJURY.invalidateCache();
-      logEl.textContent += 'Cache cleared. Next pipeline run will fetch fresh injuries.\n';
+      logEl.textContent += 'Cache cleared. Next pipeline run fetches fresh injuries.\n';
       btn.disabled = false;
       showToast('Injury cache cleared', '');
     }
@@ -870,6 +972,26 @@
         if (currentRawTab === 'players') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
           const res = await fetch(`${url}/rest/v1/players?select=*&limit=30&order=rating.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
+        if (currentRawTab === 'ats') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/team_ats?select=*&limit=30&order=season_cover_pct.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
+        if (currentRawTab === 'h2h') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/matchup_ats?select=*&limit=30&order=meetings.desc`, {
             headers: { apikey: key, Authorization: `Bearer ${key}` }
           });
           const data = await res.json();
