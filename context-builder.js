@@ -1,7 +1,11 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v3.0
-// Top-tier build.
-// Real ESPN injuries · rich weather · practice days · road-trip detection
+// EDGE — CONTEXT BUILDER v3.1
+// Line history · rest days · practice days · road trips
+// Rich weather · injuries via EDGE_INJURY fragmentation engine
+//
+// All team cities verified against current 2026 venues.
+// Dead VORP code removed — injuries now come from the roster
+// table via EDGE_INJURY.fragment().
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
@@ -19,53 +23,7 @@ const EDGE_CONTEXT = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // Lookback for rest-day / schedule context. Big enough that every team's
-  // most recent game falls inside the window even across a bye week.
   const REST_LOOKBACK_DAYS = 60;
-
-  // Injuries update slowly. One fetch per sport per hour is plenty.
-  const INJURY_CACHE_KEY = 'edge_injury_cache_v1';
-  const INJURY_CACHE_TTL_MS = 60 * 60 * 1000;
-
-  // How much a missing player at each position is worth in spread points.
-  // Values are the estimated per-game point value over a replacement starter.
-  const POSITION_VORP = {
-    // NFL offense
-    QB: 7.0, RB: 1.5, FB: 0.5,
-    WR: 1.5, 'WR1': 2.0, TE: 1.2,
-    // NFL offensive line
-    LT: 3.0, LG: 1.5, C: 1.8, RG: 1.5, RT: 2.5,
-    OT: 2.5, G: 1.5, T: 2.5,
-    // NFL defense
-    EDGE: 2.5, DE: 2.5, DT: 2.0, NT: 2.0, DL: 2.0,
-    CB: 2.5, S: 2.0, FS: 2.0, SS: 2.0,
-    LB: 1.8, ILB: 1.8, OLB: 2.0, MLB: 2.0,
-    K: 0.8, P: 0.4,
-    // NBA
-    PG: 4.5, SG: 4.0, SF: 4.0, PF: 4.0, 'C': 3.5,
-    G: 4.0, F: 4.0,
-    // MLB
-    SP: 4.0, RP: 1.5, CP: 2.5,
-    DH: 1.5, IF: 1.5, OF: 1.5,
-    // NHL
-    G: 4.0, D: 2.5, LW: 2.0, RW: 2.0,
-    // generic
-    STAR: 5.0, STARTER: 3.0, ROLE: 1.0,
-  };
-
-  // Multiply the VORP by status to get the effective loss.
-  const STATUS_WEIGHT = {
-    'out': 1.0,
-    'out for season': 1.0,
-    'injured reserve': 1.0,
-    'ir': 1.0,
-    'suspended': 1.0,
-    'doubtful': 0.75,
-    'questionable': 0.35,
-    'day-to-day': 0.2,
-    'game-time decision': 0.4,
-    'probable': 0.05,
-  };
 
   const TEAM_CITIES = {
     // ── NFL ──
@@ -154,7 +112,7 @@ const EDGE_CONTEXT = (() => {
     'Minnesota Twins': [44.9817, -93.2778],
     'New York Mets': [40.7571, -73.8458],
     'New York Yankees': [40.8296, -73.9262],
-    'Athletics': [38.5804, -121.5088], // West Sacramento
+    'Athletics': [38.5804, -121.5088],
     'Philadelphia Phillies': [39.9061, -75.1665],
     'Pittsburgh Pirates': [40.4469, -80.0058],
     'San Diego Padres': [32.7076, -117.1570],
@@ -201,7 +159,6 @@ const EDGE_CONTEXT = (() => {
     'Winnipeg Jets': [49.8927, -97.1437],
   };
 
-  // Venues that remove weather from the equation entirely.
   const DOMED_HOMES = new Set([
     'Arizona Cardinals', 'Atlanta Falcons', 'Dallas Cowboys', 'Detroit Lions',
     'Houston Texans', 'Indianapolis Colts', 'Las Vegas Raiders', 'Los Angeles Chargers',
@@ -210,17 +167,11 @@ const EDGE_CONTEXT = (() => {
     'Seattle Mariners', 'Texas Rangers', 'Toronto Blue Jays', 'Tampa Bay Rays',
   ]);
 
-  // US Eastern timezone reference — every city coord ends up producing
-  // the same tz shift calculation.
-  const TZ_REF_LON = -75;
-
   return {
     buildContext,
     computeRestDays,
     computeTravelMiles,
     TEAM_CITIES,
-    POSITION_VORP,
-    STATUS_WEIGHT,
   };
 
   // ============================================================
@@ -243,6 +194,7 @@ const EDGE_CONTEXT = (() => {
     if (!Array.isArray(games) || !games.length) return ctx;
 
     ctx.lineHistoryByGame = await loadLineHistory(games);
+
     const schedule = await loadScheduleContext(games);
     ctx.restByTeam = schedule.restByTeam;
     ctx.practiceDaysByTeam = schedule.practiceDaysByTeam;
@@ -344,7 +296,6 @@ const EDGE_CONTEXT = (() => {
     const now = new Date();
     const start = new Date(now.getTime() - REST_LOOKBACK_DAYS * 86400000);
 
-    // per-sport: sorted list of completed games with home/away team names
     const schedules = {};
 
     await Promise.all(sports.map(async sport => {
@@ -372,8 +323,6 @@ const EDGE_CONTEXT = (() => {
       schedules[sport] = list;
     }));
 
-    // For every game in the request, compute rest + travel context for
-    // both teams based on their last 5 completed games.
     games.forEach(g => {
       const sport = g._sport || g.sport;
       const when = new Date(g.commence_time || g.time);
@@ -395,7 +344,6 @@ const EDGE_CONTEXT = (() => {
         if (rest < 0 || rest > 30) return;
 
         out.restByTeam[key] = rest;
-        // Practice days: one recovery/travel day is lost between games.
         out.practiceDaysByTeam[key] = Math.max(0, rest - 1);
 
         const wasHome = last.homeName === team;
@@ -404,14 +352,12 @@ const EDGE_CONTEXT = (() => {
           ? (isHome ? 'home_to_home' : 'home_to_away')
           : (isHome ? 'away_to_home' : 'away_to_away');
 
-        // Consecutive away games ending at this game.
         let roadTrip = 0;
         for (let i = priorGames.length - 1; i >= 0; i--) {
           const wasAway = priorGames[i].homeName !== team;
           if (!wasAway) break;
           roadTrip++;
         }
-        // Plus the current game if it's away.
         const currentAway = !isHome;
         out.roadTripLengthByTeam[key] = roadTrip + (currentAway ? 1 : 0);
       });
@@ -496,7 +442,6 @@ const EDGE_CONTEXT = (() => {
         const rainIn = pickF('rain', 3);
         const snowCm = pick('snowfall');
 
-        // Effective wind for betting: gust weight above steady speed.
         const windEffect = (windSpeed != null && windGust != null)
           ? Math.round(windSpeed + (windGust - windSpeed) * 0.3)
           : windSpeed;
@@ -527,147 +472,19 @@ const EDGE_CONTEXT = (() => {
   }
 
   // ============================================================
-  // ── INJURIES (ESPN) ──
+  // ── INJURIES ──
+  // Delegates to EDGE_INJURY which reads the roster table so
+  // every injured player's exact offensive and defensive
+  // contribution is subtracted from team power.
   // ============================================================
 
   async function loadInjuries(games) {
-    const out = {};
-
-    const teamsBySport = {};
-    games.forEach(g => {
-      const sport = g._sport || g.sport;
-      if (!ESPN_MAP[sport]) return;
-      if (!teamsBySport[sport]) teamsBySport[sport] = new Set();
-      teamsBySport[sport].add(g.home_team || g.home);
-      teamsBySport[sport].add(g.away_team || g.away);
-    });
-
-    if (!Object.keys(teamsBySport).length) return out;
-
-    // Per-sport injury cache: { [sport]: { fetchedAt, byTeam: { teamName: [...] } } }
-    let cache = {};
-    try { cache = JSON.parse(localStorage.getItem(INJURY_CACHE_KEY) || '{}'); } catch {}
-
-    for (const sport of Object.keys(teamsBySport)) {
-      const entry = cache[sport];
-      const fresh = entry && (Date.now() - entry.fetchedAt) < INJURY_CACHE_TTL_MS;
-      if (!fresh) {
-        const byTeam = await fetchEspnInjuries(ESPN_MAP[sport]);
-        cache[sport] = { fetchedAt: Date.now(), byTeam };
-      }
-    }
-
-    try { localStorage.setItem(INJURY_CACHE_KEY, JSON.stringify(cache)); } catch {}
-
-    games.forEach(g => {
-      const sport = g._sport || g.sport;
-      const byTeam = cache[sport]?.byTeam || {};
-      const home = g.home_team || g.home;
-      const away = g.away_team || g.away;
-
-      const homeInj = normalizeInjuries(byTeam[home] || []);
-      const awayInj = normalizeInjuries(byTeam[away] || []);
-
-      if (!homeInj.length && !awayInj.length) return;
-
-      out[g.id] = {
-        home: homeInj,
-        away: awayInj,
-        home_impact: sumVorp(homeInj),
-        away_impact: sumVorp(awayInj),
-        net_impact: sumVorp(awayInj) - sumVorp(homeInj), // positive favors home
-      };
-    });
-
-    return out;
-  }
-
-  async function fetchEspnInjuries(path) {
-    const urls = [
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries`,
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries?limit=500`,
-    ];
-
-    for (const url of urls) {
+    if (window.EDGE_INJURY && typeof window.EDGE_INJURY.fragment === 'function') {
       try {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const byTeam = parseEspnInjuries(data);
-        if (Object.keys(byTeam).length) return byTeam;
-      } catch {}
+        return await window.EDGE_INJURY.fragment(games);
+      } catch { return {}; }
     }
-
     return {};
-  }
-
-  function parseEspnInjuries(data) {
-    const byTeam = {};
-    if (!data) return byTeam;
-
-    const list =
-      Array.isArray(data.injuries) ? data.injuries :
-      Array.isArray(data.items)    ? data.items    :
-      Array.isArray(data.athletes) ? data.athletes : [];
-
-    list.forEach(entry => {
-      // Two shapes ESPN uses:
-      // 1) { team: {...}, injuries: [ { athlete, status } ] }
-      // 2) { athlete: {...}, team: {...}, status: "..." }
-      const teamName =
-        entry.team?.displayName ||
-        entry.team?.name ||
-        entry.teamName ||
-        null;
-      if (!teamName) return;
-
-      const injuries = Array.isArray(entry.injuries) ? entry.injuries : [entry];
-
-      if (!byTeam[teamName]) byTeam[teamName] = [];
-
-      injuries.forEach(inj => {
-        const athlete = inj.athlete || entry.athlete;
-        const name = athlete?.displayName || athlete?.fullName || null;
-        const position =
-          athlete?.position?.abbreviation ||
-          athlete?.position?.name ||
-          inj.position?.abbreviation ||
-          null;
-        const status =
-          (inj.status || entry.status || '').toString().toLowerCase().trim();
-
-        if (!name && !position) return;
-
-        byTeam[teamName].push({
-          name: name || 'Unknown',
-          position: position || 'ROLE',
-          status,
-          short_comment: inj.shortComment || inj.longComment || inj.details?.type || null,
-        });
-      });
-    });
-
-    return byTeam;
-  }
-
-  function normalizeInjuries(list) {
-    return list.filter(i => {
-      if (!i || !i.status) return false;
-      const s = i.status.toLowerCase();
-      // Only keep statuses that matter.
-      return s === 'out' || s === 'out for season' || s === 'injured reserve'
-          || s === 'ir' || s === 'suspended'
-          || s === 'doubtful' || s === 'questionable'
-          || s === 'day-to-day' || s === 'game-time decision';
-    });
-  }
-
-  function sumVorp(injuries) {
-    return injuries.reduce((sum, inj) => {
-      const posWeight = POSITION_VORP[inj.position] || POSITION_VORP.ROLE;
-      const statusWeight = STATUS_WEIGHT[inj.status.toLowerCase()] ?? 0.25;
-      return sum + (posWeight * statusWeight);
-    }, 0);
   }
 
   // ============================================================
