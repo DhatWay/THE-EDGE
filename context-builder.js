@@ -1,11 +1,7 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v3.1
-// Line history · rest days · practice days · road trips
-// Rich weather · injuries via EDGE_INJURY fragmentation engine
-//
-// All team cities verified against current 2026 venues.
-// Dead VORP code removed — injuries now come from the roster
-// table via EDGE_INJURY.fragment().
+// EDGE — CONTEXT BUILDER v3.2
+// Adds ATS + H2H trend data loading. Feeds the trend family
+// in algorithms.js with team ATS form and matchup history.
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
@@ -26,7 +22,6 @@ const EDGE_CONTEXT = (() => {
   const REST_LOOKBACK_DAYS = 60;
 
   const TEAM_CITIES = {
-    // ── NFL ──
     'Arizona Cardinals': [33.5276, -112.2626],
     'Atlanta Falcons': [33.7554, -84.4008],
     'Baltimore Ravens': [39.2780, -76.6227],
@@ -59,8 +54,6 @@ const EDGE_CONTEXT = (() => {
     'Tampa Bay Buccaneers': [27.9759, -82.5033],
     'Tennessee Titans': [36.1665, -86.7713],
     'Washington Commanders': [38.9077, -77.0728],
-
-    // ── NBA ──
     'Atlanta Hawks': [33.7573, -84.3963],
     'Boston Celtics': [42.3662, -71.0621],
     'Brooklyn Nets': [40.6826, -73.9754],
@@ -91,8 +84,6 @@ const EDGE_CONTEXT = (() => {
     'Toronto Raptors': [43.6435, -79.3791],
     'Utah Jazz': [40.7683, -111.9011],
     'Washington Wizards': [38.8981, -77.0209],
-
-    // ── MLB ──
     'Arizona Diamondbacks': [33.4455, -112.0667],
     'Atlanta Braves': [33.8908, -84.4678],
     'Baltimore Orioles': [39.2840, -76.6217],
@@ -123,8 +114,6 @@ const EDGE_CONTEXT = (() => {
     'Texas Rangers': [32.7474, -97.0825],
     'Toronto Blue Jays': [43.6414, -79.3894],
     'Washington Nationals': [38.8730, -77.0074],
-
-    // ── NHL ──
     'Anaheim Ducks': [33.8078, -117.8768],
     'Boston Bruins': [42.3662, -71.0621],
     'Buffalo Sabres': [42.8750, -78.8765],
@@ -174,10 +163,6 @@ const EDGE_CONTEXT = (() => {
     TEAM_CITIES,
   };
 
-  // ============================================================
-  // ── MAIN ──
-  // ============================================================
-
   async function buildContext(games) {
     const ctx = {
       lineHistoryByGame: {},
@@ -188,6 +173,8 @@ const EDGE_CONTEXT = (() => {
       travelByGame: {},
       weatherByGame: {},
       injuriesByGame: {},
+      atsByTeam: {},
+      h2hByGame: {},
       loadedAt: new Date().toISOString(),
     };
 
@@ -216,12 +203,12 @@ const EDGE_CONTEXT = (() => {
     ctx.weatherByGame = await loadWeather(games);
     ctx.injuriesByGame = await loadInjuries(games);
 
+    const trends = await loadTrends(games);
+    ctx.atsByTeam = trends.atsByTeam;
+    ctx.h2hByGame = trends.h2hByGame;
+
     return ctx;
   }
-
-  // ============================================================
-  // ── LINE HISTORY ──
-  // ============================================================
 
   async function loadLineHistory(games) {
     const url = SUPABASE_URL();
@@ -275,10 +262,6 @@ const EDGE_CONTEXT = (() => {
 
     return out;
   }
-
-  // ============================================================
-  // ── SCHEDULE / REST / PRACTICE / ROAD TRIP ──
-  // ============================================================
 
   async function loadScheduleContext(games) {
     const out = {
@@ -378,10 +361,6 @@ const EDGE_CONTEXT = (() => {
     } catch { return []; }
   }
 
-  // ============================================================
-  // ── WEATHER (Open-Meteo, rich) ──
-  // ============================================================
-
   async function loadWeather(games) {
     const out = {};
 
@@ -471,13 +450,6 @@ const EDGE_CONTEXT = (() => {
     return out;
   }
 
-  // ============================================================
-  // ── INJURIES ──
-  // Delegates to EDGE_INJURY which reads the roster table so
-  // every injured player's exact offensive and defensive
-  // contribution is subtracted from team power.
-  // ============================================================
-
   async function loadInjuries(games) {
     if (window.EDGE_INJURY && typeof window.EDGE_INJURY.fragment === 'function') {
       try {
@@ -485,6 +457,75 @@ const EDGE_CONTEXT = (() => {
       } catch { return {}; }
     }
     return {};
+  }
+
+  // ============================================================
+  // ── TRENDS (ATS + H2H) ──
+  // ============================================================
+
+  async function loadTrends(games) {
+    const out = { atsByTeam: {}, h2hByGame: {} };
+    const url = SUPABASE_URL();
+    const key = SUPABASE_KEY();
+    if (!url || !key) return out;
+
+    // Collect unique teams per sport
+    const teamsBySport = {};
+    games.forEach(g => {
+      const sport = g._sport || g.sport;
+      const home = g.home_team || g.home;
+      const away = g.away_team || g.away;
+      if (!sport) return;
+      if (!teamsBySport[sport]) teamsBySport[sport] = new Set();
+      if (home) teamsBySport[sport].add(home);
+      if (away) teamsBySport[sport].add(away);
+    });
+
+    // Batch team_ats lookups
+    for (const sport of Object.keys(teamsBySport)) {
+      const teams = Array.from(teamsBySport[sport]);
+      if (!teams.length) continue;
+      const inList = teams.map(t => `"${t}"`).join(',');
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/team_ats?sport=eq.${sport}&team_name=in.(${inList})&select=*`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (res.ok) {
+          const rows = await res.json();
+          rows.forEach(r => { out.atsByTeam[`${sport}:${r.team_name}`] = r; });
+        }
+      } catch {}
+    }
+
+    // Batch matchup_ats lookups — one query per sport returns every
+    // matchup involving any of today's teams. Filter after.
+    for (const sport of Object.keys(teamsBySport)) {
+      const teams = Array.from(teamsBySport[sport]);
+      if (!teams.length) continue;
+      const inList = teams.map(t => `"${t}"`).join(',');
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/matchup_ats?sport=eq.${sport}&or=(team_a.in.(${inList}),team_b.in.(${inList}))&select=*`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (res.ok) {
+          const rows = await res.json();
+          // Map back to each game by matching both teams
+          games.forEach(g => {
+            const s = g._sport || g.sport;
+            if (s !== sport) return;
+            const home = g.home_team || g.home;
+            const away = g.away_team || g.away;
+            const [a, b] = [home, away].sort();
+            const match = rows.find(r => r.team_a === a && r.team_b === b);
+            if (match) out.h2hByGame[g.id] = match;
+          });
+        }
+      } catch {}
+    }
+
+    return out;
   }
 
   // ============================================================
