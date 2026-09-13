@@ -1,55 +1,122 @@
 // ============================================================
-// EDGE — Service Worker
-// Network-first for everything. Cache is offline fallback only.
-// No version numbers to bump. Updates are instant on reload.
+// EDGE — Service Worker v2
+// App shell is precached so every page opens offline.
+// Network-first at runtime so a reload always gets fresh code.
 // ============================================================
 
-const CACHE = 'edge-runtime-v1';
+const VERSION = 'edge-v2';
+const SHELL = `${VERSION}-shell`;
+const RUNTIME = `${VERSION}-runtime`;
+
+const SHELL_FILES = [
+  './',
+  './index.html',
+  './matchups.html',
+  './picks.html',
+  './parlay.html',
+  './analysis.html',
+  './algorithms.html',
+  './power.html',
+  './lines.html',
+  './intelligence.html',
+  './history.html',
+  './performance.html',
+  './betting.html',
+  './settings.html',
+  './admin.html',
+  './diagnostic.html',
+  './power-engine.js',
+  './algorithms.js',
+  './governor.js',
+  './physics.js',
+  './claude.js',
+  './context-builder.js',
+  './orchestrator.js',
+  './learning.js',
+  './parlay.js',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
+];
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(SHELL);
+      // One bad URL must not fail the whole install.
+      await Promise.all(SHELL_FILES.map(f =>
+        cache.add(new Request(f, { cache: 'reload' })).catch(() => {})
+      ));
+      await self.skipWaiting();
+    })()
+  );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      // Clear any old caches from previous SW versions
       const keys = await caches.keys();
       await Promise.all(
-        keys.filter(k => k !== CACHE).map(k => caches.delete(k))
+        keys.filter(k => k !== SHELL && k !== RUNTIME).map(k => caches.delete(k))
       );
       await self.clients.claim();
     })()
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const req = event.request;
-
-  // Only handle GET. Skip anything else (POST to Supabase, etc.)
-  if (req.method !== 'GET') return;
-
-  // Skip cross-origin (ESPN, Odds API, Supabase, fonts)
-  const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;
-
-  event.respondWith(networkFirst(req));
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
 });
 
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+
+  // Same-origin app files: network first, cache as the offline fallback.
+  if (url.origin === self.location.origin) {
+    event.respondWith(networkFirst(req));
+    return;
+  }
+
+  // Read-only Supabase and ESPN data: serve from cache when the network is
+  // gone so dashboards still render something truthful and timestamped.
+  if (isCacheableApi(url)) {
+    event.respondWith(networkFirstApi(req));
+  }
+});
+
+function isCacheableApi(url) {
+  return url.hostname.endsWith('.supabase.co') && url.pathname.startsWith('/rest/v1/')
+      || url.hostname === 'site.api.espn.com';
+}
+
 async function networkFirst(req) {
-  const cache = await caches.open(CACHE);
+  const cache = await caches.open(SHELL);
   try {
-    // Try the network first. Always.
     const fresh = await fetch(req, { cache: 'no-store' });
-    // Cache the fresh copy for offline use
-    if (fresh && fresh.ok) {
-      cache.put(req, fresh.clone()).catch(() => {});
-    }
+    if (fresh && fresh.ok) cache.put(req, fresh.clone()).catch(() => {});
     return fresh;
   } catch (e) {
-    // Network failed (offline). Fall back to cache.
-    const cached = await cache.match(req);
+    const cached = await cache.match(req) || await cache.match('./index.html');
     if (cached) return cached;
     throw e;
+  }
+}
+
+async function networkFirstApi(req) {
+  const cache = await caches.open(RUNTIME);
+  try {
+    const fresh = await fetch(req);
+    if (fresh && fresh.ok) cache.put(req, fresh.clone()).catch(() => {});
+    return fresh;
+  } catch (e) {
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'X-Edge-Offline': '1' },
+    });
   }
 }
