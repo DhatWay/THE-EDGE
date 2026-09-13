@@ -7,14 +7,20 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="context-builder.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="engine.js"></script>
+  <script src="parlay.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -200,6 +206,80 @@
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    /* ── ELEVATION ─────────────────────────────────────────────
+       Cards sit above the page rather than sharing its plane.
+       Two depths: resting, and raised on interaction. */
+    :root {
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
+      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+    }
+    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
+    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
+    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
+    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
+    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
+    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
+      box-shadow: var(--lift);
+      border-radius: 2px;
+      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
+      will-change: transform;
+    }
+    .pick-card, .clv-card, .game-card {
+      box-shadow: var(--lift-gold);
+    }
+    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
+    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
+    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+      box-shadow: var(--lift-high);
+      transform: translateY(-2px);
+    }
+    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
+      box-shadow: var(--lift-high);
+      transform: translateY(-1px);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
+      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
+      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
+      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
+      .parlay-card, .trend-row-card {
+        transition: none;
+      }
+      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
+      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
+      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+        transform: none;
+      }
+    }
+
+    /* ── OFFLINE BANNER ── */
+    .offline-bar {
+      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
+      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
+      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+      padding: 7px 20px; text-align: center;
+      transform: translateY(-100%); transition: transform 0.25s ease;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .offline-bar.show { transform: translateY(0); }
+
+    /* ── EXPORT BAR ── */
+    .export-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 18px; border-bottom: 1px solid var(--border); }
+    .export-btn { flex: 1 1 auto; min-width: 116px; background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 11px 12px; cursor: pointer; box-shadow: var(--lift); border-radius: 2px; transition: all 0.2s; }
+    .export-btn:hover { border-color: var(--gold); color: var(--gold); box-shadow: var(--lift-high); transform: translateY(-2px); }
+    .export-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
+    .export-scope { display: flex; gap: 6px; align-items: center; padding: 0 20px 14px; }
+    .export-scope select { background: var(--bg3); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 13px; padding: 8px 10px; border-radius: 2px; }
+    .export-scope label { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); }
+    @media print {
+      nav, .drawer, .overlay, .tab-strip, .export-bar, .export-scope, footer, .offline-bar { display: none !important; }
+      body { background: #fff; color: #000; }
+      .panel { display: block !important; }
+      main { padding-top: 0; }
+    }
   </style>
 </head>
 <body>
@@ -223,6 +303,7 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -257,6 +338,26 @@
       <button class="tab" data-tab="trends">Trends</button>
       <button class="tab" data-tab="modes">Mode Compare</button>
     </div>
+
+    <div class="export-scope">
+      <label for="exportRange">Report range</label>
+      <select id="exportRange">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+        <option value="0">All time</option>
+      </select>
+    </div>
+
+    <div class="export-bar">
+      <button class="export-btn primary" onclick="downloadReport('html')">Download report</button>
+      <button class="export-btn" onclick="downloadReport('csv')">Picks CSV</button>
+      <button class="export-btn" onclick="downloadReport('families')">Families CSV</button>
+      <button class="export-btn" onclick="downloadReport('power')">Power CSV</button>
+      <button class="export-btn" onclick="downloadReport('json')">Full JSON</button>
+      <button class="export-btn" onclick="window.print()">Print / PDF</button>
+    </div>
+
 
     <!-- OVERVIEW -->
     <div class="panel active" data-panel="overview">
@@ -978,6 +1079,230 @@
       }).join('');
     }
 
+
+    // ── REPORT EXPORT ──
+    function exportRangeDays() {
+      const el = document.getElementById('exportRange');
+      return el ? parseInt(el.value || '0') : 0;
+    }
+
+    function picksInRange() {
+      const days = exportRangeDays();
+      if (!days) return allPicks;
+      const cutoff = Date.now() - days * 86400000;
+      return allPicks.filter(p => !p.created_at || new Date(p.created_at).getTime() >= cutoff);
+    }
+
+    function csvEscape(v) {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+
+    function toCsv(headers, rows) {
+      return [headers.join(','), ...rows.map(r => r.map(csvEscape).join(','))].join('\n');
+    }
+
+    function saveFile(filename, content, mime) {
+      const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      showToast('Saved ' + filename);
+    }
+
+    function stamp() {
+      const d = new Date();
+      return d.getFullYear() + '-' +
+             String(d.getMonth() + 1).padStart(2, '0') + '-' +
+             String(d.getDate()).padStart(2, '0');
+    }
+
+    function reportSummary(picks) {
+      const settled = picks.filter(p => p.result === 'W' || p.result === 'L');
+      const w = picks.filter(p => p.result === 'W').length;
+      const l = picks.filter(p => p.result === 'L').length;
+      const pu = picks.filter(p => p.result === 'P').length;
+      const units = picks.reduce((s, p) => s + (p.units || 0), 0);
+      const pnl = picks.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
+      const confs = picks.map(p => p.confidence).filter(c => typeof c === 'number');
+      return {
+        total: picks.length,
+        settled: settled.length,
+        pending: picks.length - settled.length - pu,
+        wins: w, losses: l, pushes: pu,
+        win_rate: (w + l) > 0 ? (w / (w + l)) * 100 : null,
+        units: units,
+        pnl: pnl,
+        roi: units > 0 ? (pnl / units) * 100 : null,
+        avg_confidence: confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : null,
+      };
+    }
+
+    function downloadReport(kind) {
+      const picks = picksInRange();
+
+      if (!picks.length && kind !== 'power') {
+        showToast('Nothing to export in this range', true);
+        return;
+      }
+
+      if (kind === 'csv') {
+        const headers = ['date','sport','mode','decision','away_team','home_team','side','confidence','edge','units','spread','result','pnl','clv','game_id'];
+        const rows = picks.map(p => [
+          p.created_at ? new Date(p.created_at).toISOString() : '',
+          p.sport, p.decision_mode, p.decision,
+          p.away_team, p.home_team, p.side_team,
+          p.confidence, p.edge, p.units, p.market_spread,
+          p.result || 'PENDING', p.pnl, p.clv, p.game_id,
+        ]);
+        saveFile(`edge-picks-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
+        return;
+      }
+
+      if (kind === 'families') {
+        if (!allWeights.length) { showToast('No family data — run the learning loop', true); return; }
+        const headers = ['sport','family','wins','losses','pushes','roi','base_weight','dynamic_weight','last_updated'];
+        const rows = allWeights.map(w => [
+          w.sport, w.family, w.wins, w.losses, w.pushes,
+          w.roi, w.base_weight, w.dynamic_weight, w.last_updated,
+        ]);
+        saveFile(`edge-families-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
+        return;
+      }
+
+      if (kind === 'power') {
+        if (!allPower.length) { showToast('No power ratings loaded', true); return; }
+        const headers = ['sport','team_name','overall','offense','defense','pythagorean','srs','elo','record','home_record','away_record','last5_form','games_played'];
+        const rows = allPower.map(t => [
+          t.sport, t.team_name, t.overall, t.offense, t.defense, t.pythagorean,
+          t.srs, t.elo, t.record, t.home_record, t.away_record, t.last5_form, t.games_played,
+        ]);
+        saveFile(`edge-power-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
+        return;
+      }
+
+      if (kind === 'json') {
+        const payload = {
+          generated_at: new Date().toISOString(),
+          range_days: exportRangeDays() || 'all',
+          summary: reportSummary(picks),
+          picks,
+          algorithm_weights: allWeights,
+          power_ratings: allPower,
+          games_cached: allGames.length,
+        };
+        saveFile(`edge-report-${stamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+        return;
+      }
+
+      if (kind === 'html') {
+        saveFile(`edge-report-${stamp()}.html`, buildHtmlReport(picks), 'text/html');
+        return;
+      }
+    }
+
+    function buildHtmlReport(picks) {
+      const s = reportSummary(picks);
+      const rangeLabel = exportRangeDays() ? `Last ${exportRangeDays()} days` : 'All time';
+      const esc = v => String(v ?? '—').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const n = (v, d = 1) => typeof v === 'number' ? v.toFixed(d) : '—';
+
+      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+      const sportRows = sports.map(sp => {
+        const sub = picks.filter(p => p.sport === sp);
+        if (!sub.length) return '';
+        const st = reportSummary(sub);
+        return `<tr><td>${sp}</td><td>${st.total}</td><td>${st.wins}-${st.losses}-${st.pushes}</td>
+          <td>${n(st.win_rate)}%</td><td>${n(st.pnl)}u</td><td>${n(st.roi)}%</td></tr>`;
+      }).join('');
+
+      const pickRows = picks.slice(0, 500).map(p => `
+        <tr>
+          <td>${p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</td>
+          <td>${esc(p.sport)}</td>
+          <td>${esc(p.decision)}</td>
+          <td>${esc(p.away_team)} @ ${esc(p.home_team)}</td>
+          <td>${esc(p.side_team)}</td>
+          <td>${n(p.confidence)}%</td>
+          <td>${n((p.edge || 0) * 100, 2)}%</td>
+          <td>${esc(p.units)}u</td>
+          <td class="${p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : ''}">${esc(p.result || 'PENDING')}</td>
+          <td>${p.pnl != null ? n(p.pnl) + 'u' : '—'}</td>
+        </tr>`).join('');
+
+      const familyRows = allWeights.map(w => `
+        <tr><td>${esc(w.family)}</td><td>${esc(w.sport)}</td>
+        <td>${w.wins || 0}-${w.losses || 0}</td>
+        <td>${n((w.roi || 0) * 100)}%</td>
+        <td>${n(w.dynamic_weight || w.base_weight)}</td></tr>`).join('');
+
+      return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EDGE Report — ${stamp()}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+         background: #fff; color: #16130c; margin: 0; padding: 28px 22px 60px; line-height: 1.5; }
+  header { border-bottom: 3px solid #C9A84C; padding-bottom: 14px; margin-bottom: 26px; }
+  h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: 1px; }
+  .meta { color: #6b6354; font-size: 13px; }
+  h2 { font-size: 17px; margin: 32px 0 10px; padding-bottom: 5px; border-bottom: 1px solid #e2ddd0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; margin: 18px 0 6px; }
+  .card { border: 1px solid #e2ddd0; border-radius: 4px; padding: 13px 14px;
+          box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 5px 14px rgba(0,0,0,.06); }
+  .card .k { font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; color: #8a8172; margin-bottom: 5px; }
+  .card .v { font-size: 25px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  th { text-align: left; font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase;
+       color: #8a8172; border-bottom: 1.5px solid #C9A84C; padding: 7px 8px; }
+  td { padding: 7px 8px; border-bottom: 1px solid #f0ece2; }
+  tbody tr:nth-child(even) { background: #faf8f3; }
+  .w { color: #1f7a43; font-weight: 600; }
+  .l { color: #b3352a; font-weight: 600; }
+  footer { margin-top: 44px; padding-top: 12px; border-top: 1px solid #e2ddd0; color: #8a8172; font-size: 11.5px; }
+  @media print { body { padding: 0; } .card { box-shadow: none; } }
+</style></head>
+<body>
+<header>
+  <h1>THE EDGE — Performance Report</h1>
+  <div class="meta">${rangeLabel} &middot; generated ${new Date().toLocaleString()}</div>
+</header>
+
+<h2>Summary</h2>
+<div class="cards">
+  <div class="card"><div class="k">Picks</div><div class="v">${s.total}</div></div>
+  <div class="card"><div class="k">Record</div><div class="v">${s.wins}-${s.losses}-${s.pushes}</div></div>
+  <div class="card"><div class="k">Win rate</div><div class="v">${n(s.win_rate)}%</div></div>
+  <div class="card"><div class="k">Units staked</div><div class="v">${n(s.units)}</div></div>
+  <div class="card"><div class="k">Net</div><div class="v">${n(s.pnl)}u</div></div>
+  <div class="card"><div class="k">ROI</div><div class="v">${n(s.roi)}%</div></div>
+  <div class="card"><div class="k">Avg confidence</div><div class="v">${n(s.avg_confidence)}%</div></div>
+  <div class="card"><div class="k">Pending</div><div class="v">${s.pending}</div></div>
+</div>
+
+<h2>By sport</h2>
+<table><thead><tr><th>Sport</th><th>Picks</th><th>Record</th><th>Win %</th><th>Net</th><th>ROI</th></tr></thead>
+<tbody>${sportRows || '<tr><td colspan="6">No sport data in this range</td></tr>'}</tbody></table>
+
+<h2>Algorithm families</h2>
+<table><thead><tr><th>Family</th><th>Sport</th><th>Record</th><th>ROI</th><th>Weight</th></tr></thead>
+<tbody>${familyRows || '<tr><td colspan="5">No family data — run the learning loop</td></tr>'}</tbody></table>
+
+<h2>Picks</h2>
+<table><thead><tr><th>Date</th><th>Sport</th><th>Decision</th><th>Matchup</th><th>Side</th><th>Conf</th><th>Edge</th><th>Units</th><th>Result</th><th>P/L</th></tr></thead>
+<tbody>${pickRows || '<tr><td colspan="10">No picks in this range</td></tr>'}</tbody></table>
+
+<footer>Generated by THE EDGE. Past results do not predict future outcomes.</footer>
+</body></html>`;
+    }
+
     // ── TOAST ──
     function showToast(msg, isError) {
       const t = document.getElementById('toast');
@@ -988,6 +1313,27 @@
 
     // ── INIT ──
     loadAll();
+  </script>
+
+  <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
+  <script>
+    // ── PWA / OFFLINE ──
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('sw.js').catch(function () {});
+        });
+      }
+      var bar = document.getElementById('offlineBar');
+      function sync() {
+        if (!bar) return;
+        bar.classList.toggle('show', !navigator.onLine);
+        document.body.classList.toggle('is-offline', !navigator.onLine);
+      }
+      window.addEventListener('online', sync);
+      window.addEventListener('offline', sync);
+      sync();
+    })();
   </script>
 </body>
 </html>
