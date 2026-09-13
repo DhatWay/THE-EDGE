@@ -1,11 +1,12 @@
 // ============================================================
-// EDGE — ALGORITHMS ENGINE v1.1
+// EDGE — ALGORITHMS ENGINE v1.2
 // 9 signal families · Each consumes a GamePrior from EDGE_POWER
 // Returns: { family, vote, confidence, edge, reason, subs }
 // Deterministic. No Claude. Pure math.
 //
-// v1.1 — familyInjury now reads exact per-player deductions
-// from the roster-based fragmentation engine when available.
+// v1.2 — familyTrend now reads team ATS form + H2H cover history
+// from context.atsByTeam / context.h2h. Trend is judged on how
+// teams actually perform against the number, not just straight-up.
 // ============================================================
 
 const EDGE_ALGOS = (() => {
@@ -65,6 +66,10 @@ const EDGE_ALGOS = (() => {
     },
   };
 
+  // Minimum sample sizes for ATS signals to fire.
+  const MIN_ATS_SAMPLE = 6;
+  const MIN_H2H_SAMPLE = 3;
+
   return {
     runAll,
     runFamily,
@@ -72,10 +77,6 @@ const EDGE_ALGOS = (() => {
     FAMILY_WEIGHTS,
     getFamilyWeight,
   };
-
-  // ============================================================
-  // ── MAIN ENTRY ──
-  // ============================================================
 
   async function runAll(prior, context = {}) {
     const results = [];
@@ -429,34 +430,112 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 8: TREND ──
+  // Judges how teams actually perform against the number, not
+  // just straight up. Three signals:
+  //   1. ATS form (last 10 cover rate, season cover rate)
+  //   2. ATS momentum (heating up / cooling off from team_ats)
+  //   3. Head-to-head cover history in the matchup
   // ============================================================
 
   function familyTrend(prior, context) {
     const home = prior.home_power;
     const away = prior.away_power;
+    const homeAts = context.homeAts || null;
+    const awayAts = context.awayAts || null;
+    const h2h = context.h2h || null;
 
     const subs = [];
 
-    const formDiff = (home.last5_form || 0) - (away.last5_form || 0);
-    const formVote = signalVote(formDiff, 4, 12);
-    subs.push(formVote);
+    // ── Sub 1: last-10 ATS cover rate differential ──
+    // Higher cover rate → stronger signal in that team's favor.
+    if (homeAts && awayAts &&
+        homeAts.last10_wins != null && homeAts.last10_losses != null &&
+        awayAts.last10_wins != null && awayAts.last10_losses != null) {
+      const homeTotal = homeAts.last10_wins + homeAts.last10_losses;
+      const awayTotal = awayAts.last10_wins + awayAts.last10_losses;
 
+      if (homeTotal >= MIN_ATS_SAMPLE && awayTotal >= MIN_ATS_SAMPLE) {
+        const homeRate = homeAts.last10_wins / homeTotal;
+        const awayRate = awayAts.last10_wins / awayTotal;
+        const rateDiff = (homeRate - awayRate) * 100;
+        subs.push(signalVote(rateDiff, 8, 20));
+      } else {
+        subs.push(neutral('Last-10 sample too small'));
+      }
+    } else {
+      subs.push(neutral('No ATS form data'));
+    }
+
+    // ── Sub 2: momentum — is a team heating up or cooling off? ──
+    // team_ats.trend_label is 'heating_up' | 'cooling_off' | 'stable'
+    // and trend_delta is last10_rate - season_rate.
+    const homeMomentum = momentumSignal(homeAts);
+    const awayMomentum = momentumSignal(awayAts);
+    const momDiff = homeMomentum - awayMomentum;
+    subs.push(signalVote(momDiff, 0.08, 0.20));
+
+    // ── Sub 3: home/away ATS split for each side ──
+    // The home team benefits from being home; use the away team's
+    // road ATS record and the home team's home ATS record.
+    if (homeAts && homeAts.home_cover_pct != null &&
+        awayAts && awayAts.away_cover_pct != null) {
+      const homeHome = homeAts.home_cover_pct;
+      const awayRoad = awayAts.away_cover_pct;
+      const splitDiff = (homeHome - awayRoad) * 100;
+      subs.push(signalVote(splitDiff, 10, 25));
+    } else {
+      subs.push(neutral('No H/A split data'));
+    }
+
+    // ── Sub 4: H2H cover history ──
+    if (h2h && h2h.meetings >= MIN_H2H_SAMPLE) {
+      const homeIsA = h2h.team_a === prior.home_team;
+      const teamACover = h2h.team_a_cover_pct;
+      const teamBCover = h2h.team_b_cover_pct;
+
+      if (teamACover != null && teamBCover != null) {
+        // Home team cover rate vs away team's cover rate in this matchup
+        const homeCover = homeIsA ? teamACover : teamBCover;
+        const awayCover = homeIsA ? teamBCover : teamACover;
+        const h2hDiff = (homeCover - awayCover) * 100;
+        subs.push(signalVote(h2hDiff, 12, 28));
+      } else {
+        subs.push(neutral('H2H cover data incomplete'));
+      }
+    } else {
+      subs.push(neutral('Not enough H2H meetings'));
+    }
+
+    // ── Sub 5: straight regression signal (from team_quality) ──
+    // Kept because regression to mean still matters over the long haul.
     const homeReg = regressionSignal(home);
     const awayReg = regressionSignal(away);
     const regDiff = awayReg - homeReg;
-    const regVote = signalVote(regDiff, 5, 15);
-    subs.push(regVote);
-
-    const homeSplit = parseSplit(home.home_record) - parseSplit(home.away_record);
-    const awaySplit = parseSplit(away.home_record) - parseSplit(away.away_record);
-    const splitSignal = (awaySplit < -0.15) ? 1 : (awaySplit > 0.15) ? -0.5 : 0;
-    subs.push(signalVote(splitSignal, 0.3, 1));
+    subs.push(signalVote(regDiff, 5, 15));
 
     return resolveFamily('trend', subs, {
-      form_diff: round(formDiff, 2),
+      home_form_last10: homeAts?.last10_cover_pct ?? null,
+      away_form_last10: awayAts?.last10_cover_pct ?? null,
+      home_momentum: round(homeMomentum, 3),
+      away_momentum: round(awayMomentum, 3),
+      h2h_meetings: h2h?.meetings ?? 0,
       home_regression: round(homeReg, 3),
       away_regression: round(awayReg, 3),
     });
+  }
+
+  // Returns a signed value:
+  //   > 0 = team covering better recently than season baseline (heating up)
+  //   < 0 = team covering worse recently (cooling off)
+  function momentumSignal(ats) {
+    if (!ats) return 0;
+    if (typeof ats.trend_delta === 'number' && ats.trend_delta !== 0) {
+      return ats.trend_delta;
+    }
+    if (ats.last10_cover_pct != null && ats.season_cover_pct != null) {
+      return (ats.last10_cover_pct - ats.season_cover_pct) * 0.75;
+    }
+    return 0;
   }
 
   function regressionSignal(team) {
@@ -475,9 +554,6 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 9: INJURY ──
-  // Uses exact per-player deductions from the roster table via
-  // EDGE_INJURY. Falls back to flat estimates when fragmentation
-  // data isn't available for this game.
   // ============================================================
 
   function familyInjury(prior, context) {
@@ -501,7 +577,7 @@ const EDGE_ALGOS = (() => {
       awayImpact = sumInjuryImpactFallback(awayInj);
     }
 
-    const diff = awayImpact - homeImpact; // positive favors home
+    const diff = awayImpact - homeImpact;
 
     if (homeInj.length === 0 && awayInj.length === 0) {
       return {
@@ -527,8 +603,6 @@ const EDGE_ALGOS = (() => {
     });
   }
 
-  // Fallback path for games where EDGE_INJURY didn't produce
-  // fragmentation. Uses coarse positional values.
   function sumInjuryImpactFallback(injuries) {
     const VORP = {
       QB: 7, RB: 1.5, WR: 2, TE: 1,
