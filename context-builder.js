@@ -1,7 +1,6 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v2.0
-// Loads all non-ratings data that algorithms need.
-// Line history · rest days (real, from ESPN) · travel · weather
+// EDGE — CONTEXT BUILDER v2.1
+// Rest-day fix: window guard + sanity check on rest values
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
@@ -19,13 +18,12 @@ const EDGE_CONTEXT = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // How far back to look for each team's previous game.
-  const REST_LOOKBACK_DAYS = 21;
+  // Rest lookup goes back this far. Weekly sports need at least 3 weeks
+  // of history so every team's most recent game is inside the window.
+  const REST_LOOKBACK_DAYS = 60;
 
-  // Indoor sports never get a weather lookup.
   const INDOOR = ['NBA', 'NHL', 'NCAAB'];
 
-  // Team home cities for travel + weather
   const TEAM_CITIES = {
     // NFL
     'Arizona Cardinals': [33.53, -112.26], 'Atlanta Falcons': [33.75, -84.40],
@@ -76,9 +74,25 @@ const EDGE_CONTEXT = (() => {
     'Seattle Mariners': [47.59, -122.33], 'St. Louis Cardinals': [38.62, -90.19],
     'Tampa Bay Rays': [27.77, -82.65], 'Texas Rangers': [32.75, -97.08],
     'Toronto Blue Jays': [43.64, -79.39], 'Washington Nationals': [38.87, -77.01],
+    // NHL
+    'Anaheim Ducks': [33.81, -117.88], 'Boston Bruins': [42.37, -71.06],
+    'Buffalo Sabres': [42.88, -78.88], 'Calgary Flames': [51.04, -114.05],
+    'Carolina Hurricanes': [35.80, -78.72], 'Chicago Blackhawks': [41.88, -87.67],
+    'Colorado Avalanche': [39.75, -104.99], 'Columbus Blue Jackets': [39.97, -83.01],
+    'Dallas Stars': [32.79, -96.81], 'Detroit Red Wings': [42.34, -83.06],
+    'Edmonton Oilers': [53.55, -113.49], 'Florida Panthers': [26.16, -80.33],
+    'Los Angeles Kings': [34.04, -118.27], 'Minnesota Wild': [44.94, -93.10],
+    'Montreal Canadiens': [45.50, -73.57], 'Nashville Predators': [36.16, -86.78],
+    'New Jersey Devils': [40.73, -74.17], 'New York Islanders': [40.72, -73.59],
+    'New York Rangers': [40.75, -73.99], 'Ottawa Senators': [45.42, -75.70],
+    'Philadelphia Flyers': [39.90, -75.17], 'Pittsburgh Penguins': [40.44, -79.99],
+    'San Jose Sharks': [37.33, -121.90], 'Seattle Kraken': [47.62, -122.35],
+    'St. Louis Blues': [38.63, -90.20], 'Tampa Bay Lightning': [27.95, -82.45],
+    'Toronto Maple Leafs': [43.64, -79.39], 'Utah Hockey Club': [40.77, -111.90],
+    'Vancouver Canucks': [49.28, -123.11], 'Vegas Golden Knights': [36.09, -115.18],
+    'Washington Capitals': [38.90, -77.02], 'Winnipeg Jets': [49.89, -97.14],
   };
 
-  // Venues where weather never matters even for an outdoor sport.
   const DOMED_HOMES = new Set([
     'Arizona Cardinals', 'Atlanta Falcons', 'Dallas Cowboys', 'Detroit Lions',
     'Houston Texans', 'Indianapolis Colts', 'Las Vegas Raiders', 'Los Angeles Chargers',
@@ -146,9 +160,6 @@ const EDGE_CONTEXT = (() => {
     const inList = gameIds.map(id => `"${id}"`).join(',');
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-    // public_pct / sharp_pct are optional columns. If the table doesn't have
-    // them PostgREST rejects the whole query, so fall back to the core columns
-    // rather than losing line history entirely.
     const selects = [
       'game_id,spread,total,ml,public_pct,sharp_pct,created_at',
       'game_id,spread,total,ml,created_at',
@@ -188,8 +199,6 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── REST DAYS ──
-  // Each team's previous completed game from ESPN, measured
-  // against the upcoming game's start time.
   // ============================================================
 
   async function loadRestDays(games) {
@@ -203,7 +212,7 @@ const EDGE_CONTEXT = (() => {
     const end = new Date();
     const start = new Date(end.getTime() - REST_LOOKBACK_DAYS * 86400000);
 
-    const lastPlayed = {}; // `${sport}:${team}` -> Date
+    const lastPlayed = {};
 
     await Promise.all(sports.map(async sport => {
       const events = await fetchEspnRange(ESPN_MAP[sport], start, end);
@@ -211,8 +220,15 @@ const EDGE_CONTEXT = (() => {
         const comp = e.competitions?.[0];
         if (!comp) return;
         if (comp.status?.type?.completed !== true) return;
+
         const when = new Date(e.date);
         if (isNaN(when)) return;
+
+        // ESPN sometimes returns events outside the requested range when
+        // the range is narrow. Reject anything outside [start, end] so a
+        // stale date never becomes a "last played" value.
+        if (when < start || when > end) return;
+
         (comp.competitors || []).forEach(c => {
           const name = c.team?.displayName;
           if (!name) return;
@@ -226,12 +242,21 @@ const EDGE_CONTEXT = (() => {
       const sport = g._sport || g.sport;
       const when = new Date(g.commence_time || g.time);
       if (isNaN(when)) return;
+
       [g.home_team || g.home, g.away_team || g.away].forEach(team => {
         if (!team) return;
         const k = `${sport}:${team}`;
         const prev = lastPlayed[k];
         if (!prev) return;
-        rest[k] = Math.max(0, Math.round((when - prev) / 86400000));
+
+        const days = Math.round((when - prev) / 86400000);
+
+        // Sanity guard: rest must be a non-negative number of days and
+        // must not exceed a month. Anything outside that range means we
+        // have bad data — skip rather than feed a wrong value downstream.
+        if (days < 0 || days > 30) return;
+
+        rest[k] = days;
       });
     });
 
@@ -252,7 +277,6 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── WEATHER ──
-  // Open-Meteo forecast API — no key, no account required.
   // ============================================================
 
   async function loadWeather(games) {
@@ -340,7 +364,6 @@ const EDGE_CONTEXT = (() => {
   }
 
   function estimateTimezoneShift(awayCoord, homeCoord) {
-    // 15° of longitude ≈ 1 hour. Away team traveling east = positive shift.
     return Math.round((homeCoord[1] - awayCoord[1]) / 15);
   }
 
