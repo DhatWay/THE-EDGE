@@ -7,7 +7,11 @@
 
 const EDGE_CLAUDE = (() => {
 
-  const API_URL = 'https://api.anthropic.com/v1/messages';
+  const DIRECT_API_URL = 'https://api.anthropic.com/v1/messages';
+  // When an Edge Function proxy is configured the Anthropic key lives in
+  // Supabase secrets and never reaches this browser.
+  const PROXY_URL = () => (localStorage.getItem('edge_proxy_url') || '').trim().replace(/\/+$/, '');
+  const API_URL = () => { const p = PROXY_URL(); return p ? p + '/messages' : DIRECT_API_URL; };
   const MODEL = 'claude-opus-4-20250514';
   const MAX_TOKENS = 2048;
   const TIMEOUT_MS = 25000;
@@ -46,10 +50,10 @@ No prose. No markdown. JSON array only.`;
   async function reviewBatch(picks, context = {}) {
     const apiKey = localStorage.getItem('edge_claude_api_key');
 
-    if (!apiKey) {
+    if (!apiKey && !PROXY_URL()) {
       return picks.map(p => ({
         pick_id: p.pick_id,
-        ...fallbackReview('No Claude API key'),
+        ...fallbackReview('No Anthropic API key and no proxy configured'),
       }));
     }
 
@@ -187,17 +191,20 @@ ${envCtx.length ? envCtx.join('\n') : '    (none)'}`;
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
     const start = Date.now();
 
+    const proxy = PROXY_URL();
+    const headers = { 'Content-Type': 'application/json' };
+    if (!proxy) {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+      headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    }
+
     try {
-      const res = await fetch(API_URL, {
+      const res = await fetch(API_URL(), {
         method: 'POST',
         signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'prompt-caching-2024-07-31',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        headers,
         body: JSON.stringify({
           model: MODEL,
           max_tokens: MAX_TOKENS,
