@@ -426,13 +426,22 @@
       <div class="key-block">
         <div class="key-lbl">Sportsbook</div>
         <div class="key-row">
-          <select class="form-select" id="sportsbookName">
-            <option value="">Select sportsbook</option>
-            <option>DraftKings</option>
-            <option>FanDuel</option>
-            <option>BetMGM</option>
-            <option>Caesars</option>
-            <option>PointsBet</option>
+          <select class="form-select" id="sportsbookName" onchange="saveSportsbook()">
+            <option value="">Consensus (all books)</option>
+            <option value="draftkings">DraftKings</option>
+            <option value="fanduel">FanDuel</option>
+            <option value="betmgm">BetMGM</option>
+            <option value="williamhill_us">Caesars</option>
+            <option value="betrivers">BetRivers</option>
+            <option value="espnbet">ESPN BET</option>
+            <option value="fanatics">Fanatics</option>
+            <option value="hardrockbet">Hard Rock Bet</option>
+            <option value="ballybet">Bally Bet</option>
+            <option value="betonlineag">BetOnline</option>
+            <option value="bovada">Bovada</option>
+            <option value="mybookieag">MyBookie</option>
+            <option value="lowvig">LowVig</option>
+            <option value="pinnacle">Pinnacle</option>
           </select>
         </div>
       </div>
@@ -772,16 +781,57 @@
       showToast('Key saved');
     }
 
+    const BOOK_LABELS = {
+      draftkings: 'DraftKings', fanduel: 'FanDuel', betmgm: 'BetMGM',
+      williamhill_us: 'Caesars', betrivers: 'BetRivers', espnbet: 'ESPN BET',
+      fanatics: 'Fanatics', hardrockbet: 'Hard Rock Bet', ballybet: 'Bally Bet',
+      betonlineag: 'BetOnline', bovada: 'Bovada', mybookieag: 'MyBookie',
+      lowvig: 'LowVig', pinnacle: 'Pinnacle',
+    };
+
+    // Selecting a book is what matters: edge_book_key is the Odds API
+    // bookmaker filter, so every line shown and every line the pipeline
+    // grades against comes from that book. The API key field is only
+    // needed if the book itself offers a direct feed.
     function saveSportsbook() {
-      const name = document.getElementById('sportsbookName').value;
-      const key  = document.getElementById('sportsbookKey').value.trim();
-      if (!key) { showToast('Enter a key first', 'error'); return; }
-      localStorage.setItem('edge_sportsbook_name', name);
-      localStorage.setItem('edge_sportsbook_api_key', key);
-      document.getElementById('savedSportsbookKey').textContent = '✓ Saved — ' + name;
-      document.getElementById('savedSportsbookKey').className = 'key-saved set';
-      updateDot('dotSportsbook','statusSportsbook','ok', name + ' Connected');
-      showToast('Sportsbook saved');
+      const bookKey = document.getElementById('sportsbookName').value;
+      const apiKey  = document.getElementById('sportsbookKey').value.trim();
+      const label   = BOOK_LABELS[bookKey] || 'Consensus';
+
+      if (bookKey) localStorage.setItem('edge_book_key', bookKey);
+      else localStorage.removeItem('edge_book_key');
+      localStorage.setItem('edge_sportsbook_name', label);
+      if (apiKey) localStorage.setItem('edge_sportsbook_api_key', apiKey);
+
+      const saved = document.getElementById('savedSportsbookKey');
+      saved.textContent = bookKey
+        ? `✓ Pricing against ${label}`
+        : 'Using consensus across all books';
+      saved.className = 'key-saved set';
+      updateDot('dotSportsbook', 'statusSportsbook', bookKey ? 'ok' : 'warn',
+                bookKey ? label : 'Consensus');
+      showToast(bookKey ? `Lines now from ${label}` : 'Using consensus lines');
+
+      // The cached board was priced against the old selection.
+      localStorage.removeItem('edge_todays_games');
+      localStorage.removeItem('edge_games_cache');
+    }
+
+    function loadSportsbookSelection() {
+      const sel = document.getElementById('sportsbookName');
+      if (!sel) return;
+      const bookKey = localStorage.getItem('edge_book_key') || '';
+      sel.value = bookKey;
+      const label = BOOK_LABELS[bookKey] || 'Consensus';
+      const saved = document.getElementById('savedSportsbookKey');
+      if (saved) {
+        saved.textContent = bookKey
+          ? `✓ Pricing against ${label}`
+          : 'Using consensus across all books';
+        saved.className = 'key-saved set';
+      }
+      updateDot('dotSportsbook', 'statusSportsbook', bookKey ? 'ok' : 'warn',
+                bookKey ? label : 'Consensus');
     }
 
     function updateDot(dotId, statusId, cls, text) {
@@ -1025,6 +1075,7 @@
        'edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name'].forEach(k => localStorage.removeItem(k));
       showToast('All API keys removed');
       loadSavedIndicators();
+      loadSportsbookSelection();
       checkConnections();
     }
 
