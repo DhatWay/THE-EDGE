@@ -18,6 +18,10 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="context-builder.js"></script>
+  <script src="roster-engine.js"></script>
+  <script src="roster-enrichment.js"></script>
+  <script src="injury-fragmentation.js"></script>
+  <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -57,14 +61,12 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px,12vw,72px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* TABS */
     .tab-strip { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--bg2); scrollbar-width: none; position: sticky; top: 60px; z-index: 40; }
     .tab-strip::-webkit-scrollbar { display: none; }
     .tab { flex-shrink: 0; background: none; border: none; border-bottom: 3px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 14px 18px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
     .tab:hover:not(.active) { color: var(--text-mid); }
 
-    /* PANEL */
     .panel { display: none; padding: 16px 20px 28px; }
     .panel.active { display: block; }
 
@@ -72,7 +74,6 @@
     .sec-title:first-child { margin-top: 0; }
     .sec-title em { color: var(--gold); font-style: normal; }
 
-    /* STAT STRIP */
     .stat-strip { display: grid; grid-template-columns: repeat(4,1fr); gap: 0; border: 1px solid var(--border); background: var(--surface); margin-bottom: 12px; }
     .ss-cell { padding: 12px 8px; text-align: center; border-right: 1px solid var(--border); }
     .ss-cell:last-child { border-right: none; }
@@ -83,7 +84,6 @@
     .ss-val.blue { color: var(--blue); }
     .ss-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* SNAPSHOT TILES */
     .snapshot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .snap-tile { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; transition: border-color 0.2s; }
     .snap-tile:hover { border-color: var(--border-bright); }
@@ -94,7 +94,6 @@
     .snap-row:first-of-type { border-top: none; padding-top: 0; }
     .snap-row b { color: var(--text); }
 
-    /* TABLE */
     .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); }
     table { width: 100%; border-collapse: collapse; min-width: 640px; }
     thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 10px 10px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; cursor: pointer; user-select: none; }
@@ -126,13 +125,11 @@
     .pnl { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; }
     .pnl.pos { color: var(--green); } .pnl.neg { color: var(--red); } .pnl.neu { color: var(--text-dim); }
 
-    /* FILTER BAR */
     .filter-bar { display: flex; gap: 8px; padding: 10px 0 12px; overflow-x: auto; scrollbar-width: none; }
     .filter-bar::-webkit-scrollbar { display: none; }
     .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
 
-    /* FAMILY GRID */
     .family-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .family-mini { background: var(--surface); border: 1px solid var(--border); padding: 12px 12px; }
     .family-mini-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
@@ -142,7 +139,6 @@
     .family-mini-val.gold { color: var(--gold); }
     .family-mini-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 3px; }
 
-    /* WIN/LOSS SPLITS */
     .split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .split-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; }
     .split-card-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
@@ -154,7 +150,6 @@
     .split-val.neg { color: var(--red); }
     .split-val.neu { color: var(--text-dim); }
 
-    /* TREND */
     .trend-grid { display: flex; flex-direction: column; gap: 8px; }
     .trend-card { background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .trend-left { flex: 1; }
@@ -165,7 +160,6 @@
     .trend-val.dn { color: var(--red); }
     .trend-val.flat { color: var(--text-dim); }
 
-    /* LINE FEED */
     .line-feed { display: flex; flex-direction: column; gap: 6px; }
     .feed-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 10px 12px; }
     .feed-sport { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); flex-shrink: 0; }
@@ -180,7 +174,6 @@
     .feed-flag.rlm { border-color: rgba(201,168,76,0.4); color: var(--gold); }
     .feed-flag.sharp { border-color: rgba(39,174,96,0.4); color: var(--green); }
 
-    /* MODE COMPARE */
     .mode-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
     .mc-card { background: var(--surface); border: 2px solid var(--border); padding: 16px 14px; }
     .mc-card.math { border-color: var(--gold); }
@@ -191,10 +184,8 @@
     .mc-card.ai .mc-card-val { color: var(--blue); }
     .mc-card-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
-    /* EMPTY */
     .empty-note { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 24px; text-align: center; background: var(--surface); border: 1px solid var(--border); }
 
-    /* REFRESH */
     .refresh-btn { display: block; width: 100%; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; padding: 11px; cursor: pointer; transition: opacity 0.2s; margin-bottom: 12px; }
     .refresh-btn:hover { opacity: 0.85; }
     .refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -207,78 +198,37 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
+    .export-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 18px; border-bottom: 1px solid var(--border); }
+    .export-btn { flex: 1 1 auto; min-width: 116px; background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 11px 12px; cursor: pointer; transition: all 0.2s; }
+    .export-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .export-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
+    .export-scope { display: flex; gap: 6px; align-items: center; padding: 0 20px 14px; }
+    .export-scope select { background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 13px; padding: 8px 10px; }
+    .export-scope label { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); }
+    @media print {
+      nav, .drawer, .overlay, .tab-strip, .export-bar, .export-scope, footer { display: none !important; }
+      body { background: #fff; color: #000; }
+      .panel { display: block !important; }
+      main { padding-top: 0; }
+    }
+
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
       --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
     }
-    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
-    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
+    .snap-tile, .family-mini, .split-card, .trend-card, .mc-card, .table-wrap {
       box-shadow: var(--lift);
       border-radius: 2px;
-      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
-      will-change: transform;
+      transition: box-shadow 0.22s ease, transform 0.22s ease;
     }
-    .pick-card, .clv-card, .game-card {
-      box-shadow: var(--lift-gold);
-    }
-    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+    .snap-tile:hover, .family-mini:hover, .split-card:hover, .trend-card:hover {
       box-shadow: var(--lift-high);
       transform: translateY(-2px);
     }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
-    }
     @media (prefers-reduced-motion: reduce) {
-      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card {
-        transition: none;
-      }
-      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-        transform: none;
-      }
-    }
-
-    /* ── OFFLINE BANNER ── */
-    .offline-bar {
-      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
-      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
-      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
-      padding: 7px 20px; text-align: center;
-      transform: translateY(-100%); transition: transform 0.25s ease;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
-    }
-    .offline-bar.show { transform: translateY(0); }
-
-    /* ── EXPORT BAR ── */
-    .export-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 18px; border-bottom: 1px solid var(--border); }
-    .export-btn { flex: 1 1 auto; min-width: 116px; background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 11px 12px; cursor: pointer; box-shadow: var(--lift); border-radius: 2px; transition: all 0.2s; }
-    .export-btn:hover { border-color: var(--gold); color: var(--gold); box-shadow: var(--lift-high); transform: translateY(-2px); }
-    .export-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
-    .export-scope { display: flex; gap: 6px; align-items: center; padding: 0 20px 14px; }
-    .export-scope select { background: var(--bg3); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 13px; padding: 8px 10px; border-radius: 2px; }
-    .export-scope label { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); }
-    @media print {
-      nav, .drawer, .overlay, .tab-strip, .export-bar, .export-scope, footer, .offline-bar { display: none !important; }
-      body { background: #fff; color: #000; }
-      .panel { display: block !important; }
-      main { padding-top: 0; }
+      .snap-tile, .family-mini, .split-card, .trend-card, .mc-card, .table-wrap { transition: none; }
+      .snap-tile:hover, .family-mini:hover, .split-card:hover, .trend-card:hover { transform: none; }
     }
   </style>
 </head>
@@ -333,10 +283,12 @@
       <button class="tab" data-tab="picks">All Picks</button>
       <button class="tab" data-tab="sports">By Sport</button>
       <button class="tab" data-tab="families">Families</button>
-      <button class="tab" data-tab="power">Power Ratings</button>
-      <button class="tab" data-tab="lines">Line Feed</button>
-      <button class="tab" data-tab="trends">Trends</button>
-      <button class="tab" data-tab="modes">Mode Compare</button>
+      <button class="tab" data-tab="power">Power</button>
+      <button class="tab" data-tab="players">Players</button>
+      <button class="tab" data-tab="ats">Team ATS</button>
+      <button class="tab" data-tab="h2h">Matchups</button>
+      <button class="tab" data-tab="lines">Lines</button>
+      <button class="tab" data-tab="modes">Modes</button>
     </div>
 
     <div class="export-scope">
@@ -354,10 +306,11 @@
       <button class="export-btn" onclick="downloadReport('csv')">Picks CSV</button>
       <button class="export-btn" onclick="downloadReport('families')">Families CSV</button>
       <button class="export-btn" onclick="downloadReport('power')">Power CSV</button>
+      <button class="export-btn" onclick="downloadReport('ats')">ATS CSV</button>
+      <button class="export-btn" onclick="downloadReport('players')">Players CSV</button>
       <button class="export-btn" onclick="downloadReport('json')">Full JSON</button>
       <button class="export-btn" onclick="window.print()">Print / PDF</button>
     </div>
-
 
     <!-- OVERVIEW -->
     <div class="panel active" data-panel="overview">
@@ -369,6 +322,14 @@
         <div class="ss-cell"><div class="ss-val green" id="ovRecord">—</div><div class="ss-lbl">W-L-P</div></div>
         <div class="ss-cell"><div class="ss-val" id="ovUnits">—</div><div class="ss-lbl">Net Units</div></div>
         <div class="ss-cell"><div class="ss-val" id="ovRoi">—</div><div class="ss-lbl">ROI</div></div>
+      </div>
+
+      <div class="sec-title">DATA <em>COUNTS</em></div>
+      <div class="stat-strip">
+        <div class="ss-cell"><div class="ss-val blue" id="ovPowerCount">—</div><div class="ss-lbl">Teams</div></div>
+        <div class="ss-cell"><div class="ss-val blue" id="ovPlayerCount">—</div><div class="ss-lbl">Players</div></div>
+        <div class="ss-cell"><div class="ss-val blue" id="ovAtsCount">—</div><div class="ss-lbl">ATS Records</div></div>
+        <div class="ss-cell"><div class="ss-val blue" id="ovH2hCount">—</div><div class="ss-lbl">Matchups</div></div>
       </div>
 
       <div class="sec-title">MODE <em>SPLIT</em></div>
@@ -477,7 +438,7 @@
       </div>
     </div>
 
-    <!-- POWER RATINGS -->
+    <!-- POWER -->
     <div class="panel" data-panel="power">
       <div class="sec-title">TOP <em>RATED</em></div>
       <div class="table-wrap">
@@ -492,6 +453,78 @@
       </div>
     </div>
 
+    <!-- PLAYERS -->
+    <div class="panel" data-panel="players">
+      <div class="sec-title">TOP <em>PLAYERS</em></div>
+      <div class="filter-bar" id="playerFilters">
+        <button class="fchip active" data-f="all">All</button>
+        <button class="fchip" data-f="NFL">NFL</button>
+        <button class="fchip" data-f="NBA">NBA</button>
+        <button class="fchip" data-f="MLB">MLB</button>
+        <button class="fchip" data-f="NHL">NHL</button>
+        <button class="fchip" data-f="NCAAF">NCAAF</button>
+        <button class="fchip" data-f="NCAAB">NCAAB</button>
+        <button class="fchip" data-f="MLS">MLS</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Sport</th><th>Team</th><th>Player</th><th>Pos</th><th>Rating</th><th>Off</th><th>Def</th><th>Starter</th>
+            </tr>
+          </thead>
+          <tbody id="playerBody">
+            <tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);text-align:right;padding:8px 0;" id="playerCount"></div>
+    </div>
+
+    <!-- TEAM ATS -->
+    <div class="panel" data-panel="ats">
+      <div class="sec-title">TEAM <em>ATS FORM</em></div>
+      <div class="filter-bar" id="atsFilters">
+        <button class="fchip active" data-f="all">All</button>
+        <button class="fchip" data-f="hot">Heating Up</button>
+        <button class="fchip" data-f="cold">Cooling Off</button>
+        <button class="fchip" data-f="NFL">NFL</button>
+        <button class="fchip" data-f="NBA">NBA</button>
+        <button class="fchip" data-f="MLB">MLB</button>
+        <button class="fchip" data-f="NHL">NHL</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Sport</th><th>Team</th><th>Season</th><th>Cover %</th><th>Last 10</th><th>L10 %</th><th>Home</th><th>Away</th><th>Streak</th><th>Trend</th>
+            </tr>
+          </thead>
+          <tbody id="atsBody">
+            <tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);text-align:right;padding:8px 0;" id="atsCount"></div>
+    </div>
+
+    <!-- H2H -->
+    <div class="panel" data-panel="h2h">
+      <div class="sec-title">MATCHUP <em>ATS HISTORY</em></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Sport</th><th>Team A</th><th>Team B</th><th>Meetings</th><th>A Cover %</th><th>B Cover %</th><th>Avg Home Margin</th><th>Last Meeting</th>
+            </tr>
+          </thead>
+          <tbody id="h2hBody">
+            <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- LINES -->
     <div class="panel" data-panel="lines">
       <div class="sec-title">LINE <em>FEED</em></div>
@@ -500,15 +533,7 @@
       </div>
     </div>
 
-    <!-- TRENDS -->
-    <div class="panel" data-panel="trends">
-      <div class="sec-title">TREND <em>SUITE</em></div>
-      <div class="trend-grid" id="trendGrid">
-        <div class="empty-note">Trend analysis populates once picks accumulate</div>
-      </div>
-    </div>
-
-    <!-- MODE COMPARE -->
+    <!-- MODES -->
     <div class="panel" data-panel="modes">
       <div class="sec-title">MODE <em>COMPARISON</em></div>
       <div class="mode-compare" id="modeCompare">
@@ -566,8 +591,13 @@
     let allPicks = [];
     let allPower = [];
     let allWeights = [];
+    let allPlayers = [];
+    let allAts = [];
+    let allH2H = [];
     let allGames = [];
     let pickFilter = 'all';
+    let playerFilter = 'all';
+    let atsFilter = 'all';
     let pickSort = { key: 'created_at', dir: -1 };
 
     // ── FILTERS ──
@@ -580,8 +610,24 @@
       });
     });
 
-    // ── SORT ──
-    document.querySelectorAll('#allPicksBody').forEach(() => {});
+    document.querySelectorAll('#playerFilters .fchip').forEach(c => {
+      c.addEventListener('click', () => {
+        document.querySelectorAll('#playerFilters .fchip').forEach(x => x.classList.remove('active'));
+        c.classList.add('active');
+        playerFilter = c.dataset.f;
+        renderPlayers();
+      });
+    });
+
+    document.querySelectorAll('#atsFilters .fchip').forEach(c => {
+      c.addEventListener('click', () => {
+        document.querySelectorAll('#atsFilters .fchip').forEach(x => x.classList.remove('active'));
+        c.classList.add('active');
+        atsFilter = c.dataset.f;
+        renderAts();
+      });
+    });
+
     document.querySelectorAll('[data-sort]').forEach(th => {
       th.addEventListener('click', () => {
         const key = th.dataset.sort;
@@ -606,15 +652,24 @@
         return;
       }
 
+      const headers = { apikey: key, Authorization: `Bearer ${key}` };
+
       try {
-        const [picksRes, powerRes, weightsRes] = await Promise.all([
-          fetch(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=1000`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
-          fetch(`${url}/rest/v1/power_ratings?select=*&order=overall.desc&limit=100`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
-          fetch(`${url}/rest/v1/algorithm_weights?select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+        const [picksRes, powerRes, weightsRes, playersRes, atsRes, h2hRes] = await Promise.all([
+          fetch(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=1000`, { headers }),
+          fetch(`${url}/rest/v1/power_ratings?select=*&order=overall.desc&limit=400`, { headers }),
+          fetch(`${url}/rest/v1/algorithm_weights?select=*`, { headers }),
+          fetch(`${url}/rest/v1/players?select=*&order=rating.desc&limit=500`, { headers }),
+          fetch(`${url}/rest/v1/team_ats?select=*&order=season_cover_pct.desc&limit=500`, { headers }),
+          fetch(`${url}/rest/v1/matchup_ats?select=*&order=meetings.desc&limit=500`, { headers }),
         ]);
-        allPicks = picksRes.ok ? await picksRes.json() : [];
-        allPower = powerRes.ok ? await powerRes.json() : [];
+
+        allPicks   = picksRes.ok   ? await picksRes.json()   : [];
+        allPower   = powerRes.ok   ? await powerRes.json()   : [];
         allWeights = weightsRes.ok ? await weightsRes.json() : [];
+        allPlayers = playersRes.ok ? await playersRes.json() : [];
+        allAts     = atsRes.ok     ? await atsRes.json()     : [];
+        allH2H     = h2hRes.ok     ? await h2hRes.json()     : [];
       } catch (e) {
         showToast('Load error: ' + e.message, true);
       }
@@ -628,8 +683,10 @@
       renderSportBreakdown();
       renderFamilyPerf();
       renderPower();
+      renderPlayers();
+      renderAts();
+      renderH2H();
       renderLineFeed();
-      renderTrends();
       renderModeCompare();
     }
 
@@ -650,6 +707,12 @@
               pnl > 0 ? 'green' : pnl < 0 ? 'red' : '');
       setText('ovRoi', roi !== null ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%' : '—',
               roi > 0 ? 'green' : roi < 0 ? 'red' : '');
+
+      // Data counts
+      setText('ovPowerCount', allPower.length, 'blue');
+      setText('ovPlayerCount', allPlayers.length, 'blue');
+      setText('ovAtsCount', allAts.length, 'blue');
+      setText('ovH2hCount', allH2H.length, 'blue');
 
       // Mode split
       const math = picks.filter(p => p.decision_mode === 'math_only');
@@ -673,10 +736,9 @@
         const bySport = {};
         allGames.forEach(g => {
           const s = g._sport || g.sport || '?';
-          if (!bySport[s]) bySport[s] = { count: 0, picks: 0, highest: null };
+          if (!bySport[s]) bySport[s] = { count: 0, picks: 0 };
           bySport[s].count++;
         });
-        // Count picks per sport
         picks.slice(0, 200).forEach(p => {
           if (p.sport && bySport[p.sport]) bySport[p.sport].picks++;
         });
@@ -687,7 +749,6 @@
               <span class="snap-count">${info.count} games</span>
             </div>
             <div class="snap-row"><span>Active picks</span><b>${info.picks}</b></div>
-            <div class="snap-row"><span>Books</span><b>${allGames.filter(g => (g._sport || g.sport) === sport && g.bookmaker_count).length || '—'}</b></div>
           </div>
         `).join('');
       }
@@ -743,7 +804,6 @@
 
       let picks = [...allPicks];
 
-      // Filter
       if (pickFilter === 'math_only' || pickFilter === 'ai_assisted') {
         picks = picks.filter(p => p.decision_mode === pickFilter);
       } else if (['BET_2U','BET_1U','LEAN','VETOED'].includes(pickFilter)) {
@@ -754,7 +814,6 @@
         picks = picks.filter(p => !p.result);
       }
 
-      // Sort
       const { key, dir } = pickSort;
       picks.sort((a, b) => {
         const av = a[key] ?? '';
@@ -864,7 +923,6 @@
       const sorted = [...allWeights].sort((a, b) => (b.roi || -999) - (a.roi || -999));
 
       body.innerHTML = sorted.map(w => {
-        const total = (w.wins || 0) + (w.losses || 0);
         const roi = w.roi ?? 0;
         return `
           <tr>
@@ -885,7 +943,7 @@
         return;
       }
 
-      body.innerHTML = allPower.slice(0, 50).map((t, i) => {
+      body.innerHTML = allPower.slice(0, 100).map((t, i) => {
         const form = t.last5_form ?? 0;
         const formCls = form > 2 ? 'pos' : form < -2 ? 'neg' : 'neu';
         return `
@@ -902,6 +960,114 @@
       }).join('');
     }
 
+    // ── PLAYERS ──
+    function renderPlayers() {
+      const body = document.getElementById('playerBody');
+      const countEl = document.getElementById('playerCount');
+
+      let players = [...allPlayers];
+      if (playerFilter !== 'all') players = players.filter(p => p.sport === playerFilter);
+
+      countEl.textContent = `${players.length} player${players.length === 1 ? '' : 's'}`;
+
+      if (!players.length) {
+        body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No player data — run Build Rosters + Enrich Rosters in Admin</td></tr>';
+        return;
+      }
+
+      body.innerHTML = players.slice(0, 200).map((p, i) => {
+        const starterTag = p.is_starter ? '<span style="color:var(--green);font-weight:700;">STARTER</span>' : '<span style="color:var(--text-dim);">BENCH</span>';
+        return `
+          <tr>
+            <td>${i + 1}</td>
+            <td><span class="sport-tag">${p.sport}</span></td>
+            <td>${p.team_name}</td>
+            <td><div class="bold">${p.name}</div></td>
+            <td>${p.position || '—'}</td>
+            <td><span style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--gold);">${(p.rating || 0).toFixed(1)}</span></td>
+            <td>${(p.offensive_contribution || 0).toFixed(1)}</td>
+            <td>${(p.defensive_contribution || 0).toFixed(1)}</td>
+            <td>${starterTag}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── ATS ──
+    function renderAts() {
+      const body = document.getElementById('atsBody');
+      const countEl = document.getElementById('atsCount');
+
+      let rows = [...allAts];
+      if (atsFilter === 'hot') rows = rows.filter(r => r.trend_label === 'heating_up');
+      else if (atsFilter === 'cold') rows = rows.filter(r => r.trend_label === 'cooling_off');
+      else if (atsFilter !== 'all') rows = rows.filter(r => r.sport === atsFilter);
+
+      countEl.textContent = `${rows.length} record${rows.length === 1 ? '' : 's'}`;
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No ATS data — run Build ATS in Admin</td></tr>';
+        return;
+      }
+
+      const fmtPct = v => v != null ? (v * 100).toFixed(0) + '%' : '—';
+      const cls = v => v == null ? '' : v >= 0.60 ? 'pos' : v <= 0.40 ? 'neg' : 'neu';
+
+      body.innerHTML = rows.slice(0, 200).map(r => {
+        const trend = r.trend_label || 'stable';
+        const trendStr = trend === 'heating_up' ? '<span style="color:var(--green);">HEAT</span>'
+                        : trend === 'cooling_off' ? '<span style="color:var(--red);">COLD</span>'
+                        : '<span style="color:var(--text-dim);">STABLE</span>';
+        const season = `${r.season_wins || 0}-${r.season_losses || 0}`;
+        const last10 = `${r.last10_wins || 0}-${r.last10_losses || 0}`;
+        const streak = r.current_streak || 0;
+        const streakCls = streak > 0 ? 'pos' : streak < 0 ? 'neg' : 'neu';
+        return `
+          <tr>
+            <td><span class="sport-tag">${r.sport}</span></td>
+            <td><div class="bold">${r.team_name}</div></td>
+            <td>${season}</td>
+            <td><span class="pnl ${cls(r.season_cover_pct)}">${fmtPct(r.season_cover_pct)}</span></td>
+            <td>${last10}</td>
+            <td><span class="pnl ${cls(r.last10_cover_pct)}">${fmtPct(r.last10_cover_pct)}</span></td>
+            <td><span class="pnl ${cls(r.home_cover_pct)}">${fmtPct(r.home_cover_pct)}</span></td>
+            <td><span class="pnl ${cls(r.away_cover_pct)}">${fmtPct(r.away_cover_pct)}</span></td>
+            <td><span class="pnl ${streakCls}">${streak > 0 ? 'W' + streak : streak < 0 ? 'L' + Math.abs(streak) : '0'}</span></td>
+            <td>${trendStr}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── H2H ──
+    function renderH2H() {
+      const body = document.getElementById('h2hBody');
+      if (!allH2H.length) {
+        body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:\'Barlow Condensed\',sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;">No matchup data — run Build ATS in Admin</td></tr>';
+        return;
+      }
+
+      const fmtPct = v => v != null ? (v * 100).toFixed(0) + '%' : '—';
+      const cls = v => v == null ? '' : v >= 0.60 ? 'pos' : v <= 0.40 ? 'neg' : 'neu';
+
+      body.innerHTML = allH2H.slice(0, 200).map(m => {
+        const margin = m.avg_home_cover_margin || 0;
+        const marginCls = margin > 0 ? 'pos' : margin < 0 ? 'neg' : 'neu';
+        const last = m.last_meeting_date
+          ? new Date(m.last_meeting_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+          : '—';
+        return `
+          <tr>
+            <td><span class="sport-tag">${m.sport}</span></td>
+            <td><div class="bold">${m.team_a}</div></td>
+            <td><div class="bold">${m.team_b}</div></td>
+            <td>${m.meetings || 0}</td>
+            <td><span class="pnl ${cls(m.team_a_cover_pct)}">${fmtPct(m.team_a_cover_pct)}</span></td>
+            <td><span class="pnl ${cls(m.team_b_cover_pct)}">${fmtPct(m.team_b_cover_pct)}</span></td>
+            <td><span class="pnl ${marginCls}">${margin > 0 ? '+' : ''}${margin.toFixed(2)}</span></td>
+            <td>${last}</td>
+          </tr>`;
+      }).join('');
+    }
+
     // ── LINE FEED ──
     function renderLineFeed() {
       const el = document.getElementById('lineFeed');
@@ -912,7 +1078,6 @@
         return;
       }
 
-      // Show games with movement or flags, otherwise top 15
       const sorted = games.slice(0, 20);
 
       el.innerHTML = sorted.map(g => {
@@ -941,74 +1106,7 @@
       }).join('');
     }
 
-    // ── TRENDS ──
-    function renderTrends() {
-      const el = document.getElementById('trendGrid');
-
-      // Compute from picks
-      const last10 = allPicks.filter(p => p.result).slice(0, 20);
-      if (last10.length < 5) {
-        el.innerHTML = '<div class="empty-note">Need at least 5 settled picks for trend analysis</div>';
-        return;
-      }
-
-      const w = last10.filter(p => p.result === 'W').length;
-      const l = last10.filter(p => p.result === 'L').length;
-      const recentWpct = (w / (w + l)) * 100;
-
-      // Rolling 5 vs rolling 10
-      const last5 = allPicks.filter(p => p.result).slice(0, 5);
-      const last5W = last5.filter(p => p.result === 'W').length;
-      const last5L = last5.filter(p => p.result === 'L').length;
-      const shortWpct = (last5W + last5L) > 0 ? (last5W / (last5W + last5L)) * 100 : 0;
-
-      const momentum = shortWpct - recentWpct;
-
-      // Streak
-      const streak = computeStreakLabel(allPicks);
-
-      // Avg CLV
-      const clvPicks = allPicks.filter(p => typeof p.clv === 'number');
-      const avgClv = clvPicks.length ? clvPicks.reduce((s, p) => s + p.clv, 0) / clvPicks.length : null;
-
-      const cards = [
-        { name: 'Short-Term Momentum', desc: 'Last 5 vs last 20 win rate', val: momentum, suffix: 'pp', up: momentum > 2, dn: momentum < -2 },
-        { name: 'Recent Win Rate', desc: 'Last 20 picks', val: recentWpct, suffix: '%', up: recentWpct > 55, dn: recentWpct < 45 },
-        { name: 'Current Streak', desc: 'Active W/L run', val: streak.count, suffix: '', label: streak.label, up: streak.res === 'W', dn: streak.res === 'L' },
-        { name: 'Avg CLV', desc: 'Closing line value', val: avgClv, suffix: '', up: avgClv > 0, dn: avgClv < 0 },
-      ];
-
-      el.innerHTML = cards.map(c => {
-        if (c.val === null || c.val === undefined) {
-          return `<div class="trend-card"><div class="trend-left"><div class="trend-name">${c.name}</div><div class="trend-desc">${c.desc}</div></div><div class="trend-val flat">—</div></div>`;
-        }
-        const cls = c.label ? (c.up ? 'up' : c.dn ? 'dn' : 'flat') : (c.up ? 'up' : c.dn ? 'dn' : 'flat');
-        const display = c.label ? c.label : (c.val > 0 ? '+' : '') + c.val.toFixed(1) + c.suffix;
-        return `
-          <div class="trend-card">
-            <div class="trend-left">
-              <div class="trend-name">${c.name}</div>
-              <div class="trend-desc">${c.desc}</div>
-            </div>
-            <div class="trend-val ${cls}">${display}</div>
-          </div>`;
-      }).join('');
-    }
-
-    function computeStreakLabel(picks) {
-      const settled = picks.filter(p => p.result === 'W' || p.result === 'L')
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      if (!settled.length) return { count: 0, label: '—', res: '—' };
-      const res = settled[0].result;
-      let n = 1;
-      for (let i = 1; i < settled.length; i++) {
-        if (settled[i].result === res) n++;
-        else break;
-      }
-      return { count: n, label: res + n, res };
-    }
-
-    // ── MODE COMPARE ──
+    // ── MODES ──
     function renderModeCompare() {
       const math = allPicks.filter(p => p.decision_mode === 'math_only');
       const ai = allPicks.filter(p => p.decision_mode === 'ai_assisted');
@@ -1033,7 +1131,6 @@
         ? `ROI ${(aiP / aiU * 100).toFixed(1)}% · ${ai.length} picks`
         : `${ai.length} picks`;
 
-      // By confidence
       const confBuckets = [
         { lbl: '≥85%', test: c => c >= 85 },
         { lbl: '75–84%', test: c => c >= 75 && c < 85 },
@@ -1058,7 +1155,6 @@
           </div>`;
       }).join('');
 
-      // By decision
       const decisions = ['BET_2U', 'BET_1U', 'LEAN', 'VETOED'];
       document.getElementById('decisionGrid').innerHTML = decisions.map(d => {
         const matches = allPicks.filter(p => p.decision === d);
@@ -1079,8 +1175,7 @@
       }).join('');
     }
 
-
-    // ── REPORT EXPORT ──
+    // ── EXPORT ──
     function exportRangeDays() {
       const el = document.getElementById('exportRange');
       return el ? parseInt(el.value || '0') : 0;
@@ -1148,12 +1243,8 @@
     function downloadReport(kind) {
       const picks = picksInRange();
 
-      if (!picks.length && kind !== 'power') {
-        showToast('Nothing to export in this range', true);
-        return;
-      }
-
       if (kind === 'csv') {
+        if (!picks.length) { showToast('Nothing to export', true); return; }
         const headers = ['date','sport','mode','decision','away_team','home_team','side','confidence','edge','units','spread','result','pnl','clv','game_id'];
         const rows = picks.map(p => [
           p.created_at ? new Date(p.created_at).toISOString() : '',
@@ -1167,12 +1258,9 @@
       }
 
       if (kind === 'families') {
-        if (!allWeights.length) { showToast('No family data — run the learning loop', true); return; }
+        if (!allWeights.length) { showToast('No family data', true); return; }
         const headers = ['sport','family','wins','losses','pushes','roi','base_weight','dynamic_weight','last_updated'];
-        const rows = allWeights.map(w => [
-          w.sport, w.family, w.wins, w.losses, w.pushes,
-          w.roi, w.base_weight, w.dynamic_weight, w.last_updated,
-        ]);
+        const rows = allWeights.map(w => [w.sport, w.family, w.wins, w.losses, w.pushes, w.roi, w.base_weight, w.dynamic_weight, w.last_updated]);
         saveFile(`edge-families-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
         return;
       }
@@ -1180,11 +1268,24 @@
       if (kind === 'power') {
         if (!allPower.length) { showToast('No power ratings loaded', true); return; }
         const headers = ['sport','team_name','overall','offense','defense','pythagorean','srs','elo','record','home_record','away_record','last5_form','games_played'];
-        const rows = allPower.map(t => [
-          t.sport, t.team_name, t.overall, t.offense, t.defense, t.pythagorean,
-          t.srs, t.elo, t.record, t.home_record, t.away_record, t.last5_form, t.games_played,
-        ]);
+        const rows = allPower.map(t => [t.sport, t.team_name, t.overall, t.offense, t.defense, t.pythagorean, t.srs, t.elo, t.record, t.home_record, t.away_record, t.last5_form, t.games_played]);
         saveFile(`edge-power-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
+        return;
+      }
+
+      if (kind === 'ats') {
+        if (!allAts.length) { showToast('No ATS data', true); return; }
+        const headers = ['sport','team_name','season_label','season_wins','season_losses','season_pushes','season_cover_pct','last10_wins','last10_losses','last10_cover_pct','home_cover_pct','away_cover_pct','current_streak','avg_cover_margin','trend_label'];
+        const rows = allAts.map(r => [r.sport, r.team_name, r.season_label, r.season_wins, r.season_losses, r.season_pushes, r.season_cover_pct, r.last10_wins, r.last10_losses, r.last10_cover_pct, r.home_cover_pct, r.away_cover_pct, r.current_streak, r.avg_cover_margin, r.trend_label]);
+        saveFile(`edge-ats-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
+        return;
+      }
+
+      if (kind === 'players') {
+        if (!allPlayers.length) { showToast('No player data', true); return; }
+        const headers = ['sport','team_name','player_id','name','position','position_group','rating','offensive_contribution','defensive_contribution','is_starter'];
+        const rows = allPlayers.map(p => [p.sport, p.team_name, p.player_id, p.name, p.position, p.position_group, p.rating, p.offensive_contribution, p.defensive_contribution, p.is_starter]);
+        saveFile(`edge-players-${stamp()}.csv`, toCsv(headers, rows), 'text/csv');
         return;
       }
 
@@ -1196,6 +1297,9 @@
           picks,
           algorithm_weights: allWeights,
           power_ratings: allPower,
+          players: allPlayers,
+          team_ats: allAts,
+          matchup_ats: allH2H,
           games_cached: allGames.length,
         };
         saveFile(`edge-report-${stamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
@@ -1214,15 +1318,6 @@
       const esc = v => String(v ?? '—').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
       const n = (v, d = 1) => typeof v === 'number' ? v.toFixed(d) : '—';
 
-      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
-      const sportRows = sports.map(sp => {
-        const sub = picks.filter(p => p.sport === sp);
-        if (!sub.length) return '';
-        const st = reportSummary(sub);
-        return `<tr><td>${sp}</td><td>${st.total}</td><td>${st.wins}-${st.losses}-${st.pushes}</td>
-          <td>${n(st.win_rate)}%</td><td>${n(st.pnl)}u</td><td>${n(st.roi)}%</td></tr>`;
-      }).join('');
-
       const pickRows = picks.slice(0, 500).map(p => `
         <tr>
           <td>${p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</td>
@@ -1233,15 +1328,30 @@
           <td>${n(p.confidence)}%</td>
           <td>${n((p.edge || 0) * 100, 2)}%</td>
           <td>${esc(p.units)}u</td>
-          <td class="${p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : ''}">${esc(p.result || 'PENDING')}</td>
+          <td>${esc(p.result || 'PENDING')}</td>
           <td>${p.pnl != null ? n(p.pnl) + 'u' : '—'}</td>
         </tr>`).join('');
 
-      const familyRows = allWeights.map(w => `
-        <tr><td>${esc(w.family)}</td><td>${esc(w.sport)}</td>
-        <td>${w.wins || 0}-${w.losses || 0}</td>
-        <td>${n((w.roi || 0) * 100)}%</td>
-        <td>${n(w.dynamic_weight || w.base_weight)}</td></tr>`).join('');
+      const atsRows = allAts.slice(0, 100).map(r => `
+        <tr>
+          <td>${esc(r.sport)}</td>
+          <td>${esc(r.team_name)}</td>
+          <td>${r.season_wins || 0}-${r.season_losses || 0}</td>
+          <td>${n((r.season_cover_pct || 0) * 100, 0)}%</td>
+          <td>${r.last10_wins || 0}-${r.last10_losses || 0}</td>
+          <td>${n((r.last10_cover_pct || 0) * 100, 0)}%</td>
+          <td>${esc(r.trend_label || 'stable')}</td>
+        </tr>`).join('');
+
+      const playerRows = allPlayers.slice(0, 100).map(p => `
+        <tr>
+          <td>${esc(p.sport)}</td>
+          <td>${esc(p.team_name)}</td>
+          <td>${esc(p.name)}</td>
+          <td>${esc(p.position || '—')}</td>
+          <td>${n(p.rating, 1)}</td>
+          <td>${p.is_starter ? 'Yes' : 'No'}</td>
+        </tr>`).join('');
 
       return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8" />
@@ -1255,8 +1365,7 @@
   .meta { color: #6b6354; font-size: 13px; }
   h2 { font-size: 17px; margin: 32px 0 10px; padding-bottom: 5px; border-bottom: 1px solid #e2ddd0; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; margin: 18px 0 6px; }
-  .card { border: 1px solid #e2ddd0; border-radius: 4px; padding: 13px 14px;
-          box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 5px 14px rgba(0,0,0,.06); }
+  .card { border: 1px solid #e2ddd0; border-radius: 4px; padding: 13px 14px; }
   .card .k { font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; color: #8a8172; margin-bottom: 5px; }
   .card .v { font-size: 25px; font-weight: 600; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
@@ -1264,14 +1373,11 @@
        color: #8a8172; border-bottom: 1.5px solid #C9A84C; padding: 7px 8px; }
   td { padding: 7px 8px; border-bottom: 1px solid #f0ece2; }
   tbody tr:nth-child(even) { background: #faf8f3; }
-  .w { color: #1f7a43; font-weight: 600; }
-  .l { color: #b3352a; font-weight: 600; }
   footer { margin-top: 44px; padding-top: 12px; border-top: 1px solid #e2ddd0; color: #8a8172; font-size: 11.5px; }
-  @media print { body { padding: 0; } .card { box-shadow: none; } }
 </style></head>
 <body>
 <header>
-  <h1>THE EDGE — Performance Report</h1>
+  <h1>THE EDGE — Intelligence Report</h1>
   <div class="meta">${rangeLabel} &middot; generated ${new Date().toLocaleString()}</div>
 </header>
 
@@ -1280,20 +1386,18 @@
   <div class="card"><div class="k">Picks</div><div class="v">${s.total}</div></div>
   <div class="card"><div class="k">Record</div><div class="v">${s.wins}-${s.losses}-${s.pushes}</div></div>
   <div class="card"><div class="k">Win rate</div><div class="v">${n(s.win_rate)}%</div></div>
-  <div class="card"><div class="k">Units staked</div><div class="v">${n(s.units)}</div></div>
+  <div class="card"><div class="k">Units</div><div class="v">${n(s.units)}</div></div>
   <div class="card"><div class="k">Net</div><div class="v">${n(s.pnl)}u</div></div>
   <div class="card"><div class="k">ROI</div><div class="v">${n(s.roi)}%</div></div>
-  <div class="card"><div class="k">Avg confidence</div><div class="v">${n(s.avg_confidence)}%</div></div>
-  <div class="card"><div class="k">Pending</div><div class="v">${s.pending}</div></div>
 </div>
 
-<h2>By sport</h2>
-<table><thead><tr><th>Sport</th><th>Picks</th><th>Record</th><th>Win %</th><th>Net</th><th>ROI</th></tr></thead>
-<tbody>${sportRows || '<tr><td colspan="6">No sport data in this range</td></tr>'}</tbody></table>
+<h2>Team ATS Form (Top 100)</h2>
+<table><thead><tr><th>Sport</th><th>Team</th><th>Season</th><th>Cover %</th><th>Last 10</th><th>L10 %</th><th>Trend</th></tr></thead>
+<tbody>${atsRows || '<tr><td colspan="7">No ATS data</td></tr>'}</tbody></table>
 
-<h2>Algorithm families</h2>
-<table><thead><tr><th>Family</th><th>Sport</th><th>Record</th><th>ROI</th><th>Weight</th></tr></thead>
-<tbody>${familyRows || '<tr><td colspan="5">No family data — run the learning loop</td></tr>'}</tbody></table>
+<h2>Top Players (Top 100)</h2>
+<table><thead><tr><th>Sport</th><th>Team</th><th>Player</th><th>Pos</th><th>Rating</th><th>Starter</th></tr></thead>
+<tbody>${playerRows || '<tr><td colspan="6">No player data</td></tr>'}</tbody></table>
 
 <h2>Picks</h2>
 <table><thead><tr><th>Date</th><th>Sport</th><th>Decision</th><th>Matchup</th><th>Side</th><th>Conf</th><th>Edge</th><th>Units</th><th>Result</th><th>P/L</th></tr></thead>
@@ -1303,7 +1407,6 @@
 </body></html>`;
     }
 
-    // ── TOAST ──
     function showToast(msg, isError) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -1311,29 +1414,8 @@
       setTimeout(() => t.className = 'toast', 2400);
     }
 
-    // ── INIT ──
     loadAll();
   </script>
 
-  <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
-  <script>
-    // ── PWA / OFFLINE ──
-    (function () {
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js').catch(function () {});
-        });
-      }
-      var bar = document.getElementById('offlineBar');
-      function sync() {
-        if (!bar) return;
-        bar.classList.toggle('show', !navigator.onLine);
-        document.body.classList.toggle('is-offline', !navigator.onLine);
-      }
-      window.addEventListener('online', sync);
-      window.addEventListener('offline', sync);
-      sync();
-    })();
-  </script>
 </body>
 </html>
