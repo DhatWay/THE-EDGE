@@ -71,8 +71,9 @@
     <div class="header">
       <div class="title">FULL <em>DIAGNOSTIC</em></div>
       <div class="btn-bar">
+        <button class="btn" id="flowBtn" onclick="runWorkflow()">▶ TEST WORKFLOW</button>
         <button class="btn" id="verifyBtn" onclick="runVerify()">✓ VERIFY DEPLOY</button>
-        <button class="btn" id="runBtn" onclick="runAll()">▶ FULL RUN</button>
+        <button class="btn secondary" id="runBtn" onclick="runAll()">⋯ FULL DUMP</button>
         <button class="btn secondary" id="copyBtn" onclick="copyAll()">⧉ COPY ALL</button>
         <button class="btn secondary" id="purgeBtn" onclick="purgeCache()">⟳ PURGE CACHE</button>
       </div>
@@ -116,6 +117,519 @@
       setTimeout(() => t.className = 'toast', 2200);
     };
 
+
+
+    // ============================================================
+    // WORKFLOW TEST
+    // Walks the real pipeline in order — power ratings, matchups,
+    // spread, algorithms, governor, then physics or Claude — and
+    // stops at the first stage that cannot hand off to the next.
+    // Every stage reports what it produced and, when it fails, why.
+    // ============================================================
+
+    const W = { failed: null, notes: [] };
+
+    function stageHead(n, name) {
+      out('');
+      out('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'section-title');
+      out('  STAGE ' + n + ' · ' + name, 'section-title');
+      out('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'section-title');
+    }
+
+    function ok(label, detail)   { out('   \u2713 ' + String(label).padEnd(30) + (detail || ''), 'ok'); }
+    function bad(label, detail)  { out('   \u2717 ' + String(label).padEnd(30) + (detail || ''), 'err'); }
+    function warn(label, detail) { out('   ! ' + String(label).padEnd(30) + (detail || ''), 'warn'); }
+    function why(text)           { out('       \u2192 ' + text, 'warn'); }
+
+    function halt(stage, reason, fix) {
+      W.failed = { stage, reason, fix };
+      out('');
+      bad('PIPELINE STOPS HERE', reason);
+      why(fix);
+    }
+
+    async function runWorkflow() {
+      lines.length = 0;
+      W.failed = null; W.notes = [];
+      document.getElementById('flowBtn').disabled = true;
+      setStatus('Testing workflow\u2026', true);
+
+      out('EDGE WORKFLOW TEST');
+      out('Generated: ' + new Date().toISOString());
+      out('Chain: power ratings \u2192 matchups \u2192 spread \u2192 algorithms \u2192 governor \u2192 physics/Claude');
+
+      const state = {};
+      try {
+        if (await flow1_PowerRatings(state)) {
+          if (await flow2_Matchups(state)) {
+            if (await flow3_Spread(state)) {
+              if (await flow4_Algorithms(state)) {
+                if (await flow5_Governor(state)) {
+                  await flow6_Decision(state);
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        out('');
+        bad('UNCAUGHT ERROR', e.message);
+        String(e.stack || '').split('\n').slice(0, 3).forEach(l => out('     ' + l, 'err'));
+      }
+
+      flowVerdict();
+      setStatus('Done \u00b7 ' + new Date().toLocaleTimeString(), false);
+      document.getElementById('flowBtn').disabled = false;
+      render();
+    }
+
+    // ── STAGE 1 · POWER RATINGS ──
+    async function flow1_PowerRatings(state) {
+      stageHead(1, 'POWER RATINGS');
+
+      if (typeof window.EDGE_POWER === 'undefined') {
+        bad('EDGE_POWER', 'module not loaded');
+        halt(1, 'power-engine.js did not define EDGE_POWER',
+             'The wrong file is deployed as power-engine.js. Confirm it declares EDGE_POWER, not EDGE_ROSTER.');
+        return false;
+      }
+      if (typeof window.EDGE_POWER.computeGamePrior !== 'function') {
+        bad('computeGamePrior', 'missing');
+        halt(1, 'EDGE_POWER loaded but has no computeGamePrior', 'Deploy the current power-engine.js.');
+        return false;
+      }
+      ok('EDGE_POWER', Object.keys(window.EDGE_POWER).length + ' exports');
+
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) {
+        halt(1, 'Supabase not connected', 'Settings \u203a Connections \u2014 add your project URL and anon key.');
+        return false;
+      }
+
+      let ratings = [];
+      try {
+        const res = await fetch(url + '/rest/v1/power_ratings?select=*&limit=5000',
+          { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+        if (!res.ok) { halt(1, 'power_ratings returned HTTP ' + res.status, 'Check the table exists.'); return false; }
+        ratings = await res.json();
+      } catch (e) { halt(1, 'power_ratings unreachable: ' + e.message, 'Check connectivity.'); return false; }
+
+      if (!ratings.length) {
+        bad('power_ratings', 'empty');
+        halt(1, 'No power ratings on file', 'Admin \u203a Build Power Ratings.');
+        return false;
+      }
+      ok('power_ratings', ratings.length + ' teams');
+
+      const bySport = {};
+      ratings.forEach(r => { (bySport[r.sport] = bySport[r.sport] || []).push(r); });
+      Object.entries(bySport).forEach(([sp, list]) => {
+        const gp = list.reduce((a, r) => a + (r.games_played || 0), 0) / list.length;
+        out('      ' + sp.padEnd(7) + String(list.length).padStart(3) + ' teams \u00b7 ' + gp.toFixed(1) + ' games avg');
+      });
+
+      const newest = ratings.reduce((a, r) => (!a || new Date(r.updated_at) > new Date(a)) ? r.updated_at : a, null);
+      const ageH = (Date.now() - new Date(newest)) / 3600000;
+      if (ageH > 36) warn('Freshness', ageH.toFixed(0) + ' hours old \u2014 rebuild recommended');
+      else ok('Freshness', ageH.toFixed(1) + ' hours old');
+
+      // Preseason leak — the failure that made every NFL rating wrong.
+      const nfl = bySport.NFL || [];
+      if (nfl.length) {
+        const opener = new Date(new Date().getFullYear(), 8, 4);
+        const weeks = Math.max(0, Math.floor((Date.now() - opener) / (7 * 86400000)));
+        const maxGP = Math.max.apply(null, nfl.map(r => r.games_played || 0));
+        if (maxGP > weeks + 1) {
+          bad('NFL preseason filter', maxGP + ' games vs ~' + weeks + ' weeks played');
+          why('Preseason results are in the ratings. Rebuild with the current power-engine.js.');
+          W.notes.push('NFL ratings include preseason');
+        } else ok('NFL preseason filter', 'clean');
+      }
+
+      const mlb = bySport.MLB || [];
+      if (mlb.length) {
+        const gp = mlb.reduce((a, r) => a + (r.games_played || 0), 0) / mlb.length;
+        const month = new Date().getMonth() + 1;
+        const expect = month >= 9 ? 140 : month >= 7 ? 90 : 40;
+        if (gp < expect * 0.8) {
+          bad('MLB coverage', gp.toFixed(0) + ' games avg, expected ~' + expect);
+          why('The season fetch is being truncated. Rebuild with the current power-engine.js.');
+          W.notes.push('MLB season truncated');
+        } else ok('MLB coverage', gp.toFixed(0) + ' games avg');
+      }
+
+      state.ratings = ratings;
+      state.bySport = bySport;
+      return true;
+    }
+
+    // ── STAGE 2 · MATCHUPS ──
+    async function flow2_Matchups(state) {
+      stageHead(2, 'MATCHUPS');
+
+      let games = [];
+      try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
+
+      if (!games.length) {
+        bad('Cached board', 'empty');
+        halt(2, 'No games cached', 'Open Matchups and refresh the board.');
+        return false;
+      }
+      ok('Cached board', games.length + ' games');
+
+      const ts = parseInt(localStorage.getItem('edge_todays_games_ts') || '0', 10);
+      if (ts) {
+        const mins = (Date.now() - ts) / 60000;
+        if (mins > 120) warn('Cache age', mins.toFixed(0) + ' minutes \u2014 refresh Matchups');
+        else ok('Cache age', mins.toFixed(0) + ' minutes');
+      }
+
+      // A started game is quoted in-play. Those prices are not pregame
+      // lines and must never reach the pipeline.
+      const now = Date.now();
+      const started = games.filter(g => {
+        const t = new Date(g.commence_time || g.time).getTime();
+        return isFinite(t) && t <= now;
+      });
+      if (started.length) {
+        bad('In-play contamination', started.length + ' of ' + games.length + ' already started');
+        why('Those carry live prices, not pregame lines. Refresh Matchups to drop them.');
+        started.slice(0, 3).forEach(g =>
+          out('        ' + (g.away_team || g.away) + ' @ ' + (g.home_team || g.home) + '  spread=' + g.spread, 'err'));
+        W.notes.push(started.length + ' in-play games cached');
+      } else ok('In-play contamination', 'none \u2014 all pregame');
+
+      const book = localStorage.getItem('edge_book_key');
+      const fromBook = games.filter(g => g.price_source === 'book').length;
+      if (book) ok('Sportsbook', book + ' \u00b7 ' + fromBook + '/' + games.length + ' priced by your book');
+      else warn('Sportsbook', 'consensus \u2014 Admin \u203a Sportsbook to price against your own account');
+
+      const resolver = window.EDGE_TEAMS;
+      if (!resolver) {
+        warn('EDGE_TEAMS', 'team-aliases.js not loaded \u2014 only exact name matches resolve');
+        W.notes.push('team-aliases.js missing');
+      } else ok('EDGE_TEAMS', 'loaded');
+
+      const index = {};
+      state.ratings.forEach(r => { index[r.sport + ':' + r.team_name] = r; });
+
+      const idxCache = {};
+      const poolFor = (sport) => {
+        if (!resolver) return null;
+        if (!(sport in idxCache)) idxCache[sport] = resolver.buildIndex(state.bySport[sport] || [], sport);
+        return idxCache[sport];
+      };
+
+      let matched = 0;
+      const unmatched = [];
+      games.forEach(g => {
+        const sport = g._sport || g.sport;
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        let h = index[sport + ':' + home];
+        let a = index[sport + ':' + away];
+        if (resolver && (!h || !a)) {
+          const idx = poolFor(sport);
+          if (idx) {
+            if (!h) h = resolver.resolveTeam(home, idx, sport);
+            if (!a) a = resolver.resolveTeam(away, idx, sport);
+          }
+        }
+        if (h && a) matched++;
+        else unmatched.push({ sport, home, away, h: !!h, a: !!a });
+      });
+
+      const rate = matched / games.length;
+      if (rate < 0.95) {
+        (rate < 0.7 ? bad : warn)('Team resolution',
+          matched + '/' + games.length + ' usable (' + (rate * 100).toFixed(0) + '%)');
+        unmatched.slice(0, 6).forEach(u =>
+          out('        ' + u.sport + ' \u00b7 ' + u.away + (u.a ? ' \u2713' : ' \u2717') +
+              ' @ ' + u.home + (u.h ? ' \u2713' : ' \u2717'), 'warn'));
+        if (unmatched.length > 6) out('        \u2026and ' + (unmatched.length - 6) + ' more', 'warn');
+        W.notes.push((games.length - matched) + ' games unresolved by name');
+      } else ok('Team resolution', matched + '/' + games.length + ' usable');
+
+      if (!matched) {
+        halt(2, 'No game has ratings for both teams',
+             'Rebuild power ratings, or deploy team-aliases.js so name variants resolve.');
+        return false;
+      }
+
+      state.games = games;
+      state.playable = games.filter(g => {
+        const t = new Date(g.commence_time || g.time).getTime();
+        return isFinite(t) && t > now;
+      });
+      return true;
+    }
+
+    // ── STAGE 3 · SPREAD ──
+    async function flow3_Spread(state) {
+      stageHead(3, 'SPREAD');
+
+      const pool = state.playable.length ? state.playable : state.games;
+      const priced = pool.filter(g => g.spread !== null && g.spread !== undefined);
+      if (!priced.length) {
+        bad('Spreads', '0 of ' + pool.length + ' priced');
+        halt(3, 'No game carries a spread',
+             'Check the Odds API key and quota in Settings, then refresh Matchups.');
+        return false;
+      }
+      ok('Spreads', priced.length + '/' + pool.length + ' priced');
+
+      // A number outside the plausible band means a live or alternate
+      // line has been captured instead of the pregame price.
+      const BANDS = { NFL: 28, NCAAF: 60, NBA: 25, NCAAB: 35, MLB: 3.5, NHL: 3.5, MLS: 3.5 };
+      const absurd = priced.filter(g => {
+        const cap = BANDS[g._sport || g.sport];
+        return cap && Math.abs(g.spread) > cap;
+      });
+      if (absurd.length) {
+        bad('Spread sanity', absurd.length + ' outside plausible range');
+        absurd.slice(0, 4).forEach(g =>
+          out('        ' + (g._sport || g.sport) + ' \u00b7 ' + (g.away_team || g.away) +
+              ' @ ' + (g.home_team || g.home) + ' = ' + g.spread, 'err'));
+        why('These are live in-play numbers. Refresh Matchups on the current build.');
+        W.notes.push(absurd.length + ' implausible spreads');
+      } else ok('Spread sanity', 'all within range');
+
+      const withOpen = priced.filter(g => g.open_spread !== null && g.open_spread !== undefined);
+      if (!withOpen.length) {
+        warn('Opening line', 'none on the board');
+        why('Market and line-dynamics vote neutral and the governor caps confidence at 78.');
+        W.notes.push('no opening lines');
+      } else ok('Opening line', withOpen.length + '/' + priced.length + ' games');
+
+      ok('Totals / moneylines',
+         priced.filter(g => g.total != null).length + ' totals \u00b7 ' +
+         priced.filter(g => g.ml != null).length + ' MLs');
+
+      state.priced = priced;
+      return true;
+    }
+
+    // ── STAGE 4 · ALGORITHMS ──
+    async function flow4_Algorithms(state) {
+      stageHead(4, 'ALGORITHMS');
+
+      if (!window.EDGE_ALGOS) {
+        halt(4, 'EDGE_ALGOS not loaded', 'Deploy algorithms.js and check the script tag.');
+        return false;
+      }
+      ok('EDGE_ALGOS', (window.EDGE_ALGOS.FAMILIES || []).length + ' families registered');
+
+      const sample = state.priced[0];
+      const sport = sample._sport || sample.sport;
+      const homeName = sample.home_team || sample.home;
+      const awayName = sample.away_team || sample.away;
+      out('   Sample: ' + awayName + ' @ ' + homeName + '  (' + sport + ', spread ' + sample.spread + ')');
+
+      let ctx = {};
+      if (window.EDGE_CONTEXT) {
+        try {
+          const built = await window.EDGE_CONTEXT.buildContext([sample]);
+          ctx = {
+            lineHistory: (built.lineHistoryByGame || {})[sample.id] || null,
+            homeRestDays: (built.restByTeam || {})[sport + ':' + homeName],
+            awayRestDays: (built.restByTeam || {})[sport + ':' + awayName],
+            travelMiles: ((built.travelByGame || {})[sample.id] || {}).miles,
+            weather: (built.weatherByGame || {})[sample.id] || {},
+            homeInjuries: (((built.injuriesByGame || {})[sample.id]) || {}).home || [],
+            awayInjuries: (((built.injuriesByGame || {})[sample.id]) || {}).away || [],
+            hoursToGame: Math.max(0, (new Date(sample.commence_time || sample.time) - Date.now()) / 3600000),
+          };
+          const have = [];
+          if (ctx.lineHistory) have.push('line history');
+          if (ctx.homeRestDays != null) have.push('rest');
+          if (ctx.travelMiles != null) have.push('travel');
+          if (Object.keys(ctx.weather || {}).length) have.push('weather');
+          if (ctx.homeInjuries.length || ctx.awayInjuries.length) have.push('injuries');
+          ok('Context', have.length ? have.join(', ') : 'nothing resolved');
+          if (!ctx.homeInjuries.length && !ctx.awayInjuries.length) {
+            warn('Injuries', 'no rows \u2014 the injury family votes neutral');
+            W.notes.push('no injury data');
+          }
+        } catch (e) { warn('Context', 'build failed: ' + e.message); }
+      } else warn('EDGE_CONTEXT', 'not loaded \u2014 running with empty context');
+
+      const index = {};
+      state.ratings.forEach(r => { index[r.sport + ':' + r.team_name] = r; });
+      const R = window.EDGE_TEAMS ? window.EDGE_TEAMS.buildIndex(state.bySport[sport] || [], sport) : null;
+      let hs = index[sport + ':' + homeName] || (R && window.EDGE_TEAMS.resolveTeam(homeName, R, sport));
+      let as = index[sport + ':' + awayName] || (R && window.EDGE_TEAMS.resolveTeam(awayName, R, sport));
+      if (!hs || !as) {
+        halt(4, 'Sample game has no ratings for both teams', 'See the resolution failures in stage 2.');
+        return false;
+      }
+
+      let prior;
+      try {
+        prior = await window.EDGE_POWER.computeGamePrior(sample, {
+          homeStats: hs, awayStats: as,
+          market: {
+            open_spread: sample.open_spread != null ? sample.open_spread
+                       : (ctx.lineHistory ? ctx.lineHistory.open_spread : null),
+            current_spread: sample.spread,
+            total: sample.total,
+            home_ml: sample.ml,
+            away_ml: sample.away_ml,
+            book: sample.bookmaker,
+            book_key: sample.book_key,
+            price_source: sample.price_source,
+          },
+        });
+      } catch (e) { halt(4, 'computeGamePrior threw: ' + e.message, 'Check power-engine.js.'); return false; }
+
+      ok('Prior built', 'model ' + prior.model_spread + ' vs market ' + prior.market.current_spread +
+         ' \u00b7 edge ' + prior.raw_edge);
+      if (prior.market.book) ok('Book on prior', prior.market.book + ' (' + prior.market.price_source + ')');
+
+      let families;
+      try { families = await window.EDGE_ALGOS.runAll(prior, ctx); }
+      catch (e) { halt(4, 'runAll threw: ' + e.message, 'Check algorithms.js.'); return false; }
+
+      const votes = { yes: 0, no: 0, neu: 0 };
+      families.forEach(f => { votes[f.vote] = (votes[f.vote] || 0) + 1; });
+      ok('Families returned', families.length + ' \u00b7 ' + votes.yes + ' yes / ' + votes.no + ' no / ' + votes.neu + ' neutral');
+
+      families.forEach(f => {
+        out('        ' + String(f.family).padEnd(18) + String(f.vote).toUpperCase().padEnd(5) +
+            'conf ' + Math.round((f.confidence || 0) * 100) + '%  ' + (f.reason || ''),
+            f.vote === 'neu' ? 'warn' : 'ok');
+      });
+
+      if (votes.neu >= families.length - 1) {
+        warn('Signal', 'only ' + (families.length - votes.neu) + ' family has an opinion');
+        why('Each neutral family above is missing its input. Fix those and confidence rises.');
+        W.notes.push('almost all families neutral');
+      }
+
+      state.prior = prior;
+      state.families = families;
+      state.ctx = ctx;
+      return true;
+    }
+
+    // ── STAGE 5 · GOVERNOR ──
+    async function flow5_Governor(state) {
+      stageHead(5, 'GOVERNOR');
+
+      if (!window.EDGE_GOVERNOR) { halt(5, 'EDGE_GOVERNOR not loaded', 'Deploy governor.js.'); return false; }
+
+      let gov;
+      try { gov = window.EDGE_GOVERNOR.run(state.families, state.prior); }
+      catch (e) { halt(5, 'governor threw: ' + e.message, 'Check governor.js.'); return false; }
+
+      ok('Consensus', gov.consensus_score);
+      ok('Confidence', gov.confidence + '%');
+      ok('Edge', ((gov.edge || 0) * 100).toFixed(2) + '%');
+      ok('Agreement', gov.agreement_index);
+      out('   Decision: ' + gov.decision, gov.decision === 'PASS' ? 'warn' : 'ok');
+
+      if (gov.data_caps && gov.data_caps.length) {
+        warn('Confidence capped', gov.data_caps.join(', '));
+        gov.data_caps.forEach(c => {
+          if (/line movement/i.test(c)) why('No opening line on this game \u2014 see stage 3.');
+        });
+        W.notes.push('capped: ' + gov.data_caps.join(', '));
+      }
+
+      const bd = gov.breakdown || [];
+      if (!bd.length) {
+        bad('Breakdown', 'empty');
+        why('Learning, Claude review and the family chips all read this.');
+        W.notes.push('governor breakdown empty');
+      } else ok('Breakdown', bd.length + ' families');
+
+      if (gov.decision === 'PASS') {
+        warn('Outcome', 'PASS \u2014 no bet on this game');
+        why('Not a fault by itself. With ' + state.families.filter(f => f.vote === 'neu').length +
+            ' of ' + state.families.length + ' families neutral, confidence cannot clear the threshold.');
+      }
+
+      state.gov = gov;
+      return true;
+    }
+
+    // ── STAGE 6 · PHYSICS / CLAUDE ──
+    async function flow6_Decision(state) {
+      const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
+      const useClaude = mode !== 'math_only';
+      stageHead(6, useClaude ? 'CLAUDE \u2192 PHYSICS' : 'PHYSICS');
+      out('   Decision mode: ' + mode);
+
+      if (useClaude) {
+        if (!window.EDGE_CLAUDE) bad('EDGE_CLAUDE', 'not loaded');
+        else {
+          const hasKey = !!localStorage.getItem('edge_claude_api_key');
+          const hasProxy = !!localStorage.getItem('edge_proxy_url');
+          if (!hasKey && !hasProxy) {
+            bad('Anthropic credentials', 'none set');
+            why('Settings \u203a Connections \u2014 add an API key, or a proxy URL to keep it server-side.');
+            W.notes.push('Claude mode on with no key');
+          } else {
+            ok('Anthropic credentials', hasProxy ? 'via proxy' : 'direct key');
+          }
+        }
+      } else {
+        ok('Claude', 'not active \u2014 math only');
+      }
+
+      if (!window.EDGE_PHYSICS) { halt(6, 'EDGE_PHYSICS not loaded', 'Deploy physics.js.'); return false; }
+
+      let phys;
+      try { phys = window.EDGE_PHYSICS.decide(state.gov, state.prior, {}); }
+      catch (e) { halt(6, 'physics threw: ' + e.message, 'Check physics.js.'); return false; }
+
+      ok('Decision', phys.decision);
+      ok('Units', phys.units + 'u' + (phys.stake_dollars != null ? ' ($' + phys.stake_dollars + ')' : ''));
+      ok('Confidence', phys.confidence + '%');
+      if (phys.side_label) ok('Side', phys.side_label.team || '\u2014');
+
+      const snap = phys.market_snapshot || {};
+      if (snap.book) {
+        ok('Book on pick', snap.book + ' \u00b7 spread ' + snap.spread +
+           (snap.home_spread_price != null ? ' @ ' + snap.home_spread_price : ''));
+      } else {
+        warn('Book on pick', 'not stamped \u2014 the pick will not record where its price came from');
+      }
+
+      if (!(phys.governor_snapshot || {}).breakdown) {
+        bad('Pick breakdown', 'missing from the stored snapshot');
+        W.notes.push('physics drops the governor breakdown');
+      } else {
+        ok('Pick breakdown', phys.governor_snapshot.breakdown.length + ' families');
+      }
+
+      (phys.reasons || []).forEach(r => out('        \u00b7 ' + r));
+      return true;
+    }
+
+    // ── VERDICT ──
+    function flowVerdict() {
+      out('');
+      out('════════════════════════════════════════════════════════', 'section-title');
+      out('  VERDICT', 'section-title');
+      out('════════════════════════════════════════════════════════', 'section-title');
+      out('');
+
+      if (W.failed) {
+        bad('Broken at stage ' + W.failed.stage, W.failed.reason);
+        out('  Fix: ' + W.failed.fix, 'warn');
+      } else {
+        out('  Chain completes end to end.', 'ok');
+      }
+
+      if (W.notes.length) {
+        out('');
+        out('  Degrading the output:', 'warn');
+        W.notes.forEach(n => out('    \u00b7 ' + n, 'warn'));
+      } else if (!W.failed) {
+        out('  Nothing degrading the output.', 'ok');
+      }
+    }
 
     // ============================================================
     // DEPLOY VERIFICATION
@@ -586,7 +1100,8 @@
       const tables = [
         'power_ratings', 'coaching_ratings', 'shadow_picks',
         'algorithm_weights', 'line_history', 'bet_log', 'game_priors',
-        'backtest_runs', 'picks', 'settings'
+        'backtest_runs', 'picks', 'settings',
+        'players', 'team_ats', 'matchup_ats', 'historical_odds',
       ];
 
       for (const t of tables) {
@@ -718,8 +1233,17 @@
       out('');
       out('  First 5 games:');
       games.slice(0, 5).forEach((g, i) => {
-        out(`    [${i+1}] ${g._sport || g.sport} | ${g.away_team || g.away} @ ${g.home_team || g.home} | spread=${g.spread ?? 'null'}`);
+        const thin = typeof g.spread_book_count === 'number' && g.spread_book_count <= 1;
+        out(`    [${i+1}] ${g._sport || g.sport} | ${g.away_team || g.away} @ ${g.home_team || g.home} | spread=${g.spread ?? 'null'} (${g.spread_book_count ?? '?'} books)`,
+            thin ? 'warn' : '');
       });
+
+      const thinSpreads = games.filter(g => typeof g.spread_book_count === 'number' && g.spread_book_count <= 1);
+      if (thinSpreads.length) {
+        out('');
+        kv('Thin spreads (1 book only)', thinSpreads.length + '/' + games.length, 'warn');
+        out('  A spread backed by a single book is more likely to be a stale or mispriced line.');
+      }
     }
 
     // 11. TEAM MATCH
