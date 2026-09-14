@@ -446,6 +446,47 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
+    // ── Sub 0: live historical trends ──
+    // Situational, streak, rivalry and player-anchored records that
+    // apply to this exact game. A trend's weight is its sample size
+    // shrunk toward neutral: a 6-0 run on six occurrences is real but
+    // thin, and must not outvote 21-9 on thirty.
+    const homeTrends = context.homeTrends || [];
+    const awayTrends = context.awayTrends || [];
+    if (homeTrends.length || awayTrends.length) {
+      const score = (list) => {
+        let total = 0, weight = 0;
+        list.filter(t => t.market === 'SU' || t.market === 'ATS').forEach(t => {
+          const n = t.sample || 0;
+          if (n < 3) return;
+          // Beta-style shrink toward 0.5 with a prior of 8 observations.
+          const shrunk = ((t.hit_rate || 0.5) * n + 0.5 * 8) / (n + 8);
+          const w = Math.min(n / 20, 1) * (t.market === 'ATS' ? 1 : 0.7);
+          total += (shrunk - 0.5) * w;
+          weight += w;
+        });
+        return weight > 0 ? { edge: total / weight, weight } : null;
+      };
+
+      const h = score(homeTrends);
+      const a2 = score(awayTrends);
+      if (h || a2) {
+        const diff = (h ? h.edge : 0) - (a2 ? a2.edge : 0);
+        const strength = Math.min(Math.abs(diff) * 4, 1);
+        const best = [...homeTrends, ...awayTrends]
+          .sort((x, y) => (y.current_streak || 0) - (x.current_streak || 0))[0];
+        subs.push({
+          name: 'live_trends',
+          vote: Math.abs(diff) < 0.02 ? 'neu' : diff > 0 ? 'yes' : 'no',
+          confidence: 0.5 + strength * 0.4,
+          edge: round(diff, 4),
+          reason: best
+            ? `${best.headline} (${best.wins}-${best.losses}, n=${best.sample})`
+            : `${homeTrends.length + awayTrends.length} live trends`,
+        });
+      }
+    }
+
     // ── Sub 1: last-10 ATS cover rate differential ──
     // Higher cover rate → stronger signal in that team's favor.
     if (homeAts && awayAts &&
