@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data — EDGE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg3: #141414; --bg4: #1C1C1C; --surface: #111111;
+      --border: rgba(201,168,76,0.12); --border-bright: rgba(201,168,76,0.32);
+      --text: #F0EAD8; --text-dim: #7A7060; --text-mid: #A89878;
+      --green: #27AE60; --red: #E74C3C; --blue: #4A90D9;
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46);
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%, 85% 0%, 100% 15%, 100% 85%, 85% 100%, 15% 100%, 0% 85%, 0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+    main { padding-top: 60px; }
+    .page-header { padding: 28px 20px 16px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; margin-bottom: 6px; }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: 42px; letter-spacing: 3px; line-height: 1; }
+    .page-title em { color: var(--gold); font-style: normal; }
+    .page-sub { font-size: 13px; color: var(--text-dim); font-weight: 300; margin-top: 8px; }
+
+    .toolbar { display: flex; gap: 8px; padding: 14px 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
+    .tb-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 9px 13px; cursor: pointer; border-radius: 2px; box-shadow: var(--lift); transition: all 0.2s; }
+    .tb-btn:hover { border-color: var(--gold); color: var(--gold); }
+    .tb-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
+    .tb-btn.on { border-color: var(--green); color: var(--green); }
+    .tb-search { flex: 1 1 160px; min-width: 130px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); font-size: 14px; padding: 9px 11px; border-radius: 2px; }
+    .tb-meta { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); width: 100%; }
+
+    .tabs { display: flex; gap: 0; overflow-x: auto; border-bottom: 1px solid var(--border); -webkit-overflow-scrolling: touch; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { flex: 0 0 auto; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 13px 15px; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+    .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+    .tab .badge { display: inline-block; margin-left: 6px; font-size: 10px; color: var(--text-dim); }
+    .tab.active .badge { color: var(--gold-dim); }
+
+    .sport-row { display: flex; gap: 6px; padding: 12px 20px 0; overflow-x: auto; }
+    .sport-row::-webkit-scrollbar { display: none; }
+    .chip { flex: 0 0 auto; background: var(--bg3); border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; padding: 6px 11px; cursor: pointer; border-radius: 2px; }
+    .chip.active { background: var(--gold-glow); border-color: var(--gold); color: var(--gold); }
+
+    .table-wrap { padding: 14px 0 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 100%; }
+    th { position: sticky; top: 0; background: var(--bg2); text-align: left; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold-dim); border-bottom: 1px solid var(--border-bright); padding: 9px 12px; white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { color: var(--gold); }
+    th .arrow { opacity: 0.5; font-size: 9px; }
+    td { padding: 9px 12px; border-bottom: 1px solid rgba(201,168,76,0.06); white-space: nowrap; }
+    tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
+    tbody tr:hover { background: var(--gold-glow); }
+    td.num { font-variant-numeric: tabular-nums; }
+    td.pos { color: var(--green); } td.neg { color: var(--red); }
+    td.key { color: var(--gold); font-weight: 600; }
+    .muted { color: var(--text-dim); }
+
+    .state { padding: 50px 20px; text-align: center; }
+    .state-icon { font-size: 30px; color: var(--gold-dim); margin-bottom: 12px; }
+    .state-title { font-family: 'Bebas Neue', sans-serif; font-size: 21px; letter-spacing: 2px; margin-bottom: 7px; }
+    .state-sub { font-size: 13px; color: var(--text-dim); font-weight: 300; max-width: 44ch; margin: 0 auto; line-height: 1.55; }
+    .state-sub b { color: var(--gold); font-weight: 600; }
+
+    .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--border-bright); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(120px); background: var(--bg4); border: 1px solid var(--border-bright); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; padding: 11px 20px; z-index: 200; transition: transform 0.3s; box-shadow: var(--lift-high); }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.red { border-color: var(--red); color: var(--red); }
+
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s; }
+    .offline-bar.show { transform: translateY(0); }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu"><span></span><span></span><span></span></button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="data.html" class="active"><span class="ico">▤</span> Data Explorer</a>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <main>
+    <div class="page-header">
+      <div class="page-eye">Live from Supabase</div>
+      <div class="page-title">DATA <em>EXPLORER</em></div>
+      <div class="page-sub">Every table the pipeline reads and writes. Sort any column, filter by sport, export what you're looking at.</div>
+    </div>
+
+    <div class="toolbar">
+      <button class="tb-btn primary" onclick="loadActive(true)">Refresh</button>
+      <button class="tb-btn" id="autoBtn" onclick="toggleAuto()">Auto: off</button>
+      <input class="tb-search" id="search" placeholder="Filter rows…" oninput="render()" />
+      <button class="tb-btn" onclick="exportCsv()">CSV</button>
+      <div class="tb-meta" id="meta">—</div>
+    </div>
+
+    <div class="tabs" id="tabs"></div>
+    <div class="sport-row" id="sportRow"></div>
+    <div class="table-wrap" id="tableWrap">
+      <div class="state">
+        <div class="state-icon">▤</div>
+        <div class="state-title">LOADING</div>
+        <div class="state-sub">Reading from Supabase…</div>
+      </div>
+    </div>
+  </main>
+
+  <div class="offline-bar" id="offlineBar">Offline — showing last loaded data</div>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    const toggleDrawer = () => { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); };
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+
+    // ── OFFLINE ──
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+      }
+      const bar = document.getElementById('offlineBar');
+      const sync = () => bar.classList.toggle('show', !navigator.onLine);
+      window.addEventListener('online', sync);
+      window.addEventListener('offline', sync);
+      sync();
+    })();
+
+    // ============================================================
+    // TABLE DEFINITIONS
+    // Each entry says which columns to show, how to format them, and
+    // which Admin action fills the table when it comes back empty.
+    // ============================================================
+
+    const N  = (d = 1) => (v) => v == null ? '—' : Number(v).toFixed(d);
+    const PCT = (v) => v == null ? '—' : (Number(v) * 100).toFixed(1) + '%';
+    const SIGNED = (d = 1) => (v) => v == null ? '—' : (Number(v) > 0 ? '+' : '') + Number(v).toFixed(d);
+    const DATE = (v) => v ? new Date(v).toLocaleDateString() : '—';
+    const DATETIME = (v) => v ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    const TXT = (v) => v == null || v === '' ? '—' : String(v);
+
+    const TABLES = [
+      {
+        id: 'power_ratings', label: 'Power Ratings', sportCol: 'sport',
+        order: 'overall.desc', fills: 'Build Power Ratings',
+        cols: [
+          { k: 'sport',        t: 'Sport',   f: TXT, key: true },
+          { k: 'team_name',    t: 'Team',    f: TXT, key: true },
+          { k: 'overall',      t: 'Overall', f: N(1), num: true },
+          { k: 'offense',      t: 'Off',     f: N(1), num: true },
+          { k: 'defense',      t: 'Def',     f: N(1), num: true },
+          { k: 'elo',          t: 'Elo',     f: N(0), num: true },
+          { k: 'srs',          t: 'SRS',     f: SIGNED(2), num: true, signed: true },
+          { k: 'pythagorean',  t: 'Pyth',    f: N(3), num: true },
+          { k: 'record',       t: 'Record',  f: TXT },
+          { k: 'home_record',  t: 'Home',    f: TXT },
+          { k: 'away_record',  t: 'Away',    f: TXT },
+          { k: 'last5_form',   t: 'Form',    f: SIGNED(2), num: true, signed: true },
+          { k: 'games_played', t: 'GP',      f: N(0), num: true },
+          { k: 'updated_at',   t: 'Updated', f: DATETIME },
+        ],
+      },
+      {
+        id: 'team_ats', label: 'Team ATS', sportCol: 'sport',
+        order: 'season_cover_pct.desc', fills: 'Build ATS',
+        cols: [
+          { k: 'sport',            t: 'Sport',  f: TXT, key: true },
+          { k: 'team_name',        t: 'Team',   f: TXT, key: true },
+          { k: 'season_label',     t: 'Season', f: TXT },
+          { k: 'season_wins',      t: 'W',      f: N(0), num: true },
+          { k: 'season_losses',    t: 'L',      f: N(0), num: true },
+          { k: 'season_cover_pct', t: 'Cover%', f: PCT, num: true },
+          { k: 'last10_cover_pct', t: 'L10',    f: PCT, num: true },
+          { k: 'home_cover_pct',   t: 'Home',   f: PCT, num: true },
+          { k: 'away_cover_pct',   t: 'Away',   f: PCT, num: true },
+          { k: 'favorite_cover_pct',t: 'As Fav',f: PCT, num: true },
+          { k: 'underdog_cover_pct',t: 'As Dog',f: PCT, num: true },
+          { k: 'current_streak',   t: 'Streak', f: SIGNED(0), num: true, signed: true },
+          { k: 'avg_cover_margin', t: 'Margin', f: SIGNED(2), num: true, signed: true },
+          { k: 'trend_label',      t: 'Trend',  f: TXT },
+        ],
+      },
+      {
+        id: 'matchup_ats', label: 'Head-to-Head', sportCol: 'sport',
+        order: 'meetings.desc', fills: 'Build ATS',
+        cols: [
+          { k: 'sport',            t: 'Sport',    f: TXT, key: true },
+          { k: 'team_a',           t: 'Team A',   f: TXT, key: true },
+          { k: 'team_b',           t: 'Team B',   f: TXT, key: true },
+          { k: 'meetings',         t: 'Games',    f: N(0), num: true },
+          { k: 'team_a_cover_pct', t: 'A Cover%', f: PCT, num: true },
+          { k: 'team_b_cover_pct', t: 'B Cover%', f: PCT, num: true },
+          { k: 'team_a_su_wins',   t: 'A SU',     f: N(0), num: true },
+          { k: 'team_b_su_wins',   t: 'B SU',     f: N(0), num: true },
+          { k: 'over_pct',         t: 'Over%',    f: PCT, num: true },
+          { k: 'avg_margin',       t: 'Avg Mgn',  f: SIGNED(2), num: true, signed: true },
+          { k: 'avg_total',        t: 'Avg Tot',  f: N(1), num: true },
+          { k: 'last_meeting_date',t: 'Last Met', f: DATE },
+        ],
+      },
+      {
+        id: 'players', label: 'Rosters', sportCol: 'sport',
+        order: 'rating.desc', fills: 'Build Rosters, then Enrich Rosters',
+        cols: [
+          { k: 'sport',          t: 'Sport',  f: TXT, key: true },
+          { k: 'team_name',      t: 'Team',   f: TXT, key: true },
+          { k: 'name',           t: 'Player', f: TXT, key: true },
+          { k: 'position',       t: 'Pos',    f: TXT },
+          { k: 'position_group', t: 'Group',  f: TXT },
+          { k: 'rating',         t: 'Rating', f: N(1), num: true },
+          { k: 'is_starter',     t: 'Starter',f: (v) => v ? 'Yes' : 'No' },
+          { k: 'offensive_contribution', t: 'Off Contrib', f: N(2), num: true },
+          { k: 'defensive_contribution', t: 'Def Contrib', f: N(2), num: true },
+          { k: 'status',         t: 'Status', f: TXT },
+        ],
+      },
+      {
+        id: 'shadow_picks', label: 'Picks', sportCol: 'sport',
+        order: 'created_at.desc', fills: 'Run the pipeline from Today\u2019s Picks',
+        cols: [
+          { k: 'created_at',   t: 'Date',    f: DATETIME, key: true },
+          { k: 'sport',        t: 'Sport',   f: TXT },
+          { k: 'decision',     t: 'Call',    f: TXT, key: true },
+          { k: 'away_team',    t: 'Away',    f: TXT },
+          { k: 'home_team',    t: 'Home',    f: TXT },
+          { k: 'side_team',    t: 'Side',    f: TXT, key: true },
+          { k: 'market_spread',t: 'Spread',  f: SIGNED(1), num: true, signed: true },
+          { k: 'confidence',   t: 'Conf',    f: (v) => v == null ? '—' : Number(v).toFixed(1) + '%', num: true },
+          { k: 'edge',         t: 'Edge',    f: PCT, num: true },
+          { k: 'units',        t: 'Units',   f: N(2), num: true },
+          { k: 'result',       t: 'Result',  f: (v) => v || 'PENDING' },
+          { k: 'pnl',          t: 'P/L',     f: SIGNED(2), num: true, signed: true },
+          { k: 'clv',          t: 'CLV',     f: SIGNED(2), num: true, signed: true },
+          { k: 'decision_mode',t: 'Mode',    f: TXT },
+        ],
+      },
+      {
+        id: 'algorithm_weights', label: 'Family Weights', sportCol: 'sport',
+        order: 'roi.desc', fills: 'Run the learning loop after grading picks',
+        cols: [
+          { k: 'family',        t: 'Family',  f: TXT, key: true },
+          { k: 'sport',         t: 'Sport',   f: TXT, key: true },
+          { k: 'wins',          t: 'W',       f: N(0), num: true },
+          { k: 'losses',        t: 'L',       f: N(0), num: true },
+          { k: 'pushes',        t: 'P',       f: N(0), num: true },
+          { k: 'roi',           t: 'ROI',     f: PCT, num: true },
+          { k: 'base_weight',   t: 'Base',    f: N(2), num: true },
+          { k: 'dynamic_weight',t: 'Dynamic', f: N(2), num: true },
+          { k: 'last_updated',  t: 'Updated', f: DATETIME },
+        ],
+      },
+      {
+        id: 'line_history', label: 'Line History', sportCol: 'sport',
+        order: 'created_at.desc', fills: 'Refresh the board on Matchups',
+        cols: [
+          { k: 'created_at', t: 'Captured', f: DATETIME, key: true },
+          { k: 'sport',      t: 'Sport',    f: TXT },
+          { k: 'away',       t: 'Away',     f: TXT },
+          { k: 'home',       t: 'Home',     f: TXT },
+          { k: 'spread',     t: 'Spread',   f: SIGNED(1), num: true, signed: true },
+          { k: 'total',      t: 'Total',    f: N(1), num: true },
+          { k: 'ml',         t: 'Home ML',  f: SIGNED(0), num: true },
+          { k: 'public_pct', t: 'Public%',  f: (v) => v == null ? '—' : v + '%', num: true },
+          { k: 'sharp_pct',  t: 'Sharp%',   f: (v) => v == null ? '—' : v + '%', num: true },
+        ],
+      },
+      {
+        id: 'historical_odds', label: 'Closing Lines', sportCol: 'sport',
+        order: 'game_date.desc', fills: 'Build ATS',
+        cols: [
+          { k: 'game_date', t: 'Date',    f: DATE, key: true },
+          { k: 'sport',     t: 'Sport',   f: TXT },
+          { k: 'away',      t: 'Away',    f: TXT },
+          { k: 'home',      t: 'Home',    f: TXT },
+          { k: 'spread',    t: 'Close',   f: SIGNED(1), num: true, signed: true },
+          { k: 'total',     t: 'Total',   f: N(1), num: true },
+          { k: 'home_ml',   t: 'Home ML', f: SIGNED(0), num: true },
+          { k: 'away_ml',   t: 'Away ML', f: SIGNED(0), num: true },
+          { k: 'provider',  t: 'Book',    f: TXT },
+        ],
+      },
+      {
+        id: 'coaching_ratings', label: 'Coaching', sportCol: 'sport',
+        order: 'overall.desc', fills: 'Build Power Ratings',
+        cols: [
+          { k: 'sport',              t: 'Sport',    f: TXT, key: true },
+          { k: 'team_name',          t: 'Team',     f: TXT, key: true },
+          { k: 'overall',            t: 'Overall',  f: N(1), num: true },
+          { k: 'close_game_record',  t: 'Close W%', f: N(3), num: true },
+          { k: 'max_adjustment',     t: 'Max Adj',  f: N(1), num: true },
+          { k: 'updated_at',         t: 'Updated',  f: DATETIME },
+        ],
+      },
+      {
+        id: 'bet_log', label: 'Bet Log', sportCol: 'sport',
+        order: 'date.desc', fills: 'Place a bet from Today\u2019s Picks',
+        cols: [
+          { k: 'date',       t: 'Date',   f: DATE, key: true },
+          { k: 'mode',       t: 'Mode',   f: TXT },
+          { k: 'sport',      t: 'Sport',  f: TXT },
+          { k: 'matchup',    t: 'Matchup',f: TXT },
+          { k: 'pick_label', t: 'Pick',   f: TXT, key: true },
+          { k: 'odds',       t: 'Odds',   f: SIGNED(0), num: true },
+          { k: 'units',      t: 'Units',  f: N(2), num: true },
+          { k: 'amount',     t: 'Stake',  f: (v) => v == null ? '—' : '$' + Number(v).toFixed(0), num: true },
+          { k: 'status',     t: 'Status', f: TXT },
+        ],
+      },
+    ];
+
+    // ── STATE ──
+    let activeTable = TABLES[0];
+    let rows = [];
+    let counts = {};
+    let sportFilter = 'ALL';
+    let sortCol = null;
+    let sortDir = -1;
+    let autoTimer = null;
+    let lastLoaded = null;
+
+    const SB_URL = () => localStorage.getItem('edge_supabase_url');
+    const SB_KEY = () => localStorage.getItem('edge_supabase_key');
+    const PAGE_SIZE = 1000;
+
+    // ── TABS ──
+    function renderTabs() {
+      document.getElementById('tabs').innerHTML = TABLES.map(t =>
+        `<button class="tab ${t.id === activeTable.id ? 'active' : ''}" onclick="selectTable('${t.id}')">
+           ${t.label}<span class="badge" id="badge_${t.id}">${counts[t.id] != null ? counts[t.id] : ''}</span>
+         </button>`
+      ).join('');
+    }
+
+    function selectTable(id) {
+      activeTable = TABLES.find(t => t.id === id) || TABLES[0];
+      sortCol = null; sortDir = -1; sportFilter = 'ALL';
+      document.getElementById('search').value = '';
+      renderTabs();
+      loadActive();
+    }
+
+    // ── LOAD ──
+    async function loadActive(manual) {
+      const url = SB_URL(), key = SB_KEY();
+      if (!url || !key) {
+        showState('⚠', 'NOT CONNECTED', 'Add your Supabase URL and key in <b>Settings › Connections</b>.');
+        return;
+      }
+
+      showState('', 'LOADING', '<span class="spinner"></span>');
+      const t = activeTable;
+
+      try {
+        const all = [];
+        for (let offset = 0; offset < 20000; offset += PAGE_SIZE) {
+          const res = await fetch(
+            `${url}/rest/v1/${t.id}?select=*&order=${t.order}&limit=${PAGE_SIZE}&offset=${offset}`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'count=exact' } }
+          );
+          if (!res.ok) {
+            showState('✗', 'HTTP ' + res.status,
+              res.status === 404 ? `Table <b>${t.id}</b> does not exist in your database yet.`
+                                 : `Supabase returned ${res.status} for <b>${t.id}</b>.`);
+            return;
+          }
+          const batch = await res.json();
+          all.push(...batch);
+          if (offset === 0) {
+            const range = res.headers.get('content-range') || '';
+            counts[t.id] = parseInt(range.split('/')[1] || all.length, 10);
+          }
+          if (batch.length < PAGE_SIZE) break;
+        }
+
+        rows = all;
+        lastLoaded = new Date();
+        renderTabs();
+        renderSportChips();
+        render();
+        if (manual) showToast(`${rows.length.toLocaleString()} rows`);
+      } catch (e) {
+        showState('✗', 'LOAD FAILED', e.message);
+      }
+    }
+
+    // ── SPORT CHIPS ──
+    function renderSportChips() {
+      const el = document.getElementById('sportRow');
+      const col = activeTable.sportCol;
+      if (!col) { el.innerHTML = ''; return; }
+      const sports = Array.from(new Set(rows.map(r => r[col]).filter(Boolean))).sort();
+      if (sports.length < 2) { el.innerHTML = ''; return; }
+      el.innerHTML = ['ALL', ...sports].map(s =>
+        `<button class="chip ${sportFilter === s ? 'active' : ''}" onclick="setSport('${s}')">${s}</button>`
+      ).join('');
+    }
+
+    function setSport(s) { sportFilter = s; renderSportChips(); render(); }
+
+    // ── RENDER ──
+    function visibleRows() {
+      const col = activeTable.sportCol;
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      let out = rows;
+      if (col && sportFilter !== 'ALL') out = out.filter(r => r[col] === sportFilter);
+      if (q) {
+        out = out.filter(r => activeTable.cols.some(c => {
+          const v = r[c.k];
+          return v != null && String(v).toLowerCase().includes(q);
+        }));
+      }
+      if (sortCol) {
+        const c = activeTable.cols.find(x => x.k === sortCol);
+        out = [...out].sort((a, b) => {
+          const av = a[sortCol], bv = b[sortCol];
+          if (av == null && bv == null) return 0;
+          if (av == null) return 1;
+          if (bv == null) return -1;
+          if (c && c.num) return (Number(av) - Number(bv)) * sortDir;
+          return String(av).localeCompare(String(bv)) * sortDir;
+        });
+      }
+      return out;
+    }
+
+    function render() {
+      const t = activeTable;
+      if (!rows.length) {
+        showState('○', 'EMPTY',
+          `No rows in <b>${t.id}</b> yet. Fill it with <b>${t.fills}</b>.`);
+        updateMeta(0);
+        return;
+      }
+
+      const list = visibleRows();
+      const capped = list.slice(0, 500);
+
+      const head = t.cols.map(c =>
+        `<th onclick="sortBy('${c.k}')">${c.t}${sortCol === c.k ? ` <span class="arrow">${sortDir === 1 ? '▲' : '▼'}</span>` : ''}</th>`
+      ).join('');
+
+      const body = capped.map(r => '<tr>' + t.cols.map(c => {
+        const raw = r[c.k];
+        let cls = '';
+        if (c.num) cls += ' num';
+        if (c.key) cls += ' key';
+        if (c.signed && raw != null) cls += Number(raw) > 0 ? ' pos' : Number(raw) < 0 ? ' neg' : '';
+        const val = c.f ? c.f(raw) : (raw == null ? '—' : raw);
+        return `<td class="${cls.trim()}">${val}</td>`;
+      }).join('') + '</tr>').join('');
+
+      document.getElementById('tableWrap').innerHTML =
+        `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+      updateMeta(list.length, capped.length);
+    }
+
+    function updateMeta(shown, capped) {
+      const parts = [];
+      parts.push(`${shown.toLocaleString()} rows`);
+      if (capped && capped < shown) parts.push(`showing first ${capped}`);
+      if (counts[activeTable.id] != null) parts.push(`${counts[activeTable.id].toLocaleString()} total`);
+      if (lastLoaded) parts.push(`loaded ${lastLoaded.toLocaleTimeString()}`);
+      document.getElementById('meta').textContent = parts.join(' · ');
+    }
+
+    function sortBy(k) {
+      if (sortCol === k) sortDir = -sortDir;
+      else { sortCol = k; sortDir = -1; }
+      render();
+    }
+
+    function showState(icon, title, sub) {
+      document.getElementById('tableWrap').innerHTML =
+        `<div class="state"><div class="state-icon">${icon}</div>
+         <div class="state-title">${title}</div><div class="state-sub">${sub}</div></div>`;
+    }
+
+    // ── AUTO REFRESH ──
+    function toggleAuto() {
+      const btn = document.getElementById('autoBtn');
+      if (autoTimer) {
+        clearInterval(autoTimer); autoTimer = null;
+        btn.textContent = 'Auto: off'; btn.classList.remove('on');
+      } else {
+        autoTimer = setInterval(() => { if (navigator.onLine) loadActive(); }, 60000);
+        btn.textContent = 'Auto: 60s'; btn.classList.add('on');
+        showToast('Refreshing every 60s');
+      }
+    }
+
+    // ── EXPORT ──
+    function exportCsv() {
+      const list = visibleRows();
+      if (!list.length) { showToast('Nothing to export', true); return; }
+      const t = activeTable;
+      const esc = v => {
+        if (v == null) return '';
+        const s = String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const csv = [
+        t.cols.map(c => c.t).join(','),
+        ...list.map(r => t.cols.map(c => esc(r[c.k])).join(',')),
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `edge-${t.id}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      showToast(`Exported ${list.length} rows`);
+    }
+
+    function showToast(msg, isErr) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast show' + (isErr ? ' red' : '');
+      setTimeout(() => el.className = 'toast', 2200);
+    }
+
+    // ── INIT ──
+    renderTabs();
+    loadActive();
+  </script>
+</body>
+</html>
