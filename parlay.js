@@ -18,6 +18,14 @@ const EDGE_PARLAY = (() => {
   const MIN_LEGS            = 2;
   const DEFAULT_LEG_ODDS    = -110;
 
+  // ── TREND LEG SHRINKAGE ──
+  // Declared with the other constants: a const used by an exported
+  // function must exist before the return statement runs, or the
+  // module throws on first call.
+  const TREND_PRIOR_N = 10;      // strength of the pull toward the market
+  const TREND_MAX_PROB = 0.82;   // ceiling on any single trend leg
+  const TREND_MIN_SAMPLE_LEG = 5;
+
   // Parlays compound model error, so each leg is shaded toward the market
   // before multiplying. Without this the product of nine optimistic legs
   // produces a fantasy probability.
@@ -163,6 +171,9 @@ const EDGE_PARLAY = (() => {
     attachMatchupTrends,
     historicalTrendsFor,
     supportingTrends,
+    buildTrendLegs,
+    addLegsToTicket,
+    shrinkToMarket,
     buildTrendBets,
     buildParlay,
     parlayOdds,
@@ -330,6 +341,114 @@ const EDGE_PARLAY = (() => {
 
   function pctText(v) {
     return v == null ? '—' : `${Math.round(v * 100)}%`;
+  }
+
+  // ============================================================
+  // ── TREND LEGS ──
+  // A trend is not a new market — it is a reason to take one that
+  // already exists. SU resolves to the moneyline, ATS to the spread,
+  // OU to the total. A trend leg can therefore go on a ticket for a
+  // game the pipeline passed on entirely.
+  //
+  // The probability is where this gets dangerous. A 6-0 trend is not
+  // a 100% leg. Every record is shrunk toward the market's own
+  // implied probability, weighted by sample size, before it is
+  // allowed to multiply into a parlay.
+  // ============================================================
+
+  // Shrink a raw hit rate toward the market price. With n=6 the record
+  // barely moves the market number; by n=40 it dominates it.
+  function shrinkToMarket(hitRate, sample, marketProb) {
+    const n = Math.max(0, sample || 0);
+    const blended = (hitRate * n + marketProb * TREND_PRIOR_N) / (n + TREND_PRIOR_N);
+    return clamp(blended, 0.05, TREND_MAX_PROB);
+  }
+
+  // Build bettable legs from the trends that apply to a slate,
+  // independent of whether the pipeline produced a pick for that game.
+  async function buildTrendLegs(games, options = {}) {
+    const { minSample = TREND_MIN_SAMPLE_LEG, minHitRate = 0.65, minStreak = 4 } = options;
+    if (!window.EDGE_TRENDS) return [];
+
+    const legs = [];
+    for (const game of games) {
+      const start = new Date(game.commence_time || game.time).getTime();
+      if (!isFinite(start) || start <= Date.now()) continue;
+
+      let t;
+      try { t = await window.EDGE_TRENDS.trendsForGame(game); } catch { continue; }
+
+      [['home', t.home], ['away', t.away]].forEach(([side, block]) => {
+        if (!block) return;
+        (block.trends || []).forEach(tr => {
+          if ((tr.sample || 0) < minSample) return;
+          if ((tr.hit_rate || 0) < minHitRate && (tr.current_streak || 0) < minStreak) return;
+          if (tr.market !== 'SU' && tr.market !== 'ATS') return;
+
+          const odds = tr.market === 'SU'
+            ? (side === 'home' ? game.home_ml ?? game.ml : game.away_ml)
+            : (side === 'home' ? game.home_spread_price : game.away_spread_price) ?? DEFAULT_LEG_ODDS;
+          if (odds == null) return;
+
+          const marketProb = americanToImplied(odds);
+          const modelProb = shrinkToMarket(tr.hit_rate || 0.5, tr.sample, marketProb);
+
+          legs.push({
+            pick_id: `${game.id}:${tr.situation_id}:${side}`,
+            game_id: game.id,
+            sport: game._sport || game.sport,
+            matchup: `${game.away_team || game.away} @ ${game.home_team || game.home}`,
+            side: side === 'home' ? (game.home_team || game.home) : (game.away_team || game.away),
+            direction: side,
+            market: tr.market === 'SU' ? 'moneyline' : 'spread',
+            spread: tr.market === 'ATS'
+              ? (side === 'home' ? game.spread : (game.spread != null ? -game.spread : null))
+              : null,
+            commence_time: game.commence_time || game.time,
+            odds,
+            decimal: americanToDecimal(odds),
+            model_prob: round(modelProb, 4),
+            market_prob: round(marketProb, 4),
+            raw_hit_rate: tr.hit_rate,
+            confidence: round(modelProb * 100, 1),
+            edge: round(modelProb - marketProb, 4),
+            source: 'trend',
+            trend: {
+              headline: tr.headline,
+              scope: tr.scope,
+              record: `${tr.wins}-${tr.losses}`,
+              sample: tr.sample,
+              streak: tr.current_streak,
+              seasons: tr.seasons_covered,
+            },
+          });
+        });
+      });
+    }
+
+    // One leg per game, strongest edge first.
+    legs.sort((a, b) => b.edge - a.edge);
+    const seen = new Set();
+    return legs.filter(l => {
+      if (seen.has(l.game_id)) return false;
+      seen.add(l.game_id);
+      return true;
+    });
+  }
+
+  // Add chosen trend legs to an existing ticket, refusing any that
+  // would duplicate a game already on it.
+  function addLegsToTicket(parlay, extraLegs) {
+    const used = new Set((parlay?.legs || []).map(l => l.game_id));
+    const additions = (extraLegs || []).filter(l => !used.has(l.game_id));
+    if (!additions.length) return parlay;
+    const merged = [...(parlay?.legs || []), ...additions];
+    const rebuilt = buildParlay(merged, {
+      trendId: parlay?.trend_id || 'custom',
+      trendLabel: parlay?.trend_label || 'Custom ticket',
+    });
+    rebuilt.trend = parlay?.trend || null;
+    return rebuilt;
   }
 
   // ============================================================
