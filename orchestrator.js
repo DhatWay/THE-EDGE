@@ -81,7 +81,7 @@ const EDGE_ORCHESTRATOR = (() => {
       }
 
       log('Stage 3/7 · Computing game priors');
-      const priors = await buildPriors(gameList, powerIndex);
+      const priors = await buildPriors(gameList, powerIndex, builtContext);
       summary.stages.priors_built = priors.length;
 
       if (!priors.length) {
@@ -233,21 +233,63 @@ const EDGE_ORCHESTRATOR = (() => {
     return { teams: fresh.teams, coaching: fresh.coaching };
   }
 
-  async function buildPriors(games, powerIndex) {
+  async function buildPriors(games, powerIndex, context = null) {
     const priors = [];
+    const skipped = { live: 0, no_rating: 0, no_spread: 0 };
+
+    // Odds API, ESPN and power_ratings spell the same club differently.
+    // Build one resolver index per sport instead of relying on an exact
+    // string match, which was dropping 13 of 103 games silently.
+    const resolvers = {};
+    const resolverFor = (sport) => {
+      if (!resolvers[sport]) {
+        const teams = {};
+        const coaching = {};
+        Object.entries(powerIndex.teams).forEach(([k, v]) => {
+          if (k.startsWith(sport + ':')) teams[k] = v;
+        });
+        Object.entries(powerIndex.coaching || {}).forEach(([k, v]) => {
+          if (k.startsWith(sport + ':')) coaching[k] = v;
+        });
+        resolvers[sport] = {
+          teams: window.EDGE_TEAMS ? window.EDGE_TEAMS.buildIndex(teams, sport) : null,
+          coaching: window.EDGE_TEAMS ? window.EDGE_TEAMS.buildIndex(coaching, sport) : null,
+        };
+      }
+      return resolvers[sport];
+    };
 
     for (const game of games) {
       const sport = game._sport || game.sport;
-      const homeKey = `${sport}:${game.home_team || game.home}`;
-      const awayKey = `${sport}:${game.away_team || game.away}`;
 
-      const homeStats = powerIndex.teams[homeKey];
-      const awayStats = powerIndex.teams[awayKey];
+      // A game that has kicked off is not a betting opportunity, and the
+      // odds feed serves in-play prices for it.
+      if (game.completed === true || game.gradable === false || game.is_live === true) {
+        skipped.live++;
+        continue;
+      }
+      const startTs = new Date(game.commence_time || game.time).getTime();
+      if (isFinite(startTs) && startTs <= Date.now() - 90000) { skipped.live++; continue; }
 
-      if (!homeStats || !awayStats) continue;
+      const homeName = game.home_team || game.home;
+      const awayName = game.away_team || game.away;
+      const homeKey = `${sport}:${homeName}`;
+      const awayKey = `${sport}:${awayName}`;
 
-      const homeCoach = powerIndex.coaching[homeKey];
-      const awayCoach = powerIndex.coaching[awayKey];
+      let homeStats = powerIndex.teams[homeKey];
+      let awayStats = powerIndex.teams[awayKey];
+
+      const R = resolverFor(sport);
+      if (!homeStats && R.teams) homeStats = window.EDGE_TEAMS.resolveTeam(homeName, R.teams, sport);
+      if (!awayStats && R.teams) awayStats = window.EDGE_TEAMS.resolveTeam(awayName, R.teams, sport);
+
+      if (!homeStats || !awayStats) { skipped.no_rating++; continue; }
+      if (game.spread === null || game.spread === undefined) { skipped.no_spread++; continue; }
+
+      let homeCoach = powerIndex.coaching[homeKey];
+      let awayCoach = powerIndex.coaching[awayKey];
+      if (!homeCoach && R.coaching) homeCoach = window.EDGE_TEAMS.resolveTeam(homeName, R.coaching, sport);
+      if (!awayCoach && R.coaching) awayCoach = window.EDGE_TEAMS.resolveTeam(awayName, R.coaching, sport);
 
       const homePower = { ...homeStats, _coach: homeCoach || null };
       const awayPower = { ...awayStats, _coach: awayCoach || null };
@@ -257,7 +299,15 @@ const EDGE_ORCHESTRATOR = (() => {
           homeStats: homePower,
           awayStats: awayPower,
           market: {
-            open_spread: game.open_spread ?? game.opening_spread ?? null,
+            // The opening number decides whether the market and
+            // line-dynamics families can vote at all, and whether the
+            // governor caps confidence at 78 for "no line movement".
+            // The cached board rarely carries it, so fall back to the
+            // earliest line_history row for this game.
+            open_spread: game.open_spread
+                      ?? game.opening_spread
+                      ?? context?.lineHistoryByGame?.[game.id]?.open_spread
+                      ?? null,
             current_spread: game.spread ?? null,
             total: game.total ?? null,
             home_ml: game.ml ?? null,
@@ -277,6 +327,9 @@ const EDGE_ORCHESTRATOR = (() => {
       } catch (e) {}
     }
 
+    if (skipped.live || skipped.no_rating || skipped.no_spread) {
+      log(`  skipped ${skipped.live} live/final · ${skipped.no_rating} unrated · ${skipped.no_spread} unpriced`);
+    }
     return priors;
   }
 
