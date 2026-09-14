@@ -271,27 +271,39 @@ const EDGE_INJURY = (() => {
     let cache = {};
     try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch {}
 
-    const entry = cache[sport];
+    let entry = cache[sport];
+    if (entry && (!entry.byTeam || !Object.keys(entry.byTeam).length)) entry = null;
     if (entry && (Date.now() - entry.fetchedAt) < CACHE_TTL_MS) {
       return entry.byTeam;
     }
 
     const fresh = await fetchEspnInjuries(sport);
-    cache[sport] = { fetchedAt: Date.now(), byTeam: fresh };
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
+    // An empty result means the fetch failed, not that nobody is hurt.
+    // Caching it hid the outage behind a valid-looking TTL.
+    if (fresh && Object.keys(fresh).length) {
+      cache[sport] = { fetchedAt: Date.now(), byTeam: fresh };
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
+    }
     return fresh;
   }
 
-  async function fetchEspnInjuries(sport) {
+  // ESPN has no league-wide injuries endpoint on site.api — that URL
+  // 404s, which is why byTeam came back {} for every sport and the
+  // injury family reported "No injury data" on every game.
+  // Injuries live per team on the core API. Fetch only the teams that
+  // are actually playing, resolve the $ref list, and cache the result.
+  async function fetchEspnInjuries(sport, teamFilter = null) {
     const path = ESPN_MAP[sport];
     if (!path) return {};
+    const [espnSport, espnLeague] = path.split('/');
 
-    const urls = [
+    // Some leagues do expose a league-wide feed on the web host.
+    // Try it first — one call beats thirty.
+    const leagueWide = [
+      `https://site.web.api.espn.com/apis/site/v2/sports/${path}/injuries`,
       `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries`,
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries?limit=500`,
     ];
-
-    for (const url of urls) {
+    for (const url of leagueWide) {
       try {
         const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) continue;
@@ -301,7 +313,103 @@ const EDGE_INJURY = (() => {
       } catch {}
     }
 
-    return {};
+    // Per-team on the core API.
+    const teams = await fetchTeamList(path);
+    if (!teams.length) return {};
+
+    const wanted = teamFilter && teamFilter.size
+      ? teams.filter(t => teamFilter.has(t.name))
+      : teams;
+
+    const byTeam = {};
+    await parallelMap(wanted, 5, async team => {
+      const list = await fetchTeamInjuries(espnSport, espnLeague, team.id);
+      if (list.length) byTeam[team.name] = list;
+    });
+    return byTeam;
+  }
+
+  async function fetchTeamList(path) {
+    try {
+      const res = await fetch(
+        `https://site.api.espn.com/apis/site/v2/sports/${path}/teams?limit=1000`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      const entries = data?.sports?.[0]?.leagues?.[0]?.teams || [];
+      return entries
+        .map(e => e.team)
+        .filter(t => t && t.id)
+        .map(t => ({ id: String(t.id), name: t.displayName }));
+    } catch { return []; }
+  }
+
+  // The core API returns a list of $ref links, one per injury.
+  async function fetchTeamInjuries(espnSport, espnLeague, teamId) {
+    const base = `https://sports.core.api.espn.com/v2/sports/${espnSport}/leagues/${espnLeague}/teams/${teamId}/injuries?limit=100`;
+    let items = [];
+    try {
+      const res = await fetch(base, { cache: 'no-store' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      items = data.items || [];
+    } catch { return []; }
+    if (!items.length) return [];
+
+    const out = [];
+    await parallelMap(items, 6, async item => {
+      const url = refUrl(item.$ref);
+      if (!url) return;
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) return;
+        const inj = await res.json();
+
+        const status = String(inj.status || inj.type?.description || '').toLowerCase().trim();
+        if (!status) return;
+
+        let name = inj.athlete?.displayName || null;
+        let position = inj.athlete?.position?.abbreviation || null;
+
+        // athlete is usually a $ref too.
+        if (!name && inj.athlete?.$ref) {
+          const aUrl = refUrl(inj.athlete.$ref);
+          if (aUrl) {
+            try {
+              const aRes = await fetch(aUrl, { cache: 'no-store' });
+              if (aRes.ok) {
+                const a = await aRes.json();
+                name = a.displayName || a.fullName || null;
+                position = a.position?.abbreviation || position;
+              }
+            } catch {}
+          }
+        }
+        if (!name) return;
+        out.push({ name, position, status, detail: inj.longComment || inj.shortComment || null });
+      } catch {}
+    });
+    return out;
+  }
+
+  // Core API responses point at espn.pvt, which is not publicly
+  // resolvable. Swapping the host makes the link usable.
+  function refUrl(ref) {
+    if (!ref) return null;
+    return String(ref).replace('.pvt', '.com').replace(/^http:/, 'https:');
+  }
+
+  async function parallelMap(items, concurrency, fn) {
+    const queue = [...items];
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (item === undefined) break;
+        await fn(item);
+      }
+    });
+    await Promise.all(workers);
   }
 
   function parseEspnInjuries(data) {
@@ -314,10 +422,16 @@ const EDGE_INJURY = (() => {
       Array.isArray(data.athletes) ? data.athletes : [];
 
     list.forEach(entry => {
+      // In ESPN's league-wide payload each list item IS a team, so the
+      // name sits on the item. Reading entry.team.displayName returned
+      // undefined on every row, which is why byTeam came back empty for
+      // every sport and the injury family always reported no data.
       const teamName =
+        entry.displayName ||
         entry.team?.displayName ||
         entry.team?.name ||
         entry.teamName ||
+        entry.name ||
         null;
       if (!teamName) return;
 
