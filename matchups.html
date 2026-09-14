@@ -17,6 +17,7 @@
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
@@ -218,6 +219,7 @@
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
     <div class="drawer-section">Records</div> 
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
@@ -351,12 +353,31 @@
       return { start: now, end: new Date(now.getTime() + 365 * 86400000) };
     }
 
+    // Grading window. A game that has kicked off is no longer a betting
+    // opportunity, and the odds feed switches to in-play prices the
+    // moment it starts — that is where spreads like -26.5 came from on
+    // an NFL board. Started games are kept for display only and are
+    // flagged so nothing downstream prices them.
+    const LIVE_GRACE_MS = 90 * 1000;
+
+    function isLive(g) {
+      const t = new Date(g.commence_time || g.time).getTime();
+      if (!isFinite(t)) return false;
+      return t <= Date.now() - LIVE_GRACE_MS && !g.completed;
+    }
+
+    function isGradable(g) {
+      if (g.completed) return false;
+      const t = new Date(g.commence_time || g.time).getTime();
+      if (!isFinite(t)) return false;
+      return t > Date.now() - LIVE_GRACE_MS;
+    }
+
     function filterByWindow(games) {
       const { start, end } = windowBounds();
       return games.filter(g => {
         const t = new Date(g.commence_time || g.time).getTime();
         if (!isFinite(t)) return false;
-        // Always keep live games (already started but not finished)
         if (t < start.getTime()) {
           return !g.completed && t >= start.getTime() - 4 * 3600000;
         }
@@ -387,9 +408,12 @@
 
     function writeFilteredToStorage() {
       try {
-        localStorage.setItem('edge_todays_games', JSON.stringify(allGames));
+        const gradable = allGames.filter(isGradable);
+        localStorage.setItem('edge_todays_games', JSON.stringify(gradable));
         localStorage.setItem('edge_todays_games_ts', String(Date.now()));
         localStorage.setItem('edge_game_window', currentWindow);
+        localStorage.setItem('edge_games_live_excluded',
+          String(allGames.length - gradable.length));
       } catch {}
     }
 
@@ -475,8 +499,14 @@
 
       await saveLineSnapshots(allGames);
       await loadContextIndexes();
+      // Rewrite the cache now that open_spread is on each game.
+      writeFilteredToStorage();
+      renderGames();
 
-      statusEl.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${allGames.length} games in window`;
+      const live = allGames.length - allGames.filter(isGradable).length;
+      statusEl.textContent =
+        `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ` +
+        `${allGames.length - live} gradable` + (live ? ` · ${live} live/final excluded` : '');
       document.getElementById('refreshBtn').disabled = false;
     }
 
@@ -556,6 +586,8 @@
         book_link: mine?.link || null,
         last_update: mine?.last_update || books[0]?.last_update || null,
         completed: raw.completed === true,
+        is_live: isLive({ commence_time: raw.commence_time, completed: raw.completed === true }),
+        gradable: isGradable({ commence_time: raw.commence_time, completed: raw.completed === true }),
       };
     }
 
