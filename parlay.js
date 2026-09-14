@@ -161,6 +161,8 @@ const EDGE_PARLAY = (() => {
     scoreTrends,
     matchupTrends,
     attachMatchupTrends,
+    historicalTrendsFor,
+    supportingTrends,
     buildTrendBets,
     buildParlay,
     parlayOdds,
@@ -330,6 +332,44 @@ const EDGE_PARLAY = (() => {
     return v == null ? '—' : `${Math.round(v * 100)}%`;
   }
 
+  // ============================================================
+  // ── REAL TRENDS ──
+  // Historical situational, streak, rivalry and QB-anchored trends
+  // from the trends table. These are facts about the teams playing,
+  // not patterns mined from your own pick history.
+  // ============================================================
+
+  async function historicalTrendsFor(picks) {
+    if (!window.EDGE_TRENDS) return {};
+    const byGame = {};
+    await Promise.all(picks.map(async p => {
+      if (!p.game_id || !p.sport) return;
+      try {
+        const t = await window.EDGE_TRENDS.trendsForGame({
+          id: p.game_id, sport: p.sport,
+          home_team: p.home_team, away_team: p.away_team,
+          spread: p.market_spread,
+          commence_time: p.commence_time,
+        });
+        byGame[p.game_id] = t;
+      } catch {}
+    }));
+    return byGame;
+  }
+
+  // A trend backs a pick when it belongs to the side the model likes
+  // and points the same direction.
+  function supportingTrends(pick, gameTrends) {
+    if (!gameTrends) return [];
+    const side = pick.direction === 'home' ? gameTrends.home : gameTrends.away;
+    if (!side) return [];
+    return (side.trends || [])
+      .filter(t => t.market === 'SU' || t.market === 'ATS')
+      .filter(t => t.hit_rate >= 0.6 || t.current_streak >= 4)
+      .sort((a, b) => (b.current_streak - a.current_streak) || (b.hit_rate - a.hit_rate))
+      .slice(0, 4);
+  }
+
   async function buildTrendBets(todaysPicks, options = {}) {
     const {
       maxLegs = MAX_LEGS,
@@ -348,6 +388,12 @@ const EDGE_PARLAY = (() => {
       p.decision && p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED');
     try { await attachMatchupTrends(playable); } catch {}
 
+    // Historical trends for every game on the board, loaded once.
+    const histByGame = await historicalTrendsFor(playable);
+    playable.forEach(p => {
+      p.historical_trends = supportingTrends(p, histByGame[p.game_id]);
+    });
+
     for (const score of active) {
       const trend = TRENDS.find(t => t.id === score.id);
       if (!trend) continue;
@@ -362,6 +408,34 @@ const EDGE_PARLAY = (() => {
       const parlay = buildParlay(legs, { trendId: score.id, trendLabel: score.label });
       parlay.trend = score;
       out.push(parlay);
+    }
+
+    // A ticket where every leg is carried by a documented historical
+    // trend — a streak, a situational record, or a rivalry edge.
+    const trendBacked = playable
+      .filter(p => num(p.confidence) >= minLegConfidence)
+      .filter(p => (p.historical_trends || []).length > 0);
+
+    if (trendBacked.length >= minLegs) {
+      const legs = selectUncorrelatedLegs(trendBacked, maxLegs);
+      if (legs.length >= minLegs) {
+        const parlay = buildParlay(legs, {
+          trendId: 'historical_trends',
+          trendLabel: 'Every leg carried by a live trend',
+        });
+        const totalStreak = legs.reduce((s, l) =>
+          s + Math.max(0, ...(l.trends || []).map(t => t.streak || 0)), 0);
+        parlay.trend = {
+          id: 'historical_trends',
+          label: 'Every leg carried by a live trend',
+          describe: 'Each leg has a situational, streak or rivalry record behind it',
+          sample: legs.reduce((s, l) => s + (l.trends || []).length, 0),
+          hit_rate: null, roi: null, qualified: true,
+          status: `${totalStreak} combined streak games`,
+          source: 'trends',
+        };
+        out.push(parlay);
+      }
     }
 
     // A ticket built purely from series history: every leg is a game
@@ -458,6 +532,15 @@ const EDGE_PARLAY = (() => {
         h2h_last_meeting: mt?.last_meeting || null,
         h2h_log: mt?.recent_meetings || [],
         h2h_note: mt?.available ? null : (mt?.reason || 'No series history'),
+        trends: (p.historical_trends || []).map(t => ({
+          headline: t.headline,
+          market: t.market,
+          record: `${t.wins}-${t.losses}`,
+          hit_rate: t.hit_rate,
+          streak: t.current_streak,
+          seasons: t.seasons_covered,
+          scope: t.scope,
+        })),
         matchup: `${p.away_team || 'Away'} @ ${p.home_team || 'Home'}`,
         side: p.side_team || (p.direction === 'home' ? p.home_team : p.away_team) || p.direction,
         direction: p.direction,
