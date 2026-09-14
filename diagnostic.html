@@ -140,15 +140,15 @@
     // immediately. `needs` is checked against the live column set.
     const TABLE_SPECS = [
       { name: 'power_ratings', writtenBy: 'Recompute Ratings',
-        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', overall: 0 },
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', team_id: '__PREFLIGHT__', overall: 0 },
         keyCol: 'team_name',
-        needs: ['sport','team_name','overall','offense','defense','pythagorean','srs','elo',
+        needs: ['sport','team_name','team_id','overall','offense','defense','pythagorean','srs','elo',
                 'record','home_record','away_record','last5_form','games_played','updated_at'] },
 
       { name: 'coaching_ratings', writtenBy: 'Recompute Ratings',
-        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', overall: 0 },
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', team_id: '__PREFLIGHT__', overall: 0 },
         keyCol: 'team_name',
-        needs: ['sport','team_name','overall','close_game_record','max_adjustment','updated_at'] },
+        needs: ['sport','team_name','team_id','overall','close_game_record','max_adjustment','updated_at'] },
 
       { name: 'players', writtenBy: 'Build Rosters / Enrich Rosters',
         probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', name: '__PREFLIGHT__', player_id: '__PREFLIGHT__' },
@@ -159,28 +159,22 @@
       { name: 'team_ats', writtenBy: 'Build ATS & H2H',
         probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__' },
         keyCol: 'team_name',
-        needs: ['sport','team_name','season_label','season_wins','season_losses','season_cover_pct',
-                'last10_cover_pct','home_cover_pct','away_cover_pct','current_streak',
-                'avg_cover_margin','trend_label','updated_at'] },
+        needs: ['sport','team_name','season_label','season_wins','season_losses','season_pushes','season_cover_pct','last10_wins','last10_losses','last10_pushes','last10_cover_pct','home_wins','home_losses','home_cover_pct','away_wins','away_losses','away_cover_pct','favorite_wins','favorite_losses','favorite_cover_pct','underdog_wins','underdog_losses','underdog_cover_pct','current_streak','avg_cover_margin','avg_margin','trend_delta','trend_label','total_games_tracked','updated_at'] },
 
       { name: 'matchup_ats', writtenBy: 'Build ATS & H2H',
         probe: { sport: '__PREFLIGHT__', team_a: '__PREFLIGHT__', team_b: '__PREFLIGHT__' },
         keyCol: 'team_a',
-        needs: ['sport','team_a','team_b','meetings','team_a_cover_pct','team_b_cover_pct',
-                'team_a_su_wins','team_b_su_wins','overs','unders','avg_margin',
-                'last_meeting_date','recent_meetings','updated_at'] },
+        needs: ['sport','team_a','team_b','meetings','team_a_wins','team_a_losses','team_a_pushes','team_a_cover_pct','team_b_wins','team_b_losses','team_b_pushes','team_b_cover_pct','team_a_su_wins','team_b_su_wins','overs','unders','total_pushes','over_pct','avg_margin','avg_home_cover_margin','avg_total','last_meeting_date','recent_meetings','updated_at'] },
 
       { name: 'historical_odds', writtenBy: 'Build ATS & H2H',
         probe: { sport: '__PREFLIGHT__', game_id: '__PREFLIGHT__' },
         keyCol: 'game_id',
-        needs: ['game_id','sport','home','away','game_date','spread','total','home_ml','away_ml','updated_at'] },
+        needs: ['game_id','sport','home','away','game_date','spread','total','home_ml','away_ml','provider','updated_at'] },
 
       { name: 'trends', writtenBy: 'Build Trends',
         probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', situation_id: '__PREFLIGHT__', market: 'SU' },
         keyCol: 'team_name',
-        needs: ['sport','team_name','scope','player_name','opponent','situation_id','situation_label',
-                'market','wins','losses','sample','hit_rate','current_streak','longest_streak',
-                'seasons_covered','qualified','headline','updated_at'] },
+        needs: ['sport','team_name','scope','player_name','opponent','situation_id','situation_label','market','wins','losses','pushes','sample','hit_rate','current_streak','longest_streak','seasons_covered','first_season','last_season','last_occurrence','qualified','headline','updated_at'] },
 
       { name: 'shadow_picks', writtenBy: 'Run Pipeline',
         probe: { sport: '__PREFLIGHT__', game_id: '__PREFLIGHT__' },
@@ -330,8 +324,9 @@
         out('       ' + trimBody(writeBody), 'err');
         out('       → ' + cause.fix, 'warn');
         if (cause.kind === 'rls') PF.rls.push(spec.name + ' (insert)');
-        else if (cause.kind === 'schema') PF.schema.push(spec.name + ': probe rejected');
+        else if (cause.kind === 'schema') PF.schema.push(spec.name + ': ' + trimBody(writeBody));
         else if (cause.kind === 'missing') PF.missing.push(spec.name);
+        else if (cause.kind === 'notnull') PF.ok.push(spec.name);   // table is fine
         return;
       }
 
@@ -370,6 +365,10 @@
           b.includes('insufficient privilege')) {
         return { kind: 'rls', short: 'blocked by row-level security',
                  fix: 'RLS is on with no policy for the anon role. Add a policy, or disable RLS on this table.' };
+      }
+      if (b.includes('23502') || b.includes('not-null constraint')) {
+        return { kind: 'notnull', short: 'probe row missing a required column',
+                 fix: 'The table demands a column this probe does not send. That is a limit of the probe, not a fault in the app — the real build sends it. Nothing to fix unless the build also fails.' };
       }
       if (b.includes('pgrst204') || b.includes('could not find') || b.includes('column')) {
         return { kind: 'schema', short: 'column mismatch',
@@ -454,10 +453,19 @@ create policy "${t}_anon_all" on public.${t}
       });
 
       PF.schema.forEach(entry => {
-        const [table, cols] = entry.split(': ');
+        const [table, detail] = entry.split(': ');
         const spec = TABLE_SPECS.find(s => s.name === table);
-        if (!spec || !cols) return;
-        cols.split(', ').forEach(c => {
+        if (!spec) return;
+        // Only emit ALTERs for real column names. A rejection message is
+        // not a column list, and treating it as one produced invalid SQL.
+        const cols = (detail || '').split(', ')
+          .map(c => c.trim())
+          .filter(c => /^[a-z_][a-z0-9_]*$/.test(c) && spec.needs.includes(c));
+        if (!cols.length) {
+          stmts.push(`-- ${table}: write was rejected. Message from the database:\n--   ${detail}`);
+          return;
+        }
+        cols.forEach(c => {
           stmts.push(`alter table public.${table} add column if not exists ${c} ${sqlTypeFor(c)};`);
         });
       });
@@ -478,7 +486,7 @@ create policy "${t}_anon_all" on public.${t}
       if (/^(is_|qualified)/.test(col)) return 'boolean';
       if (/verdict|snapshot|output|raw_stats|recent_meetings|payload/.test(col)) return 'jsonb';
       if (/wins|losses|pushes|sample|streak|meetings|seasons|games_played|overs|unders|su_wins/.test(col)) return 'integer';
-      if (/pct|rate|weight|score|spread|total|odds|units|amount|margin|roi|edge|confidence|clv|rating|overall|offense|defense|pythagorean|srs|elo|pace|form|contribution|prob|adjustment/.test(col)) return 'numeric';
+      if (/_ml$|pct|rate|weight|score|spread|total|odds|units|amount|margin|roi|edge|confidence|clv|rating|overall|offense|defense|pythagorean|srs|elo|pace|form|contribution|prob|adjustment|delta/.test(col)) return 'numeric';
       return 'text';
     }
 
