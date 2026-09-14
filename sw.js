@@ -4,7 +4,7 @@
 // Network-first at runtime so a reload always gets fresh code.
 // ============================================================
 
-const VERSION = 'edge-v2';
+const VERSION = 'edge-v1';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -36,6 +36,7 @@ const SHELL_FILES = [
   './orchestrator.js',
   './learning.js',
   './parlay.js',
+  './trends-engine.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
