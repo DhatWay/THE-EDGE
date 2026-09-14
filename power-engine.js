@@ -116,11 +116,24 @@ const EDGE_POWER = (() => {
   // ── MAIN ──
   // ============================================================
 
-  async function computeAllTeamRatings() {
+  // scopeTeams: when supplied, only these teams are written to the
+  // database. The ratings are still computed across the whole league
+  // because SRS and Elo are opponent-adjusted — a rating built from a
+  // subset of the schedule is not a rating. The scope applies at the
+  // persist step, so the table holds only the teams in play.
+  async function computeAllTeamRatings(options = {}) {
+    const { scopeTeams = null, onProgress = null } = options;
+    const emit = (m) => { if (typeof onProgress === 'function') onProgress(m); };
+
     const results = {
       teams: {}, coaching: {}, errors: [], counts: {},
       skipped: [], games_used: {}, window: {},
+      scoped: !!scopeTeams,
     };
+
+    const scope = scopeTeams
+      ? new Set(Array.from(scopeTeams).map(t => String(t).trim()))
+      : null;
 
     const now = new Date();
 
@@ -133,6 +146,7 @@ const EDGE_POWER = (() => {
 
       const start = seasonStart(sport, now);
       results.window[sport] = { from: fmtDate(start), to: fmtDate(now) };
+      emit(`${sport}: fetching ${fmtDate(start)} → ${fmtDate(now)}`);
 
       let teamCount = 0;
       try {
@@ -152,6 +166,10 @@ const EDGE_POWER = (() => {
             srs: srsMap[teamName],
             elo: eloMap[teamName],
           });
+          // Scope filter is applied here, after the league-wide SRS and
+          // Elo passes have already used every team.
+          if (scope && !scope.has(teamName)) continue;
+
           if (rating) {
             results.teams[`${sport}:${teamName}`] = rating;
             teamCount++;
@@ -163,9 +181,10 @@ const EDGE_POWER = (() => {
         results.errors.push({ sport, error: err.message });
       }
       results.counts[sport] = teamCount;
+      emit(`${sport}: ${teamCount} teams rated`);
     }
 
-    persistRatings(results).catch(() => {});
+    results.persist = await persistRatings(results, emit);
     return results;
   }
 
@@ -624,44 +643,127 @@ const EDGE_POWER = (() => {
   // ── PERSIST ──
   // ============================================================
 
-  async function persistRatings(results) {
+  // ============================================================
+  // ── PERSIST ──
+  // v4.0 emitted wins / losses / draws, which do not exist as columns
+  // on the live power_ratings table. PostgREST rejects the whole batch
+  // with 400 on an unknown column — and because the old code deleted
+  // first and inserted second, a rejected batch left the table empty.
+  // That is why ratings "stopped working" after a rebuild.
+  //
+  // Now: learn the real column set, strip anything the table does not
+  // have, prove the insert works on the first chunk, and only then
+  // clear the previous run's rows. A failed insert can no longer wipe
+  // good data.
+  // ============================================================
+
+  async function persistRatings(results, emit = () => {}) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
-    if (!url || !key) return;
+    const report = { teams_written: 0, coaching_written: 0, errors: [], dropped_columns: [] };
+    if (!url || !key) { report.errors.push('Supabase not connected'); return report; }
 
     const teamRows = Object.values(results.teams);
     const coachRows = Object.values(results.coaching);
 
-    // Nothing rated means something upstream failed. Never wipe a good
-    // table and replace it with nothing.
-    if (!teamRows.length) return;
+    // Nothing rated means something upstream failed. Never replace a
+    // populated table with nothing.
+    if (!teamRows.length) {
+      report.errors.push('No ratings computed — table left untouched');
+      return report;
+    }
 
+    const runStamp = new Date().toISOString();
+    teamRows.forEach(r => { r.updated_at = runStamp; });
+    coachRows.forEach(r => { r.updated_at = runStamp; });
+
+    report.teams_written = await replaceTable(
+      url, key, 'power_ratings', teamRows, runStamp, report, emit);
+    if (coachRows.length) {
+      report.coaching_written = await replaceTable(
+        url, key, 'coaching_ratings', coachRows, runStamp, report, emit);
+    }
+    return report;
+  }
+
+  async function replaceTable(url, key, table, rows, runStamp, report, emit) {
     const headers = {
       apikey: key, Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json', Prefer: 'return=minimal',
     };
 
-    try {
-      await fetch(`${url}/rest/v1/power_ratings?sport=not.is.null`, {
-        method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
-      });
-      await fetch(`${url}/rest/v1/coaching_ratings?sport=not.is.null`, {
-        method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
-      });
-
-      await postInChunks(`${url}/rest/v1/power_ratings`, headers, teamRows);
-      if (coachRows.length) {
-        await postInChunks(`${url}/rest/v1/coaching_ratings`, headers, coachRows);
+    // 1. Learn which columns the table actually has.
+    const allowed = await discoverColumns(url, key, table);
+    let payload = rows;
+    if (allowed) {
+      const emitted = new Set(Object.keys(rows[0]));
+      const dropped = Array.from(emitted).filter(k => !allowed.has(k));
+      if (dropped.length) {
+        report.dropped_columns.push(`${table}: ${dropped.join(', ')}`);
+        emit(`${table}: ignoring columns not in schema — ${dropped.join(', ')}`);
       }
-    } catch {}
+      payload = rows.map(r => {
+        const out = {};
+        Object.keys(r).forEach(k => { if (allowed.has(k)) out[k] = r[k]; });
+        return out;
+      });
+    }
+
+    // 2. Prove the insert works before deleting anything.
+    const chunkSize = 200;
+    const first = payload.slice(0, chunkSize);
+    const probe = await post(url, table, headers, first);
+    if (!probe.ok) {
+      report.errors.push(`${table}: insert rejected (HTTP ${probe.status}) ${probe.body.slice(0, 180)}`);
+      emit(`${table}: insert rejected — existing rows left in place`);
+      return 0;
+    }
+
+    let written = first.length;
+
+    // 3. The insert works, so the rest can follow.
+    for (let i = chunkSize; i < payload.length; i += chunkSize) {
+      const res = await post(url, table, headers, payload.slice(i, i + chunkSize));
+      if (res.ok) written += Math.min(chunkSize, payload.length - i);
+      else report.errors.push(`${table}: chunk ${i} HTTP ${res.status}`);
+    }
+
+    // 4. Only now remove the previous run. Anything not stamped with
+    //    this run's timestamp is stale.
+    try {
+      await fetch(`${url}/rest/v1/${table}?updated_at=neq.${encodeURIComponent(runStamp)}`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+    } catch (e) {
+      report.errors.push(`${table}: stale rows not cleared (${e.message})`);
+    }
+
+    emit(`${table}: ${written} rows written`);
+    return written;
   }
 
-  async function postInChunks(endpoint, headers, rows, size = 200) {
-    for (let i = 0; i < rows.length; i += size) {
-      await fetch(endpoint, {
-        method: 'POST', headers,
-        body: JSON.stringify(rows.slice(i, i + size)),
+  async function discoverColumns(url, key, table) {
+    try {
+      const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
       });
+      if (!res.ok) return null;
+      const rows = await res.json();
+      if (!rows.length) return null;      // empty table — cannot learn, send everything
+      return new Set(Object.keys(rows[0]));
+    } catch { return null; }
+  }
+
+  async function post(url, table, headers, body) {
+    try {
+      const res = await fetch(`${url}/rest/v1/${table}`, {
+        method: 'POST', headers, body: JSON.stringify(body),
+      });
+      const text = res.ok ? '' : await res.text().catch(() => '');
+      return { ok: res.ok, status: res.status, body: text };
+    } catch (e) {
+      return { ok: false, status: 0, body: e.message };
     }
   }
 
