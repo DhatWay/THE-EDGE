@@ -242,6 +242,25 @@
         ],
       },
       {
+        id: 'trends', label: 'Trends', sportCol: 'sport',
+        order: 'current_streak.desc', fills: 'Build Trends',
+        cols: [
+          { k: 'sport',            t: 'Sport',   f: TXT, key: true },
+          { k: 'headline',         t: 'Trend',   f: TXT, key: true },
+          { k: 'scope',            t: 'Scope',   f: TXT },
+          { k: 'market',           t: 'Market',  f: TXT },
+          { k: 'wins',             t: 'W',       f: N(0), num: true },
+          { k: 'losses',           t: 'L',       f: N(0), num: true },
+          { k: 'hit_rate',         t: 'Hit%',    f: PCT, num: true },
+          { k: 'current_streak',   t: 'Streak',  f: N(0), num: true },
+          { k: 'longest_streak',   t: 'Longest', f: N(0), num: true },
+          { k: 'seasons_covered',  t: 'Seasons', f: N(0), num: true },
+          { k: 'sample',           t: 'Sample',  f: N(0), num: true },
+          { k: 'qualified',        t: 'Live',    f: (v) => v ? 'Yes' : 'No' },
+          { k: 'last_occurrence',  t: 'Last',    f: DATE },
+        ],
+      },
+      {
         id: 'matchup_ats', label: 'Head-to-Head', sportCol: 'sport',
         order: 'meetings.desc', fills: 'Build ATS',
         cols: [
