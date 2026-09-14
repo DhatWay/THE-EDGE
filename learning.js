@@ -447,8 +447,106 @@ const EDGE_LEARNING = (() => {
   // ============================================================
   // ── PUBLIC API ──
 
+  // ============================================================
+  // ── CLOSING LINE VALUE ──
+  // The number you bet versus the number the market closed at. It is
+  // the earliest honest read on whether the model is finding real
+  // value, and it is knowable long before enough results accumulate
+  // to judge win rate. Nothing was filling the clv column.
+  // ============================================================
+
+  async function captureCLV(options = {}) {
+    const { lookbackDays = 14, onProgress = null } = options;
+    const log = (m) => { if (typeof onProgress === 'function') onProgress(m); };
+
+    const url = SUPABASE_URL();
+    const key = SUPABASE_KEY();
+    if (!url || !key) return { ok: false, error: 'Supabase not connected' };
+
+    const since = new Date(Date.now() - lookbackDays * 86400000).toISOString();
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+
+    // Picks that have a bet number but no closing number yet.
+    let picks = [];
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/shadow_picks?select=id,game_id,sport,direction,market_spread,clv,created_at` +
+        `&clv=is.null&created_at=gte.${since}&limit=2000`,
+        { headers });
+      if (!res.ok) return { ok: false, error: `shadow_picks HTTP ${res.status}` };
+      picks = await res.json();
+    } catch (e) { return { ok: false, error: e.message }; }
+
+    if (!picks.length) return { ok: true, updated: 0, note: 'No picks awaiting CLV' };
+    log(`${picks.length} picks awaiting a closing line`);
+
+    // Closing numbers, from the same cache the ATS tracker fills.
+    const ids = picks.map(p => p.game_id).filter(Boolean);
+    const closing = {};
+    try {
+      const inList = ids.map(i => `"${i}"`).join(',');
+      const res = await fetch(
+        `${url}/rest/v1/historical_odds?select=game_id,spread&game_id=in.(${inList})&limit=5000`,
+        { headers });
+      if (res.ok) (await res.json()).forEach(r => { if (r.spread != null) closing[r.game_id] = r.spread; });
+    } catch {}
+
+    // Fall back to the last line_history row for anything still missing.
+    const missing = ids.filter(i => closing[i] == null);
+    if (missing.length) {
+      try {
+        const inList = missing.map(i => `"${i}"`).join(',');
+        const res = await fetch(
+          `${url}/rest/v1/line_history?select=game_id,spread,created_at&game_id=in.(${inList})` +
+          `&order=created_at.asc&limit=20000`,
+          { headers });
+        if (res.ok) (await res.json()).forEach(r => {
+          if (r.spread != null) closing[r.game_id] = r.spread;   // last write wins
+        });
+      } catch {}
+    }
+
+    let updated = 0;
+    for (const p of picks) {
+      const close = closing[p.game_id];
+      if (close == null || p.market_spread == null) continue;
+
+      // CLV is positive when the number moved toward the side you took.
+      // Backing the home team at -3 and watching it close -4.5 is +1.5.
+      const bet = p.direction === 'home' ? p.market_spread : -p.market_spread;
+      const closed = p.direction === 'home' ? close : -close;
+      const clv = round(bet - closed, 2);
+
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${p.id}`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify({ clv, closing_spread: close }),
+        });
+        if (res.ok) updated++;
+      } catch {}
+    }
+
+    log(`CLV written for ${updated} picks`);
+
+    const withClv = picks.filter(p => closing[p.game_id] != null);
+    const beat = withClv.filter(p => {
+      const bet = p.direction === 'home' ? p.market_spread : -p.market_spread;
+      const closed = p.direction === 'home' ? closing[p.game_id] : -closing[p.game_id];
+      return bet - closed > 0;
+    }).length;
+
+    return {
+      ok: true,
+      updated,
+      beat_close: beat,
+      beat_rate: withClv.length ? round(beat / withClv.length, 4) : null,
+    };
+  }
+
   return {
     run,
+    captureCLV,
     runIfDue,
     computeFamilyStats,
     computeSportFamilyStats,
