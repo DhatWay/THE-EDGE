@@ -71,10 +71,12 @@
     <div class="header">
       <div class="title">FULL <em>DIAGNOSTIC</em></div>
       <div class="btn-bar">
+        <button class="btn" id="preflightBtn" onclick="runPreflight()">◈ TABLE PREFLIGHT</button>
         <button class="btn" id="flowBtn" onclick="runWorkflow()">▶ TEST WORKFLOW</button>
         <button class="btn" id="verifyBtn" onclick="runVerify()">✓ VERIFY DEPLOY</button>
         <button class="btn secondary" id="runBtn" onclick="runAll()">⋯ FULL DUMP</button>
         <button class="btn secondary" id="copyBtn" onclick="copyAll()">⧉ COPY ALL</button>
+        <button class="btn secondary" id="sqlBtn" onclick="copyPreflightSql()">⌗ COPY SQL</button>
         <button class="btn secondary" id="purgeBtn" onclick="purgeCache()">⟳ PURGE CACHE</button>
       </div>
     </div>
@@ -118,6 +120,380 @@
     };
 
 
+
+
+    // ============================================================
+    // TABLE PREFLIGHT
+    //
+    // Every write in this app is wrapped in catch {} or an if (res.ok)
+    // that discards the response. A missing table, an RLS policy with
+    // no insert rule, and a column the code emits but the table lacks
+    // all fail identically from the outside: no data, no error, no clue.
+    //
+    // This probes each table directly and reports the real status code
+    // and PostgREST message, so "nothing populates" becomes a specific
+    // cause you can act on.
+    // ============================================================
+
+    // What each table must accept for the app to work. `probe` is a
+    // minimal row used to test insert permission — it is deleted again
+    // immediately. `needs` is checked against the live column set.
+    const TABLE_SPECS = [
+      { name: 'power_ratings', writtenBy: 'Recompute Ratings',
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', overall: 0 },
+        keyCol: 'team_name',
+        needs: ['sport','team_name','overall','offense','defense','pythagorean','srs','elo',
+                'record','home_record','away_record','last5_form','games_played','updated_at'] },
+
+      { name: 'coaching_ratings', writtenBy: 'Recompute Ratings',
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', overall: 0 },
+        keyCol: 'team_name',
+        needs: ['sport','team_name','overall','close_game_record','max_adjustment','updated_at'] },
+
+      { name: 'players', writtenBy: 'Build Rosters / Enrich Rosters',
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', name: '__PREFLIGHT__', player_id: '__PREFLIGHT__' },
+        keyCol: 'name',
+        needs: ['player_id','sport','team_name','name','position','position_group','rating',
+                'is_starter','offensive_contribution','defensive_contribution','updated_at'] },
+
+      { name: 'team_ats', writtenBy: 'Build ATS & H2H',
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__' },
+        keyCol: 'team_name',
+        needs: ['sport','team_name','season_label','season_wins','season_losses','season_cover_pct',
+                'last10_cover_pct','home_cover_pct','away_cover_pct','current_streak',
+                'avg_cover_margin','trend_label','updated_at'] },
+
+      { name: 'matchup_ats', writtenBy: 'Build ATS & H2H',
+        probe: { sport: '__PREFLIGHT__', team_a: '__PREFLIGHT__', team_b: '__PREFLIGHT__' },
+        keyCol: 'team_a',
+        needs: ['sport','team_a','team_b','meetings','team_a_cover_pct','team_b_cover_pct',
+                'team_a_su_wins','team_b_su_wins','overs','unders','avg_margin',
+                'last_meeting_date','recent_meetings','updated_at'] },
+
+      { name: 'historical_odds', writtenBy: 'Build ATS & H2H',
+        probe: { sport: '__PREFLIGHT__', game_id: '__PREFLIGHT__' },
+        keyCol: 'game_id',
+        needs: ['game_id','sport','home','away','game_date','spread','total','home_ml','away_ml','updated_at'] },
+
+      { name: 'trends', writtenBy: 'Build Trends',
+        probe: { sport: '__PREFLIGHT__', team_name: '__PREFLIGHT__', situation_id: '__PREFLIGHT__', market: 'SU' },
+        keyCol: 'team_name',
+        needs: ['sport','team_name','scope','player_name','opponent','situation_id','situation_label',
+                'market','wins','losses','sample','hit_rate','current_streak','longest_streak',
+                'seasons_covered','qualified','headline','updated_at'] },
+
+      { name: 'shadow_picks', writtenBy: 'Run Pipeline',
+        probe: { sport: '__PREFLIGHT__', game_id: '__PREFLIGHT__' },
+        keyCol: 'game_id',
+        needs: ['game_id','sport','home_team','away_team','side_team','direction','decision',
+                'confidence','edge','units','market_spread','result','pnl','clv',
+                'governor_snapshot','physics_output','decision_mode','created_at',
+                'decision_path','governor_verdict','claude_verdict','shadow_units',
+                'shadow_decision','closing_spread'] },
+
+      { name: 'line_history', writtenBy: 'Matchups refresh',
+        probe: { sport: '__PREFLIGHT__', game_id: '__PREFLIGHT__' },
+        keyCol: 'game_id',
+        needs: ['game_id','sport','home','away','spread','total','ml','created_at'] },
+
+      { name: 'algorithm_weights', writtenBy: 'Learning Loop',
+        probe: { sport: '__PREFLIGHT__', family: '__PREFLIGHT__' },
+        keyCol: 'family',
+        needs: ['family','sport','base_weight','dynamic_weight','wins','losses','roi','last_updated'] },
+
+      { name: 'bet_log', writtenBy: 'Placing a bet',
+        probe: { sport: '__PREFLIGHT__', mode: 'sim' },
+        keyCol: 'sport',
+        needs: ['mode','date','sport','matchup','pick_label','odds','units','amount','status'] },
+    ];
+
+    let PF = { missing: [], rls: [], schema: [], ok: [] };
+
+    async function runPreflight() {
+      lines.length = 0;
+      PF = { missing: [], rls: [], schema: [], ok: [] };
+      document.getElementById('preflightBtn').disabled = true;
+      setStatus('Probing tables…', true);
+
+      out('EDGE TABLE PREFLIGHT');
+      out('Generated: ' + new Date().toISOString());
+      out('Every build button writes to one of these. If a build produces');
+      out('nothing, the reason is in this report.');
+
+      const url = (localStorage.getItem('edge_supabase_url') || '').replace(/\/+$/, '');
+      const key = localStorage.getItem('edge_supabase_key') || '';
+
+      section('CREDENTIALS');
+      if (!url || !key) {
+        kv('Supabase', 'NOT CONFIGURED', 'err');
+        out('  Settings › Connections — add the project URL and anon key.', 'warn');
+        setStatus('Blocked', false);
+        document.getElementById('preflightBtn').disabled = false;
+        render();
+        return;
+      }
+      kv('URL', url, 'ok');
+      kv('Key', key.slice(0, 24) + '… (' + key.length + ' chars)', 'ok');
+      kv('Key role', decodeRole(key), 'ok');
+
+      section('PER-TABLE PROBE');
+      for (const spec of TABLE_SPECS) {
+        await probeTable(url, key, spec);
+      }
+
+      preflightVerdict();
+      setStatus('Done · ' + new Date().toLocaleTimeString(), false);
+      document.getElementById('preflightBtn').disabled = false;
+      render();
+    }
+
+    // A Supabase anon key is a JWT with the role in its payload. Using a
+    // service key from a browser would be a serious mistake, so this
+    // says plainly which one is in play.
+    function decodeRole(key) {
+      try {
+        const payload = JSON.parse(atob(key.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const role = payload.role || 'unknown';
+        if (role === 'service_role') return role + '  ⚠ SERVICE KEY IN A BROWSER — rotate it';
+        const exp = payload.exp ? new Date(payload.exp * 1000) : null;
+        return role + (exp ? ' · expires ' + exp.toISOString().slice(0, 10) : '');
+      } catch { return 'could not decode'; }
+    }
+
+    async function probeTable(url, key, spec) {
+      const h = { apikey: key, Authorization: 'Bearer ' + key };
+      out('');
+      out('  ── ' + spec.name + '  (written by: ' + spec.writtenBy + ')', 'section-title');
+
+      // ── 1. Does it exist, and can we read it ──
+      let readRes, rows = null, count = null;
+      try {
+        readRes = await fetch(url + '/rest/v1/' + spec.name + '?select=*&limit=1',
+          { headers: { ...h, Prefer: 'count=exact' } });
+        if (readRes.ok) {
+          rows = await readRes.json();
+          const range = readRes.headers.get('content-range') || '';
+          count = parseInt(range.split('/')[1] || '0', 10);
+        }
+      } catch (e) {
+        kv('READ', 'network error — ' + e.message, 'err');
+        PF.missing.push(spec.name);
+        return;
+      }
+
+      if (!readRes.ok) {
+        const body = await readRes.text().catch(() => '');
+        const cause = explain(readRes.status, body);
+        kv('READ', 'HTTP ' + readRes.status + ' — ' + cause.short, 'err');
+        out('       ' + trimBody(body), 'err');
+        out('       → ' + cause.fix, 'warn');
+        if (cause.kind === 'missing') PF.missing.push(spec.name);
+        else if (cause.kind === 'rls') PF.rls.push(spec.name + ' (read)');
+        return;
+      }
+
+      kv('READ', 'ok · ' + (isFinite(count) ? count.toLocaleString() : '?') + ' rows', 'ok');
+
+      // ── 2. Schema — what the code emits vs what the table has ──
+      if (rows && rows.length) {
+        const have = new Set(Object.keys(rows[0]));
+        const missing = spec.needs.filter(c => !have.has(c));
+        if (missing.length) {
+          kv('SCHEMA', missing.length + ' column(s) missing', 'err');
+          out('       ' + missing.join(', '), 'err');
+          out('       → Writes that include these are rejected wholesale with a 400.', 'warn');
+          PF.schema.push(spec.name + ': ' + missing.join(', '));
+        } else {
+          kv('SCHEMA', 'all ' + spec.needs.length + ' expected columns present', 'ok');
+        }
+      } else {
+        kv('SCHEMA', 'table empty — columns cannot be read from a row', 'warn');
+      }
+
+      // ── 3. Can we actually insert ──
+      let writeRes, writeBody = '';
+      try {
+        writeRes = await fetch(url + '/rest/v1/' + spec.name, {
+          method: 'POST',
+          headers: { ...h, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+          body: JSON.stringify([spec.probe]),
+        });
+        if (!writeRes.ok) writeBody = await writeRes.text().catch(() => '');
+      } catch (e) {
+        kv('WRITE', 'network error — ' + e.message, 'err');
+        return;
+      }
+
+      if (!writeRes.ok) {
+        const cause = explain(writeRes.status, writeBody);
+        kv('WRITE', 'HTTP ' + writeRes.status + ' — ' + cause.short, 'err');
+        out('       ' + trimBody(writeBody), 'err');
+        out('       → ' + cause.fix, 'warn');
+        if (cause.kind === 'rls') PF.rls.push(spec.name + ' (insert)');
+        else if (cause.kind === 'schema') PF.schema.push(spec.name + ': probe rejected');
+        else if (cause.kind === 'missing') PF.missing.push(spec.name);
+        return;
+      }
+
+      kv('WRITE', 'ok — insert accepted', 'ok');
+
+      // ── 4. Clean the probe row up, which also tests delete ──
+      try {
+        const del = await fetch(
+          url + '/rest/v1/' + spec.name + '?' + spec.keyCol + '=eq.__PREFLIGHT__',
+          { method: 'DELETE', headers: h });
+        if (del.ok) kv('DELETE', 'ok — probe row removed', 'ok');
+        else {
+          const b = await del.text().catch(() => '');
+          kv('DELETE', 'HTTP ' + del.status + ' — probe row left behind', 'warn');
+          out('       ' + trimBody(b), 'warn');
+          out('       → Rebuilds clear old rows with DELETE. Without it they', 'warn');
+          out('         accumulate duplicates every run.', 'warn');
+          PF.rls.push(spec.name + ' (delete)');
+        }
+      } catch { kv('DELETE', 'failed — probe row left behind', 'warn'); }
+
+      PF.ok.push(spec.name);
+    }
+
+    // Turn a PostgREST failure into something actionable.
+    function explain(status, body) {
+      const b = String(body || '').toLowerCase();
+
+      if (status === 404 || b.includes('pgrst205') ||
+          b.includes('does not exist') || b.includes('undefined_table')) {
+        return { kind: 'missing', short: 'table does not exist',
+                 fix: 'Create it in Supabase — SQL editor, or Table Editor.' };
+      }
+      if (status === 401 || status === 403 ||
+          b.includes('row-level security') || b.includes('42501') ||
+          b.includes('insufficient privilege')) {
+        return { kind: 'rls', short: 'blocked by row-level security',
+                 fix: 'RLS is on with no policy for the anon role. Add a policy, or disable RLS on this table.' };
+      }
+      if (b.includes('pgrst204') || b.includes('could not find') || b.includes('column')) {
+        return { kind: 'schema', short: 'column mismatch',
+                 fix: 'The table is missing a column the code sends. The whole batch is rejected, not just that field.' };
+      }
+      if (status === 400) {
+        return { kind: 'schema', short: 'rejected by the database',
+                 fix: 'Read the message above — usually a type mismatch or a NOT NULL with no default.' };
+      }
+      if (status === 409) {
+        return { kind: 'conflict', short: 'unique constraint',
+                 fix: 'An upsert needs on_conflict naming the unique columns.' };
+      }
+      return { kind: 'unknown', short: 'unexpected response', fix: 'See the raw body above.' };
+    }
+
+    function trimBody(body) {
+      const t = String(body || '').replace(/\s+/g, ' ').trim();
+      return t.length > 220 ? t.slice(0, 220) + '…' : (t || '(empty response body)');
+    }
+
+    function preflightVerdict() {
+      section('VERDICT');
+
+      const total = TABLE_SPECS.length;
+      out('  ' + PF.ok.length + ' of ' + total + ' tables fully working',
+          PF.ok.length === total ? 'ok' : 'warn');
+
+      if (PF.missing.length) {
+        out('');
+        out('  TABLES THAT DO NOT EXIST', 'err');
+        PF.missing.forEach(t => out('    · ' + t, 'err'));
+        out('    → Nothing that writes to these can ever produce data.', 'warn');
+      }
+
+      if (PF.rls.length) {
+        out('');
+        out('  BLOCKED BY ROW-LEVEL SECURITY', 'err');
+        PF.rls.forEach(t => out('    · ' + t, 'err'));
+        out('    → Supabase enables RLS on new tables by default. With the', 'warn');
+        out('      anon key and no policy, reads return an empty list and', 'warn');
+        out('      writes are refused — both silently, which is why the', 'warn');
+        out('      build buttons appear to do nothing.', 'warn');
+      }
+
+      if (PF.schema.length) {
+        out('');
+        out('  COLUMN MISMATCHES', 'err');
+        PF.schema.forEach(t => out('    · ' + t, 'err'));
+        out('    → PostgREST rejects an entire batch when one column is', 'warn');
+        out('      unknown. A single missing column loses every row.', 'warn');
+      }
+
+      out('');
+      if (!PF.missing.length && !PF.rls.length && !PF.schema.length) {
+        out('  Every table exists, reads, writes and deletes.', 'ok');
+        out('  If a build still produces nothing, the failure is upstream —', 'ok');
+        out('  run TEST WORKFLOW next.', 'ok');
+      } else {
+        out('  Fix the items above, then run this again before rebuilding.', 'warn');
+        out('  Tap COPY SQL for statements that resolve everything listed.', 'warn');
+      }
+    }
+
+    // ── SQL for whatever this run found ──
+    function copyPreflightSql() {
+      const stmts = [];
+
+      PF.missing.forEach(t => {
+        const spec = TABLE_SPECS.find(s => s.name === t);
+        if (spec) stmts.push(createTableSql(spec));
+      });
+
+      const rlsTables = Array.from(new Set(PF.rls.map(t => t.split(' ')[0])));
+      rlsTables.forEach(t => {
+        stmts.push(
+`-- ${t}: allow the anon key to read and write
+alter table public.${t} enable row level security;
+drop policy if exists "${t}_anon_all" on public.${t};
+create policy "${t}_anon_all" on public.${t}
+  for all to anon using (true) with check (true);`);
+      });
+
+      PF.schema.forEach(entry => {
+        const [table, cols] = entry.split(': ');
+        const spec = TABLE_SPECS.find(s => s.name === table);
+        if (!spec || !cols) return;
+        cols.split(', ').forEach(c => {
+          stmts.push(`alter table public.${table} add column if not exists ${c} ${sqlTypeFor(c)};`);
+        });
+      });
+
+      if (!stmts.length) {
+        showToast('Nothing to fix', false);
+        return;
+      }
+
+      const sql = '-- EDGE preflight fixes · ' + new Date().toISOString() + '\n\n' + stmts.join('\n\n') + '\n';
+      navigator.clipboard.writeText(sql)
+        .then(() => showToast('SQL copied — paste into the Supabase SQL editor'))
+        .catch(() => { out(''); out(sql); render(); showToast('Copy blocked — SQL printed below', true); });
+    }
+
+    function sqlTypeFor(col) {
+      if (/_at$|_date$|last_updated|last_occurrence|last_meeting/.test(col)) return 'timestamptz';
+      if (/^(is_|qualified)/.test(col)) return 'boolean';
+      if (/verdict|snapshot|output|raw_stats|recent_meetings|payload/.test(col)) return 'jsonb';
+      if (/wins|losses|pushes|sample|streak|meetings|seasons|games_played|overs|unders|su_wins/.test(col)) return 'integer';
+      if (/pct|rate|weight|score|spread|total|odds|units|amount|margin|roi|edge|confidence|clv|rating|overall|offense|defense|pythagorean|srs|elo|pace|form|contribution|prob|adjustment/.test(col)) return 'numeric';
+      return 'text';
+    }
+
+    function createTableSql(spec) {
+      const cols = spec.needs.map(c => '  ' + c + ' ' + sqlTypeFor(c)).join(',\n');
+      return `-- ${spec.name}: written by ${spec.writtenBy}
+create table if not exists public.${spec.name} (
+  id bigint generated always as identity primary key,
+${cols}
+);
+alter table public.${spec.name} enable row level security;
+drop policy if exists "${spec.name}_anon_all" on public.${spec.name};
+create policy "${spec.name}_anon_all" on public.${spec.name}
+  for all to anon using (true) with check (true);`;
+    }
 
     // ============================================================
     // WORKFLOW TEST
