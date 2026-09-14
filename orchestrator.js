@@ -6,7 +6,11 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const MODES = { DETERMINISTIC: 'math_only', AI_ASSISTED: 'ai_assisted' };
+  const MODES = {
+    DETERMINISTIC: 'math_only',   // governor decides, Claude never runs
+    AI_ASSISTED:   'ai_assisted', // Claude can veto or trim the governor
+    AI_LEAD:       'ai_lead',     // Claude selects; governor becomes the shadow
+  };
   const DEFAULT_MODE = MODES.DETERMINISTIC;
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -40,6 +44,19 @@ const EDGE_ORCHESTRATOR = (() => {
     };
 
     try {
+      // Family weights are learned from graded results. If this never
+      // runs, every cycle uses the same static weights no matter how
+      // the families have actually performed.
+      if (window.EDGE_LEARNING && typeof EDGE_LEARNING.runIfDue === 'function') {
+        try {
+          const learned = await EDGE_LEARNING.runIfDue();
+          if (learned?.ran) {
+            log(`Stage 0 · Learning loop updated ${learned.families_updated ?? 0} weights`);
+            summary.stages.learning = learned;
+          }
+        } catch (e) { log('Stage 0 · Learning loop failed: ' + e.message); }
+      }
+
       log('Stage 1/7 · Loading games');
       const gameList = games || loadTodaysGames();
       if (!gameList.length) {
@@ -60,6 +77,14 @@ const EDGE_ORCHESTRATOR = (() => {
       let builtContext = context;
       if (window.EDGE_CONTEXT) {
         builtContext = await EDGE_CONTEXT.buildContext(gameList);
+
+        // Historical trends for the slate. These reach both the trend
+        // family and the selector; without this the trends table gets
+        // built and then never read by the pipeline.
+        if (window.EDGE_TRENDS && typeof EDGE_TRENDS.trendsForSlate === 'function') {
+          try { builtContext.trendsByGame = await EDGE_TRENDS.trendsForSlate(gameList); }
+          catch { builtContext.trendsByGame = {}; }
+        }
         summary.stages.context_loaded = {
           line_history: Object.keys(builtContext.lineHistoryByGame || {}).length,
           rest: Object.keys(builtContext.restByTeam || {}).length,
@@ -68,6 +93,7 @@ const EDGE_ORCHESTRATOR = (() => {
           injuries: Object.keys(builtContext.injuriesByGame || {}).length,
           ats: Object.keys(builtContext.atsByTeam || {}).length,
           h2h: Object.keys(builtContext.h2hByGame || {}).length,
+          trends: Object.keys(builtContext.trendsByGame || {}).length,
         };
         log(`  Line history: ${summary.stages.context_loaded.line_history} games`);
         log(`  Rest: ${summary.stages.context_loaded.rest} teams`);
@@ -98,23 +124,54 @@ const EDGE_ORCHESTRATOR = (() => {
       const governorResults = runGovernor(algoResults);
       summary.stages.governor_runs = governorResults.length;
 
-      log('Stage 6/7 · Physics decision layer');
-      const physicsResults = runPhysics(governorResults);
-      summary.stages.physics_picks = physicsResults.filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED').length;
+      // ── Stage 6 · ADJUDICATE ──
+      // What gets bet and on which side is settled here, before any
+      // money math. Physics is the money manager, not a second opinion,
+      // so it must not run until the verdict is final.
+      log('Stage 6/7 · Adjudication (' + mode + ')');
 
-      let finalResults = physicsResults;
-      let claudeReviews = [];
-
-      if (mode === MODES.AI_ASSISTED) {
-        log('Stage 7/7 · Claude batch review');
-        const batch = buildClaudeBatch(physicsResults, priors, builtContext);
-        claudeReviews = await EDGE_CLAUDE.reviewBatch(batch, builtContext);
-        finalResults = applyClaudeReviews(physicsResults, claudeReviews);
-        summary.metrics.claude_calls = 1;
+      let claudeResult = { ok: true, selections: [] };
+      if (mode === MODES.AI_ASSISTED || mode === MODES.AI_LEAD) {
+        const candidates = buildSelectorCandidates(priors, algoResults, governorResults, builtContext);
+        log(`  handing ${candidates.length} upcoming games to the selector`);
+        claudeResult = await EDGE_CLAUDE.selectFromSlate(candidates, { onProgress: log });
+        summary.metrics.claude_calls = claudeResult.ok ? 1 : 0;
+        if (!claudeResult.ok) {
+          log('  selector unavailable: ' + claudeResult.error);
+          summary.errors.push('Claude selector: ' + claudeResult.error);
+        } else {
+          log(`  selector returned ${claudeResult.selections.length} picks`);
+          if (claudeResult.note) log('  note: ' + claudeResult.note);
+        }
       } else {
-        log('Stage 7/7 · Skipped (deterministic mode)');
         summary.metrics.claude_calls = 0;
       }
+
+      const adjudicated = adjudicate(governorResults, claudeResult, mode);
+      summary.stages.adjudicated = adjudicated.filter(a => a.final.decision !== 'PASS').length;
+
+      // ── Stage 7 · PHYSICS ──
+      // Runs on the settled verdict. When Claude leads, physics still
+      // sizes the governor's verdict in parallel so the two paths can
+      // be graded against each other later.
+      log('Stage 7/7 · Physics sizing');
+      const finalResults = runPhysicsOn(adjudicated, 'final');
+      const shadowResults = runPhysicsOn(adjudicated, 'shadow');
+      const shadowById = {};
+      shadowResults.forEach(s => { shadowById[s.game_id] = s; });
+
+      finalResults.forEach(p => {
+        const a = adjudicated.find(x => x.governor.game_id === p.game_id);
+        const shadow = shadowById[p.game_id];
+        p.decision_path = a ? a.path : mode;
+        p.governor_verdict = a ? slimVerdict(a.governor) : null;
+        p.claude_verdict = a ? a.claudeVerdict : null;
+        p.shadow_units = shadow ? shadow.units : null;
+        p.shadow_decision = shadow ? shadow.decision : null;
+      });
+
+      summary.stages.physics_picks = finalResults.filter(
+        p => p.decision !== 'PASS' && p.decision !== 'CAPPED').length;
 
       const picks = finalResults
         .filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED')
@@ -411,6 +468,11 @@ const EDGE_ORCHESTRATOR = (() => {
       ctx.homeAts = sharedContext.atsByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
       ctx.awayAts = sharedContext.atsByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
     }
+    if (sharedContext.trendsByGame?.[prior.game_id]) {
+      const t = sharedContext.trendsByGame[prior.game_id];
+      ctx.homeTrends = t.home?.trends || [];
+      ctx.awayTrends = t.away?.trends || [];
+    }
     if (sharedContext.h2hByGame?.[prior.game_id]) {
       ctx.h2h = sharedContext.h2hByGame[prior.game_id];
     }
@@ -431,48 +493,116 @@ const EDGE_ORCHESTRATOR = (() => {
       });
   }
 
-  function runPhysics(governorResults) {
-    return governorResults.map(r => {
-      const physics = EDGE_PHYSICS.decide(r.governor, r.prior, {
-        lineHistory: r.prior?._context?.lineHistory,
-      });
-      physics.pick_id = makePickId(r.prior);
-      physics.game_id = r.prior.game_id;
-      physics.sport = r.prior.sport;
-      return physics;
+  // ============================================================
+  // ── ADJUDICATION ──
+  // One place where the verdict is settled. Physics never sees a
+  // pick until this has run, because physics is the money manager,
+  // not a second opinion.
+  // ============================================================
+
+  // Everything the selector needs about one game, in one object.
+  function buildSelectorCandidates(priors, algoResults, governorResults, sharedContext) {
+    const famByGame = {};
+    algoResults.forEach(r => { famByGame[r.prior.game_id] = r.families; });
+
+    const now = Date.now();
+    return governorResults
+      .filter(g => {
+        // The slate is this week's board. A cache can hold games that
+        // have already kicked off; those are not selectable.
+        const t = new Date(g.prior?.commence_time || 0).getTime();
+        return isFinite(t) && t > now;
+      })
+      .map(g => ({
+        prior: g.prior,
+        families: famByGame[g.prior.game_id] || [],
+        governor: g.governor,
+        context: g.context || {},
+        trends: sharedContext?.trendsByGame?.[g.prior.game_id] || null,
+        h2h: sharedContext?.h2hByGame?.[g.prior.game_id] || null,
+      }));
+  }
+
+  // Produces, per game, the verdict that will be bet and the verdict
+  // that will be shadowed, so the two paths can be graded against
+  // each other once results come in.
+  function adjudicate(governorResults, claudeResult, mode) {
+    const picked = {};
+    (claudeResult?.selections || []).forEach(s => { picked[String(s.game_id)] = s; });
+
+    return governorResults.map(g => {
+      const gov = g.governor;
+      const sel = picked[String(g.prior.game_id)] || null;
+
+      const claudeVerdict = sel ? {
+        side: sel.side, market: sel.market, confidence: sel.confidence,
+        reason: sel.reason, key_factor: sel.key_factor,
+      } : null;
+
+      let final, shadow, path;
+
+      if (mode === MODES.AI_LEAD) {
+        // Claude decides. A game it did not pick is a pass, however
+        // much the governor liked it.
+        path = 'claude';
+        final = sel ? mergeVerdict(gov, sel) : passVerdict(gov, 'Not selected');
+        shadow = gov;
+      } else if (mode === MODES.AI_ASSISTED) {
+        // The governor decides; Claude can veto or trim.
+        path = 'governor+claude';
+        if (gov.decision === 'PASS') final = gov;
+        else if (!sel) final = passVerdict(gov, 'Claude declined this game');
+        else if (sel.side !== gov.direction) final = passVerdict(gov, 'Claude disagreed on side');
+        // Take the lower of the two — agreement must not manufacture
+        // confidence that neither side had alone.
+        else final = { ...gov, confidence: Math.min(gov.confidence, sel.confidence) };
+        shadow = gov;
+      } else {
+        path = 'governor';
+        final = gov;
+        shadow = gov;
+      }
+
+      return { prior: g.prior, context: g.context, governor: gov, claudeVerdict, final, shadow, path };
     });
   }
 
-  function buildClaudeBatch(physicsResults, priors, sharedContext) {
-    const priorById = new Map(priors.map(p => [p.game_id, p]));
-    return physicsResults
-      .filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.units > 0)
-      .map(p => {
-        const prior = priorById.get(p.game_id);
-        const ctx = buildGameContext(prior, sharedContext);
-        return {
-          pick_id: p.pick_id,
-          physics: p,
-          prior,
-          context: {
-            lineHistory: ctx.lineHistory || null,
-            weather: ctx.weather || null,
-            injuries: { home: ctx.homeInjuries || [], away: ctx.awayInjuries || [] },
-            rest: { home: ctx.homeRestDays, away: ctx.awayRestDays },
-            ats: { home: ctx.homeAts, away: ctx.awayAts },
-            h2h: ctx.h2h || null,
-          },
-        };
-      });
+  function mergeVerdict(gov, sel) {
+    const sized = sel.confidence >= 80 ? 'BET_2U' : sel.confidence >= 70 ? 'BET_1U' : 'LEAN';
+    return {
+      ...gov,
+      direction: sel.side,
+      confidence: sel.confidence,
+      decision: sized,
+      claude_reason: sel.reason,
+    };
   }
 
-  function applyClaudeReviews(physicsResults, claudeReviews) {
-    const reviewById = new Map(claudeReviews.map(r => [r.pick_id, r]));
-    return physicsResults.map(p => {
-      const review = reviewById.get(p.pick_id);
-      if (!review) return p;
-      return EDGE_PHYSICS.applyClaudeAdjustment(p, review);
+  function passVerdict(gov, reason) {
+    return { ...gov, decision: 'PASS', units: 0, pass_reason: reason || gov.pass_reason || null };
+  }
+
+  function slimVerdict(gov) {
+    return {
+      decision: gov.decision, direction: gov.direction,
+      confidence: gov.confidence, edge: gov.edge,
+      consensus_score: gov.consensus_score, agreement_index: gov.agreement_index,
+    };
+  }
+
+  function runPhysicsOn(adjudicated, which) {
+    const out = [];
+    adjudicated.forEach(a => {
+      const verdict = which === 'shadow' ? a.shadow : a.final;
+      try {
+        const p = EDGE_PHYSICS.decide(verdict, a.prior, a.context || {});
+        p.pick_id = makePickId(a.prior);
+        p.game_id = a.prior.game_id;
+        p.sport = a.prior.sport;
+        out.push(p);
+      } catch {}
     });
+    return out;
   }
 
   async function persistShadowPicks(picks, priors, mode, runId) {
@@ -524,6 +654,11 @@ const EDGE_ORCHESTRATOR = (() => {
         units: p.units,
         stake_dollars: p.stake_dollars,
         governor_snapshot: p.governor_snapshot || null,
+        decision_path: p.decision_path || null,
+        governor_verdict: p.governor_verdict || null,
+        claude_verdict: p.claude_verdict || null,
+        shadow_units: p.shadow_units ?? null,
+        shadow_decision: p.shadow_decision || null,
         physics_output: slimPhysics(p),
         pick_id: p.pick_id || p.game_id || null,
         claude_output: p.claude || null,
