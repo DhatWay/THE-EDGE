@@ -273,9 +273,11 @@ const EDGE_POWER = (() => {
   // Preseason is season type 1. Only completed regular (2) and
   // postseason (3) games are allowed to move a rating.
   function isRatableEvent(e) {
+    // Football and the US leagues use 1=pre, 2=regular, 3=post. Soccer
+    // uses competition ids instead (MLS returns values like 13846), so
+    // anything that is not explicitly preseason is allowed through.
     const type = e.season?.type ?? e.competitions?.[0]?.season?.type;
     if (type === 1) return false;
-    if (typeof type === 'number' && type !== 2 && type !== 3) return false;
 
     const comp = e.competitions?.[0];
     if (!comp) return false;
@@ -301,12 +303,18 @@ const EDGE_POWER = (() => {
     const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
     const college = /college/.test(path);
 
+    // ESPN truncates college slates unless a group is named, and the
+    // group differs by sport: 80 is FBS football, 50 is Division I
+    // basketball. Sending 50 to football returns almost nothing, which
+    // is why a month of college football produced fifteen games.
+    const group = collegeGroup(path);
+
     const shapes = [
       (s, e) => `${base}?dates=${s}-${e}&limit=1000`,
       (s, e) => `${base}?limit=1000&dates=${s}-${e}`,
       (s, e) => `${base}?dates=${s}-${e}`,
     ];
-    if (college) shapes.unshift((s, e) => `${base}?dates=${s}-${e}&groups=50&limit=500`);
+    if (group) shapes.unshift((s, e) => `${base}?dates=${s}-${e}&groups=${group}&limit=900`);
 
     // A shape that already worked this run is tried first.
     const order = _espnShape.chosen != null
@@ -331,10 +339,16 @@ const EDGE_POWER = (() => {
     // Every range shape failed. Ranges are not always honoured, but a
     // single date always is, so walk the window a day at a time.
     _espnShape.dayFallback = true;
-    return fetchDayByDay(base, start, end, college);
+    return fetchDayByDay(base, start, end, group);
   }
 
-  async function fetchDayByDay(base, start, end, college) {
+  function collegeGroup(path) {
+    if (/college-football/.test(path)) return 80;   // FBS
+    if (/college-basketball/.test(path)) return 50; // Division I
+    return null;
+  }
+
+  async function fetchDayByDay(base, start, end, group) {
     const days = [];
     const from = parseYmd(start), to = parseYmd(end);
     if (!from || !to) return [];
@@ -344,7 +358,7 @@ const EDGE_POWER = (() => {
     }
     if (days.length > 400) return [];   // guard against a bad window
 
-    const suffix = college ? '&groups=50&limit=500' : '&limit=1000';
+    const suffix = group ? `&groups=${group}&limit=900` : '&limit=1000';
     const seen = new Map();
 
     await parallelDays(days, 6, async (day) => {
@@ -930,7 +944,12 @@ const EDGE_POWER = (() => {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
     const report = { teams_written: 0, coaching_written: 0, errors: [], dropped_columns: [] };
-    if (!url || !key) { report.errors.push('Supabase not connected'); return report; }
+    if (!url || !key) {
+      report.errors.push(
+        `Supabase not connected — url ${url ? 'set' : 'MISSING'}, key ${key ? 'set' : 'MISSING'}. ` +
+        `Settings › Connections.`);
+      return report;
+    }
 
     const teamRows = Object.values(results.teams);
     const coachRows = Object.values(results.coaching);
