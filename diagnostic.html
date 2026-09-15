@@ -201,11 +201,11 @@
         needs: ['mode','date','sport','matchup','pick_label','odds','units','amount','status'] },
     ];
 
-    let PF = { missing: [], rls: [], schema: [], ok: [] };
+    let PF = { missing: [], rls: [], schema: [], ok: [], badKey: false };
 
     async function runPreflight() {
       lines.length = 0;
-      PF = { missing: [], rls: [], schema: [], ok: [] };
+      PF = { missing: [], rls: [], schema: [], ok: [], badKey: false };
       document.getElementById('preflightBtn').disabled = true;
       setStatus('Probing tables…', true);
 
@@ -283,6 +283,7 @@
         out('       → ' + cause.fix, 'warn');
         if (cause.kind === 'missing') PF.missing.push(spec.name);
         else if (cause.kind === 'rls') PF.rls.push(spec.name + ' (read)');
+        else if (cause.kind === 'badkey') PF.badKey = true;
         return;
       }
 
@@ -360,6 +361,11 @@
         return { kind: 'missing', short: 'table does not exist',
                  fix: 'Create it in Supabase — SQL editor, or Table Editor.' };
       }
+      if (b.includes('invalid api key') || b.includes('jwt') ||
+          b.includes('invalid authentication')) {
+        return { kind: 'badkey', short: 'the API key itself was rejected',
+                 fix: 'Supabase could not verify this key, so no policy was ever consulted. Copy anon public again from Project Settings › API, and confirm you are in the right project.' };
+      }
       if (status === 401 || status === 403 ||
           b.includes('row-level security') || b.includes('42501') ||
           b.includes('insufficient privilege')) {
@@ -392,6 +398,20 @@
 
     function preflightVerdict() {
       section('VERDICT');
+
+      // One bad key fails every table identically. Say that once
+      // instead of listing eleven symptoms of the same cause.
+      if (PF.badKey) {
+        out('');
+        out('  THE API KEY IS NOT VALID FOR THIS PROJECT', 'err');
+        out('    Every table failed the same way, which is what a rejected', 'warn');
+        out('    key looks like. Nothing is wrong with the tables or their', 'warn');
+        out('    policies — the request never got that far.', 'warn');
+        out('');
+        out('    Supabase › Project Settings › API › anon public.', 'warn');
+        out('    Check the project ref in that page matches the URL above.', 'warn');
+        return;
+      }
 
       const total = TABLE_SPECS.length;
       out('  ' + PF.ok.length + ' of ' + total + ' tables fully working',
