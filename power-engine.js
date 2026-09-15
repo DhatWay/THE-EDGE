@@ -6,6 +6,10 @@
 
 const EDGE_POWER = (() => {
 
+  // Build stamp. Printed by the diagnostic so there is never any doubt
+  // about which copy of this file the browser is actually running.
+  const BUILD = 'pe-20260915-2325';
+
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
@@ -84,6 +88,7 @@ const EDGE_POWER = (() => {
     getPowerRating,
     getCoachingRating,
     getGamePrior,
+    BUILD,
     isSportInSeason,
     seasonStart,
     loadCarryover,
