@@ -107,6 +107,15 @@
     .field-input:focus { outline: none; border-color: var(--gold); }
     .field-input::placeholder { color: var(--text-dim); }
     .field-input.sm { font-family: 'Barlow', sans-serif; font-size: 15px; letter-spacing: 0; }
+    /* Keys and URLs are case-sensitive. Monospace, lowercase-capable,
+       no letter-spacing, so what is on screen is what is stored. */
+    .field-input.cred { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+                        font-size: 13px; letter-spacing: 0; text-transform: none; }
+    textarea.field-input.cred { width: 100%; resize: vertical; line-height: 1.45;
+                        word-break: break-all; min-height: 72px; }
+    .cred-check { font-size: 11.5px; font-weight: 300; line-height: 1.5; margin-top: 6px; color: var(--text-dim); }
+    .cred-check.ok { color: var(--green); }
+    .cred-check.err { color: var(--red); }
 
     /* UNIT TOGGLE */
     .unit-toggle { display: flex; border: 1px solid var(--border); margin-bottom: 14px; }
@@ -305,12 +314,15 @@
           <span class="conn-state" id="stateSupabase">Not connected</span>
         </div>
         <div class="field-lbl">Supabase Project URL</div>
-        <input type="text" class="field-input" id="supabaseUrl" placeholder="https://yourproject.supabase.co" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <input type="text" class="field-input cred" id="supabaseUrl" placeholder="https://yourproject.supabase.co" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
       </div>
 
       <div class="field">
         <div class="field-lbl">Supabase anon key <button class="reveal-btn" onclick="toggleReveal('supabaseKey')">show</button></div>
-        <input type="password" class="field-input" id="supabaseKey" placeholder="eyJhbGciOi…" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <textarea class="field-input cred" id="supabaseKey" rows="3" placeholder="eyJhbGciOi…"
+                  oninput="markUnsaved(); inspectKey()" autocomplete="off" spellcheck="false"
+                  autocapitalize="off" autocorrect="off"></textarea>
+        <div class="cred-check" id="keyCheck"></div>
         <div class="key-actions">
           <button class="key-btn" onclick="testConnection('supabase')">Test Supabase</button>
         </div>
@@ -322,7 +334,7 @@
           <span class="conn-state" id="stateOdds">Not connected</span>
         </div>
         <div class="field-lbl">The Odds API key <button class="reveal-btn" onclick="toggleReveal('oddsKey')">show</button></div>
-        <input type="password" class="field-input" id="oddsKey" placeholder="Your the-odds-api.com key" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <input type="text" class="field-input cred" id="oddsKey" placeholder="Your the-odds-api.com key" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
         <div class="key-actions">
           <button class="key-btn" onclick="testConnection('odds')">Test Odds API</button>
         </div>
@@ -334,7 +346,7 @@
           <span class="conn-state" id="stateClaude">Not connected</span>
         </div>
         <div class="field-lbl">Anthropic API key <span class="field-hint">AI-assisted mode only</span> <button class="reveal-btn" onclick="toggleReveal('claudeKey')">show</button></div>
-        <input type="password" class="field-input" id="claudeKey" placeholder="sk-ant-…" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <input type="text" class="field-input cred" id="claudeKey" placeholder="sk-ant-…" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
         <div class="key-actions">
           <button class="key-btn" onclick="testConnection('claude')">Test Anthropic</button>
         </div>
@@ -354,7 +366,7 @@
 
       <div class="field">
         <div class="field-lbl">Edge Function proxy URL <span class="field-hint">optional</span></div>
-        <input type="text" class="field-input" id="proxyUrl" placeholder="https://yourproject.supabase.co/functions/v1/edge-proxy" oninput="markUnsaved()" autocomplete="off" spellcheck="false" />
+        <input type="text" class="field-input cred" id="proxyUrl" placeholder="https://yourproject.supabase.co/functions/v1/edge-proxy" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
         <div class="conn-note">Set this to route Odds API and Anthropic calls through a Supabase Edge Function so those keys live in Supabase secrets instead of this browser. Leave blank to call both services directly with the keys above.</div>
       </div>
 
@@ -641,6 +653,56 @@
         if (el) el.value = localStorage.getItem(store) || '';
       });
       refreshConnectionDots();
+      inspectKey();
+    }
+
+    // A Supabase key is a JWT. Decode it and show the role and project
+    // ref so a key from the wrong project is caught here, not three
+    // screens later as a generic 401.
+    function inspectKey() {
+      const el = document.getElementById('supabaseKey');
+      const out = document.getElementById('keyCheck');
+      if (!el || !out) return true;
+
+      const key = el.value.trim();
+      if (!key) { out.textContent = ''; out.className = 'cred-check'; return true; }
+
+      const parts = key.split('.');
+      if (parts.length !== 3) {
+        out.textContent = 'Not a JWT — a Supabase anon key has three dot-separated parts. Check the paste is complete.';
+        out.className = 'cred-check err';
+        return false;
+      }
+      try {
+        const p = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const url = document.getElementById('supabaseUrl').value.trim();
+        const urlRef = (url.match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i) || [])[1];
+
+        if (p.role === 'service_role') {
+          out.textContent = 'This is a service_role key. It bypasses every policy and must never be used in a browser. Use anon public.';
+          out.className = 'cred-check err';
+          return false;
+        }
+        if (urlRef && p.ref && urlRef !== p.ref) {
+          out.textContent = `Key belongs to project "${p.ref}" but the URL points at "${urlRef}". They must match.`;
+          out.className = 'cred-check err';
+          return false;
+        }
+        const exp = p.exp ? new Date(p.exp * 1000) : null;
+        if (exp && exp < new Date()) {
+          out.textContent = 'This key expired on ' + exp.toISOString().slice(0, 10) + '.';
+          out.className = 'cred-check err';
+          return false;
+        }
+        out.textContent = `Valid ${p.role} key` + (p.ref ? ` for project ${p.ref}` : '') +
+                          (exp ? `, expires ${exp.toISOString().slice(0, 10)}` : '');
+        out.className = 'cred-check ok';
+        return true;
+      } catch {
+        out.textContent = 'Could not decode this key. It may be truncated or altered.';
+        out.className = 'cred-check err';
+        return false;
+      }
     }
 
     function saveConnections() {
@@ -652,6 +714,7 @@
         else localStorage.removeItem(store);
       });
       refreshConnectionDots();
+      inspectKey();
       markSaved();
       showToast('Connections saved');
     }
