@@ -126,6 +126,16 @@ const EDGE_ALGOS = (() => {
     const home = prior.home_power;
     const away = prior.away_power;
 
+    // Glicko-2 carries a deviation alongside the rating — how sure
+    // the system is. The same edge over a settled team is stronger
+    // evidence than over one it has barely seen, so every sub-signal
+    // here is scaled by that certainty rather than taken at face value.
+    const homeRd = home.glicko_rd ?? null;
+    const awayRd = away.glicko_rd ?? null;
+    const certainty = (homeRd != null && awayRd != null)
+      ? clamp(1 - (((homeRd + awayRd) / 2) - 40) / 260, 0, 1)
+      : null;
+
     const eloDiff = (home.elo || 1500) - (away.elo || 1500);
     const eloSpread = eloDiff / 25;
     const eloVote = signalVote(eloSpread, 3, 8);
@@ -136,11 +146,47 @@ const EDGE_ALGOS = (() => {
     const pythDiff = ((home.pythagorean || 0.5) - (away.pythagorean || 0.5)) * 100;
     const pythVote = signalVote(pythDiff, 5, 15);
 
-    return resolveFamily('team_quality', [eloVote, srsVote, pythVote], {
+    const subs = [eloVote, srsVote, pythVote];
+
+    // A fourth signal: do the three independent engines agree? When
+    // Glicko, Massey and Colley rank the pairing the same way the
+    // rating is solid; when they diverge the team is hard to read.
+    if (home.massey != null && away.massey != null &&
+        home.colley != null && away.colley != null) {
+      const glickoSide = Math.sign((home.glicko_rating ?? home.elo ?? 1500) - (away.glicko_rating ?? away.elo ?? 1500));
+      const masseySide = Math.sign(home.massey - away.massey);
+      const colleySide = Math.sign(home.colley - away.colley);
+      const agree = (glickoSide === masseySide) && (masseySide === colleySide) && glickoSide !== 0;
+      subs.push({
+        vote: agree ? (glickoSide > 0 ? 'yes' : 'no') : 'neu',
+        confidence: agree ? 0.72 : 0.5,
+        edge: agree ? round(Math.abs(home.massey - away.massey) / 100, 4) : 0,
+        reason: agree
+          ? 'Glicko, Massey and Colley all favour the same side'
+          : 'Rating engines disagree on this pairing',
+      });
+    }
+
+    const family = resolveFamily('team_quality', subs, {
       elo_diff: round(eloDiff, 1),
       srs_diff: round(srsDiff, 2),
       pyth_diff: round(pythDiff, 2),
+      home_rd: homeRd,
+      away_rd: awayRd,
+      certainty: certainty != null ? round(certainty, 3) : null,
     });
+
+    // Pull confidence toward neutral when the ratings are thin. This
+    // is what stops a week-1 edge from voting like a week-12 one.
+    if (certainty != null && family.vote !== 'neu') {
+      const scaled = 0.5 + (family.confidence - 0.5) * (0.55 + 0.45 * certainty);
+      family.confidence = round(scaled, 3);
+      if (certainty < 0.35) {
+        family.reason = `${family.reason} · ratings still unsettled (RD ${Math.round((homeRd + awayRd) / 2)})`;
+      }
+    }
+
+    return family;
   }
 
   // ============================================================
