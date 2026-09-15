@@ -29,6 +29,8 @@
 
 const EDGE_RATING = (() => {
 
+  const BUILD = 'rc-20260915-2325';
+
   // ── GLICKO-2 CONSTANTS ──
   const SCALE = 173.7178;          // Glicko-1 → Glicko-2 conversion
   const BASE_RATING = 1500;
@@ -75,6 +77,7 @@ const EDGE_RATING = (() => {
   const HOME_POINTS = { NFL: 2.0, NCAAF: 2.8, NBA: 2.6, NCAAB: 3.3, NHL: 0.25, MLB: 0.20, MLS: 0.38 };
 
   return {
+    BUILD,
     rateGlicko,
     massey,
     colley,
