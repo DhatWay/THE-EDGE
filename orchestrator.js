@@ -253,6 +253,25 @@ const EDGE_ORCHESTRATOR = (() => {
     }
   }
 
+  // League scoring baselines turn attack and defence rates into points.
+  // Derived from the rated teams themselves, so they move with the league.
+  function buildLeagueBaselines(teams) {
+    const bySport = {};
+    (Array.isArray(teams) ? teams : Object.values(teams || {})).forEach(t => {
+      if (!t || t.attack == null) return;
+      (bySport[t.sport] = bySport[t.sport] || []).push(t);
+    });
+    const out = {};
+    Object.entries(bySport).forEach(([sport, list]) => {
+      const rates = list.map(t => t.attack).filter(v => v != null);
+      if (!rates.length) return;
+      const poss = window.EDGE_RATING?.POSSESSIONS?.[sport] ?? 100;
+      const per = rates.reduce((a, b) => a + b, 0) / rates.length;
+      out[sport] = { per_possession: per, per_game: per * poss, possessions: poss };
+    });
+    return out;
+  }
+
   async function loadPowerIndex(activeSports = null) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -277,9 +296,10 @@ const EDGE_ORCHESTRATOR = (() => {
           const teams = await teamsRes.json();
           const coaches = await coachesRes.json();
           if (teams.length) {
-            const index = { teams: {}, coaching: {} };
+            const index = { teams: {}, coaching: {}, league: {} };
             teams.forEach(t => { index.teams[`${t.sport}:${t.team_name}`] = t; });
             coaches.forEach(c => { index.coaching[`${c.sport}:${c.team_name}`] = c; });
+            index.league = buildLeagueBaselines(teams);
             return index;
           }
         }
@@ -287,7 +307,11 @@ const EDGE_ORCHESTRATOR = (() => {
     }
 
     const fresh = await EDGE_POWER.computeAllTeamRatings();
-    return { teams: fresh.teams, coaching: fresh.coaching };
+    return {
+      teams: fresh.teams,
+      coaching: fresh.coaching,
+      league: buildLeagueBaselines(Object.values(fresh.teams)),
+    };
   }
 
   async function buildPriors(games, powerIndex, context = null) {
@@ -355,6 +379,9 @@ const EDGE_ORCHESTRATOR = (() => {
         const prior = await EDGE_POWER.computeGamePrior(game, {
           homeStats: homePower,
           awayStats: awayPower,
+          // The possession model scales attack against defence
+          // relative to the league.
+          league: powerIndex.league?.[sport] || null,
           market: {
             // The opening number decides whether the market and
             // line-dynamics families can vote at all, and whether the
