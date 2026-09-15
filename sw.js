@@ -4,7 +4,7 @@
 // Network-first at runtime so a reload always gets fresh code.
 // ============================================================
 
-const VERSION = 'edge-v1';
+const VERSION = 'edge-v11';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
