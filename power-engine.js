@@ -68,6 +68,12 @@ const EDGE_POWER = (() => {
 
   const MAX_LOOKBACK_DAYS = 400;
 
+  // Which ESPN query shape works, remembered for the run. Declared up
+  // here with the other constants: this module returns its exports
+  // near the top, so anything declared below that return is in the
+  // temporal dead zone and throws the first time it is touched.
+  const _espnShape = { chosen: null, dayFallback: false };
+
   return {
     computeGamePrior,
     computeAllTeamRatings,
@@ -287,14 +293,87 @@ const EDGE_POWER = (() => {
   // event list, which silently produced zero teams for every sport.
   // Preseason is filtered in isRatableEvent instead, from the season
   // type on the event itself, which is reliable.
+  // ESPN is undocumented and its accepted query shapes drift without
+  // notice. A single hard-coded URL returning 400 took the entire
+  // ratings build down silently, so this tries the known-good shapes
+  // in order and remembers which one worked for the rest of the run.
   async function fetchGamesInRange(path, start, end) {
     const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
-    try {
-      const res = await fetch(`${base}?dates=${start}-${end}&limit=1000`, { cache: 'no-store' });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.events || [];
-    } catch { return []; }
+    const college = /college/.test(path);
+
+    const shapes = [
+      (s, e) => `${base}?dates=${s}-${e}&limit=1000`,
+      (s, e) => `${base}?limit=1000&dates=${s}-${e}`,
+      (s, e) => `${base}?dates=${s}-${e}`,
+    ];
+    if (college) shapes.unshift((s, e) => `${base}?dates=${s}-${e}&groups=50&limit=500`);
+
+    // A shape that already worked this run is tried first.
+    const order = _espnShape.chosen != null
+      ? [shapes[_espnShape.chosen], ...shapes.filter((_, i) => i !== _espnShape.chosen)]
+      : shapes;
+
+    if (!_espnShape.dayFallback) {
+      for (let i = 0; i < order.length; i++) {
+        try {
+          const res = await fetch(order[i](start, end), { cache: 'no-store' });
+          if (!res.ok) continue;
+          const data = await res.json();
+          const events = data.events || [];
+          if (events.length) {
+            _espnShape.chosen = shapes.indexOf(order[i]);
+            return events;
+          }
+        } catch {}
+      }
+    }
+
+    // Every range shape failed. Ranges are not always honoured, but a
+    // single date always is, so walk the window a day at a time.
+    _espnShape.dayFallback = true;
+    return fetchDayByDay(base, start, end, college);
+  }
+
+  async function fetchDayByDay(base, start, end, college) {
+    const days = [];
+    const from = parseYmd(start), to = parseYmd(end);
+    if (!from || !to) return [];
+
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      days.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`);
+    }
+    if (days.length > 400) return [];   // guard against a bad window
+
+    const suffix = college ? '&groups=50&limit=500' : '&limit=1000';
+    const seen = new Map();
+
+    await parallelDays(days, 6, async (day) => {
+      try {
+        const res = await fetch(`${base}?dates=${day}${suffix}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        (data.events || []).forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
+      } catch {}
+    });
+
+    return Array.from(seen.values());
+  }
+
+  function parseYmd(s) {
+    const m = String(s).match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+
+  async function parallelDays(items, concurrency, fn) {
+    const queue = [...items];
+    await Promise.all(Array.from({ length: concurrency }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (item === undefined) break;
+        await fn(item);
+      }
+    }));
   }
 
   async function fetchTeamStats(sport) {
