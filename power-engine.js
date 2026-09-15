@@ -711,15 +711,36 @@ const EDGE_POWER = (() => {
 
     // 2. Prove the insert works before deleting anything.
     const chunkSize = 200;
-    const first = payload.slice(0, chunkSize);
-    const probe = await post(url, table, headers, first);
+    // return=representation so the first inserted id is known.
+    const probeHeaders = { ...headers, Prefer: 'return=representation' };
+    const probe = await postDroppingUnknown(
+      url, table, probeHeaders, payload.slice(0, chunkSize), report, emit);
+
     if (!probe.ok) {
-      report.errors.push(`${table}: insert rejected (HTTP ${probe.status}) ${probe.body.slice(0, 180)}`);
+      report.errors.push(`${table}: insert rejected (HTTP ${probe.status}) ${String(probe.body).slice(0, 200)}`);
       emit(`${table}: insert rejected — existing rows left in place`);
+      emit(`${table}: ${String(probe.body).slice(0, 200)}`);
       return 0;
     }
 
-    let written = first.length;
+    // Whatever shape the database accepted is the shape the rest must use.
+    if (probe.dropped.length) {
+      payload = payload.map(r => {
+        const o = { ...r };
+        probe.dropped.forEach(c => delete o[c]);
+        return o;
+      });
+    }
+
+    let written = Math.min(chunkSize, payload.length);
+
+    // The boundary between this run's rows and the last one's.
+    let firstNewId = null;
+    try {
+      const returned = JSON.parse(probe.returned || '[]');
+      const ids = returned.map(r => r.id).filter(v => typeof v === 'number');
+      if (ids.length) firstNewId = Math.min(...ids);
+    } catch {}
 
     // 3. The insert works, so the rest can follow.
     for (let i = chunkSize; i < payload.length; i += chunkSize) {
@@ -731,10 +752,15 @@ const EDGE_POWER = (() => {
     // 4. Only now remove the previous run. Anything not stamped with
     //    this run's timestamp is stale.
     try {
-      await fetch(`${url}/rest/v1/${table}?updated_at=neq.${encodeURIComponent(runStamp)}`, {
-        method: 'DELETE',
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
-      });
+      const auth = { apikey: key, Authorization: `Bearer ${key}` };
+      const filter = firstNewId !== null
+        ? `id=lt.${firstNewId}`
+        : `updated_at=neq.${encodeURIComponent(runStamp)}`;
+      const del = await fetch(`${url}/rest/v1/${table}?${filter}`, { method: 'DELETE', headers: auth });
+      if (!del.ok) report.errors.push(`${table}: stale rows not cleared (HTTP ${del.status})`);
+      else if (firstNewId === null) {
+        emit(`${table}: cleared by timestamp — id not returned, so the sweep is less precise`);
+      }
     } catch (e) {
       report.errors.push(`${table}: stale rows not cleared (${e.message})`);
     }
@@ -743,16 +769,75 @@ const EDGE_POWER = (() => {
     return written;
   }
 
+  // Reading one existing row only works when the table has rows — and
+  // an empty table is exactly what a failed rebuild leaves behind, so
+  // the table could never recover on its own. PostgREST also publishes
+  // the schema at the API root, which works on an empty table.
   async function discoverColumns(url, key, table) {
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+
     try {
-      const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, {
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
-      });
-      if (!res.ok) return null;
-      const rows = await res.json();
-      if (!rows.length) return null;      // empty table — cannot learn, send everything
-      return new Set(Object.keys(rows[0]));
-    } catch { return null; }
+      const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, { headers });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows.length) return new Set(Object.keys(rows[0]));
+      }
+    } catch {}
+
+    try {
+      const res = await fetch(`${url}/rest/v1/`, { headers });
+      if (res.ok) {
+        const spec = await res.json();
+        const def = spec?.definitions?.[table];
+        if (def?.properties) return new Set(Object.keys(def.properties));
+      }
+    } catch {}
+
+    return null;
+  }
+
+  // Last resort. When a column is still unknown the database names it
+  // in the error, so drop that column and retry rather than losing the
+  // whole batch. Always converges.
+  async function postDroppingUnknown(url, table, headers, rows, report, emit) {
+    let payload = rows;
+    const dropped = [];
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const res = await post(url, table, headers, payload);
+      if (res.ok) {
+        if (dropped.length) {
+          report.dropped_columns.push(`${table}: ${dropped.join(', ')}`);
+          emit(`${table}: dropped columns the table lacks — ${dropped.join(', ')}`);
+        }
+        return { ok: true, payload, dropped, returned: res.body };
+      }
+
+      const bad = columnFromError(res.body);
+      if (!bad || dropped.includes(bad)) {
+        return { ok: false, status: res.status, body: res.body, dropped };
+      }
+
+      dropped.push(bad);
+      payload = payload.map(r => { const o = { ...r }; delete o[bad]; return o; });
+    }
+    return { ok: false, status: 0, body: 'Too many unknown columns', dropped };
+  }
+
+  // PostgREST words this differently between versions.
+  function columnFromError(body) {
+    const text = String(body || '');
+    const patterns = [
+      /Could not find the '([^']+)' column/i,
+      /Could not find the "([^"]+)" column/i,
+      /column "([^"]+)" of relation "[^"]+" does not exist/i,
+      /'([^']+)' column of '[^']+' in the schema cache/i,
+    ];
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m) return m[1];
+    }
+    return null;
   }
 
   async function post(url, table, headers, body) {
@@ -760,7 +845,9 @@ const EDGE_POWER = (() => {
       const res = await fetch(`${url}/rest/v1/${table}`, {
         method: 'POST', headers, body: JSON.stringify(body),
       });
-      const text = res.ok ? '' : await res.text().catch(() => '');
+      // The body is needed on success too when representation was asked
+      // for, and on failure to read which column the database rejected.
+      const text = await res.text().catch(() => '');
       return { ok: res.ok, status: res.status, body: text };
     } catch (e) {
       return { ok: false, status: 0, body: e.message };
