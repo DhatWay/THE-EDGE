@@ -80,6 +80,8 @@ const EDGE_POWER = (() => {
     getGamePrior,
     isSportInSeason,
     seasonStart,
+    loadCarryover,
+    saveCarryover,
     SPORT_CONFIG,
     ESPN_MAP,
     SEASON_WINDOWS,
@@ -157,14 +159,40 @@ const EDGE_POWER = (() => {
         const { teamMap, chronological } = buildTeamStates(sport, events);
         if (!teamMap.size) { results.counts[sport] = 0; continue; }
 
-        const srsMap = computeSRS(sport, teamMap);
-        const eloMap = computeElo(sport, chronological);
+        // Glicko-2, Massey and Colley replace the in-file SRS and Elo.
+        // The old Elo reset every team to 1500 on each rebuild and the
+        // old "SRS" was raw average margin with no opponent adjustment.
+        let glickoState = {}, masseyMap = {}, colleyMap = {}, blended = {}, adMap = {};
+        const core = window.EDGE_RATING;
+
+        if (core) {
+          const seed = await loadCarryover(sport);
+          glickoState = core.rateGlicko(sport, chronological, { seed });
+          masseyMap = core.massey(sport, chronological);
+          colleyMap = core.colley(chronological);
+          blended = core.blend(sport, glickoState, masseyMap, colleyMap);
+          adMap = core.attackDefense(sport, chronological);
+          emit(`${sport}: glicko ${Object.keys(glickoState).length} · massey ${Object.keys(masseyMap).length}` +
+               (seed ? ` · carried ${Object.keys(seed).length} from last season` : ' · no carryover on file'));
+          results.attack_defense = results.attack_defense || {};
+          results.attack_defense[sport] = adMap;
+        } else {
+          emit(`${sport}: rating-core.js not loaded — falling back to in-file SRS/Elo`);
+        }
+
+        const srsMap = core ? {} : computeSRS(sport, teamMap);
+        const eloMap = core ? {} : computeElo(sport, chronological);
 
         for (const [teamName, state] of teamMap) {
           if (state.games < 1) continue;
           const rating = buildRating(sport, teamName, state, {
             srs: srsMap[teamName],
             elo: eloMap[teamName],
+            glicko: glickoState[teamName],
+            massey: masseyMap[teamName],
+            colley: colleyMap[teamName],
+            blended: blended[teamName],
+            attackDefense: adMap[teamName],
           });
           // Scope filter is applied here, after the league-wide SRS and
           // Elo passes have already used every team.
@@ -584,14 +612,51 @@ const EDGE_POWER = (() => {
     const sport = game._sport || game.sport;
     const defenseMatchup = computeDefenseMatchup(sport, homeStats, awayStats);
 
-    const ratingDelta = homeStats.overall - awayStats.overall;
-    const spreadConv = {
-      NFL: -0.28, NBA: -0.28, MLB: -0.08, NHL: -0.05,
-      NCAAF: -0.30, NCAAB: -0.28, MLS: -0.05,
-    }[sport] || -0.28;
-
-    const modelSpread = round(ratingDelta * spreadConv, 2);
     const marketSpread = market?.current_spread ?? null;
+
+    // ── Projected score ──
+    // Attack meets defence, per possession, opponent-adjusted. No
+    // betting line is read to produce this number, so the comparison
+    // against the market at the end is a genuine disagreement rather
+    // than a residual from a model fitted to spreads.
+    let projection = null;
+    let modelSpread = null;
+
+    const core = window.EDGE_RATING;
+    const homeAD = homeStats.attack != null
+      ? { attack: homeStats.attack, defense: homeStats.def_rate,
+          possessions: homeStats.possessions || (core?.POSSESSIONS?.[sport] ?? 100) }
+      : null;
+    const awayAD = awayStats.attack != null
+      ? { attack: awayStats.attack, defense: awayStats.def_rate,
+          possessions: awayStats.possessions || (core?.POSSESSIONS?.[sport] ?? 100) }
+      : null;
+
+    if (core && homeAD && awayAD && options.league) {
+      projection = core.projectScore(sport, homeAD, awayAD, options.league, {
+        neutral: game.neutral === true,
+        interactions: options.interactions || null,
+      });
+      if (projection) modelSpread = projection.model_spread;
+    }
+
+    // Fall back to the rating gap when the possession model has no
+    // data for one of these teams.
+    if (modelSpread === null) {
+      const homePts = homeStats.composite_points;
+      const awayPts = awayStats.composite_points;
+      if (homePts != null && awayPts != null) {
+        const hfa = core?.HOME_POINTS?.[sport] ?? 2;
+        modelSpread = round(-((homePts - awayPts) + hfa), 2);
+      } else {
+        const ratingDelta = homeStats.overall - awayStats.overall;
+        const spreadConv = {
+          NFL: -0.28, NBA: -0.28, MLB: -0.08, NHL: -0.05,
+          NCAAF: -0.30, NCAAB: -0.28, MLS: -0.05,
+        }[sport] || -0.28;
+        modelSpread = round(ratingDelta * spreadConv, 2);
+      }
+    }
 
     const coachAdj = homeStats._coach_adj ?? 0;
     const coachAdjAway = awayStats._coach_adj ?? 0;
@@ -609,7 +674,18 @@ const EDGE_POWER = (() => {
       NCAAF: 0.028, NCAAB: 0.032, MLS: 0.040,
     }[sport] || 0.030;
 
-    const priorHomeProb = clamp(0.5 + (rawEdge * probShiftPerPoint), 0.05, 0.95);
+    let priorHomeProb = clamp(0.5 + (rawEdge * probShiftPerPoint), 0.05, 0.95);
+
+    // When both teams carry a Glicko rating, the win probability comes
+    // from the distributions rather than a linear shift — it accounts
+    // for how sure the system is of each team.
+    let ratingProb = null;
+    if (core && homeStats.glicko_rating != null && awayStats.glicko_rating != null) {
+      ratingProb = core.glickoWinProbability(
+        { rating: homeStats.glicko_rating, rd: homeStats.glicko_rd },
+        { rating: awayStats.glicko_rating, rd: awayStats.glicko_rd },
+        core.HOME_POINTS?.[sport] ?? 2, sport);
+    }
 
     return {
       game_id: game.id,
@@ -633,15 +709,95 @@ const EDGE_POWER = (() => {
       away_power: awayStats,
       defense_matchup: defenseMatchup,
       model_spread: totalModelSpread,
+      projection,
       raw_edge: rawEdge,
       prior_home_prob: round(priorHomeProb, 4),
+      rating_home_prob: ratingProb != null ? round(ratingProb, 4) : null,
+      rating_certainty: {
+        home_rd: homeStats.glicko_rd ?? null,
+        away_rd: awayStats.glicko_rd ?? null,
+        // Wider deviation means the projection deserves less trust.
+        combined: (homeStats.glicko_rd != null && awayStats.glicko_rd != null)
+          ? round(Math.sqrt(homeStats.glicko_rd ** 2 + awayStats.glicko_rd ** 2), 1) : null,
+      },
       computed_at: new Date().toISOString(),
     };
   }
 
   // ============================================================
-  // ── PERSIST ──
+  // ── SEASON CARRY-OVER ──
+  // Last season's final Glicko state, regressed toward the mean with
+  // deviation restored. Without it every rebuild starts the whole
+  // league at 1500 and week 1 carries no information at all.
   // ============================================================
+
+  async function loadCarryover(sport) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) return null;
+
+    const season = seasonLabelFor(sport, new Date());
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/rating_carryover?sport=eq.${sport}&season=eq.${encodeURIComponent(season)}&limit=500`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (!res.ok) return null;
+      const rows = await res.json();
+      if (!rows.length) return null;
+      const seed = {};
+      rows.forEach(r => { seed[r.team_name] = { rating: r.rating, rd: r.rd, vol: r.vol ?? 0.06 }; });
+      return seed;
+    } catch { return null; }
+  }
+
+  // Run once a season has finished, to seed the next one. Offseason
+  // adjustments are supplied in points of team strength — a trade, a
+  // draft haul, a coaching change — and inflate deviation in proportion,
+  // because a team that changed a lot is one we know less about.
+  async function saveCarryover(sport, glickoState, options = {}) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) return { ok: false, error: 'Supabase not connected' };
+    if (!window.EDGE_RATING) return { ok: false, error: 'rating-core.js not loaded' };
+
+    const { adjustments = {}, forSeason = null } = options;
+    const next = forSeason || nextSeasonLabel(sport, new Date());
+    const carried = window.EDGE_RATING.carryOver(sport, glickoState, { adjustments });
+
+    const rows = Object.entries(carried).map(([team, v]) => ({
+      sport, season: next, team_name: team,
+      rating: v.rating, rd: v.rd, vol: v.vol,
+      carried_from: v.carried_from,
+      adjustment: v.adjustment,
+      adjustment_reason: v.adjustment_reason,
+      updated_at: new Date().toISOString(),
+    }));
+    if (!rows.length) return { ok: false, error: 'nothing to carry' };
+
+    try {
+      const res = await fetch(`${url}/rest/v1/rating_carryover?on_conflict=sport,season,team_name`, {
+        method: 'POST',
+        headers: {
+          apikey: key, Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify(rows),
+      });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status} ${await res.text().catch(() => '')}` };
+      return { ok: true, written: rows.length, season: next };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  function seasonLabelFor(sport, date) {
+    const m = date.getMonth() + 1, y = date.getFullYear();
+    const cross = (start) => (m >= start ? y : y - 1);
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') return String(cross(9));
+    if (sport === 'NFL' || sport === 'NCAAF') return String(cross(3));
+    return String(y);
+  }
+
+  function nextSeasonLabel(sport, date) {
+    return String(parseInt(seasonLabelFor(sport, date), 10) + 1);
+  }
 
   // ============================================================
   // ── PERSIST ──
@@ -711,11 +867,8 @@ const EDGE_POWER = (() => {
 
     // 2. Prove the insert works before deleting anything.
     const chunkSize = 200;
-    // return=representation so the first inserted id is known.
-    const probeHeaders = { ...headers, Prefer: 'return=representation' };
-    const probe = await postDroppingUnknown(
-      url, table, probeHeaders, payload.slice(0, chunkSize), report, emit);
-
+    const first = payload.slice(0, chunkSize);
+    const probe = await postDroppingUnknown(url, table, headers, first, report, emit);
     if (!probe.ok) {
       report.errors.push(`${table}: insert rejected (HTTP ${probe.status}) ${String(probe.body).slice(0, 200)}`);
       emit(`${table}: insert rejected — existing rows left in place`);
@@ -723,24 +876,15 @@ const EDGE_POWER = (() => {
       return 0;
     }
 
-    // Whatever shape the database accepted is the shape the rest must use.
-    if (probe.dropped.length) {
-      payload = payload.map(r => {
-        const o = { ...r };
-        probe.dropped.forEach(c => delete o[c]);
-        return o;
-      });
-    }
+    // Whatever shape got accepted is the shape the rest must use.
+    const accepted = new Set(Object.keys(probe.payload[0] || {}));
+    payload = payload.map(r => {
+      const o = {};
+      Object.keys(r).forEach(k => { if (accepted.has(k)) o[k] = r[k]; });
+      return o;
+    });
 
-    let written = Math.min(chunkSize, payload.length);
-
-    // The boundary between this run's rows and the last one's.
-    let firstNewId = null;
-    try {
-      const returned = JSON.parse(probe.returned || '[]');
-      const ids = returned.map(r => r.id).filter(v => typeof v === 'number');
-      if (ids.length) firstNewId = Math.min(...ids);
-    } catch {}
+    let written = first.length;
 
     // 3. The insert works, so the rest can follow.
     for (let i = chunkSize; i < payload.length; i += chunkSize) {
@@ -752,15 +896,10 @@ const EDGE_POWER = (() => {
     // 4. Only now remove the previous run. Anything not stamped with
     //    this run's timestamp is stale.
     try {
-      const auth = { apikey: key, Authorization: `Bearer ${key}` };
-      const filter = firstNewId !== null
-        ? `id=lt.${firstNewId}`
-        : `updated_at=neq.${encodeURIComponent(runStamp)}`;
-      const del = await fetch(`${url}/rest/v1/${table}?${filter}`, { method: 'DELETE', headers: auth });
-      if (!del.ok) report.errors.push(`${table}: stale rows not cleared (HTTP ${del.status})`);
-      else if (firstNewId === null) {
-        emit(`${table}: cleared by timestamp — id not returned, so the sweep is less precise`);
-      }
+      await fetch(`${url}/rest/v1/${table}?updated_at=neq.${encodeURIComponent(runStamp)}`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
     } catch (e) {
       report.errors.push(`${table}: stale rows not cleared (${e.message})`);
     }
@@ -769,13 +908,26 @@ const EDGE_POWER = (() => {
     return written;
   }
 
-  // Reading one existing row only works when the table has rows — and
-  // an empty table is exactly what a failed rebuild leaves behind, so
-  // the table could never recover on its own. PostgREST also publishes
-  // the schema at the API root, which works on an empty table.
+  // Reading a row only works when the table has one. An empty table
+  // could not be learned from, so the full payload went out, got a 400
+  // on an unknown column, and nothing was ever written — the table
+  // stayed empty forever. PostgREST publishes the schema at the API
+  // root, which works whether or not any rows exist.
   async function discoverColumns(url, key, table) {
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
+    // 1. OpenAPI definition — authoritative, works on an empty table.
+    try {
+      const res = await fetch(`${url}/rest/v1/`, { headers });
+      if (res.ok) {
+        const spec = await res.json();
+        const def = spec?.definitions?.[table] || spec?.components?.schemas?.[table];
+        const props = def?.properties;
+        if (props && Object.keys(props).length) return new Set(Object.keys(props));
+      }
+    } catch {}
+
+    // 2. Fall back to reading a row, for older PostgREST versions.
     try {
       const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, { headers });
       if (res.ok) {
@@ -784,60 +936,28 @@ const EDGE_POWER = (() => {
       }
     } catch {}
 
-    try {
-      const res = await fetch(`${url}/rest/v1/`, { headers });
-      if (res.ok) {
-        const spec = await res.json();
-        const def = spec?.definitions?.[table];
-        if (def?.properties) return new Set(Object.keys(def.properties));
-      }
-    } catch {}
-
     return null;
   }
 
-  // Last resort. When a column is still unknown the database names it
-  // in the error, so drop that column and retry rather than losing the
-  // whole batch. Always converges.
+  // Last resort: let the database name the column it does not have,
+  // drop it, and try again. PostgREST reports one offender per
+  // attempt, so this loops.
   async function postDroppingUnknown(url, table, headers, rows, report, emit) {
     let payload = rows;
-    const dropped = [];
-
     for (let attempt = 0; attempt < 12; attempt++) {
       const res = await post(url, table, headers, payload);
-      if (res.ok) {
-        if (dropped.length) {
-          report.dropped_columns.push(`${table}: ${dropped.join(', ')}`);
-          emit(`${table}: dropped columns the table lacks — ${dropped.join(', ')}`);
-        }
-        return { ok: true, payload, dropped, returned: res.body };
-      }
+      if (res.ok) return { ok: true, payload };
 
-      const bad = columnFromError(res.body);
-      if (!bad || dropped.includes(bad)) {
-        return { ok: false, status: res.status, body: res.body, dropped };
-      }
+      const offender = (res.body.match(/'([a-zA-Z_][a-zA-Z0-9_]*)' column/) ||
+                        res.body.match(/column "([a-zA-Z_][a-zA-Z0-9_]*)"/) ||
+                        [])[1];
+      if (!offender) return { ok: false, status: res.status, body: res.body };
 
-      dropped.push(bad);
-      payload = payload.map(r => { const o = { ...r }; delete o[bad]; return o; });
+      emit(`${table}: dropping column the table does not have — ${offender}`);
+      report.dropped_columns.push(`${table}: ${offender}`);
+      payload = payload.map(r => { const o = { ...r }; delete o[offender]; return o; });
     }
-    return { ok: false, status: 0, body: 'Too many unknown columns', dropped };
-  }
-
-  // PostgREST words this differently between versions.
-  function columnFromError(body) {
-    const text = String(body || '');
-    const patterns = [
-      /Could not find the '([^']+)' column/i,
-      /Could not find the "([^"]+)" column/i,
-      /column "([^"]+)" of relation "[^"]+" does not exist/i,
-      /'([^']+)' column of '[^']+' in the schema cache/i,
-    ];
-    for (const re of patterns) {
-      const m = text.match(re);
-      if (m) return m[1];
-    }
-    return null;
+    return { ok: false, status: 400, body: 'Too many unknown columns' };
   }
 
   async function post(url, table, headers, body) {
@@ -845,9 +965,7 @@ const EDGE_POWER = (() => {
       const res = await fetch(`${url}/rest/v1/${table}`, {
         method: 'POST', headers, body: JSON.stringify(body),
       });
-      // The body is needed on success too when representation was asked
-      // for, and on failure to read which column the database rejected.
-      const text = await res.text().catch(() => '');
+      const text = res.ok ? '' : await res.text().catch(() => '');
       return { ok: res.ok, status: res.status, body: text };
     } catch (e) {
       return { ok: false, status: 0, body: e.message };
