@@ -154,7 +154,14 @@ const EDGE_POWER = (() => {
       try {
         const events = await fetchSeasonEvents(sport, path, start, now);
         results.games_used[sport] = events.length;
-        if (!events.length) { results.counts[sport] = 0; continue; }
+        if (!events.length) {
+          results.counts[sport] = 0;
+          const msg = `no completed games returned for ${fmtDate(start)}–${fmtDate(now)}`;
+          results.errors.push({ sport, error: msg });
+          emit(`${sport}: ${msg}`);
+          continue;
+        }
+        emit(`${sport}: ${events.length} completed games`);
 
         const { teamMap, chronological } = buildTeamStates(sport, events);
         if (!teamMap.size) { results.counts[sport] = 0; continue; }
@@ -209,7 +216,13 @@ const EDGE_POWER = (() => {
         results.errors.push({ sport, error: err.message });
       }
       results.counts[sport] = teamCount;
-      emit(`${sport}: ${teamCount} teams rated`);
+      if (teamCount === 0) {
+        const msg = `${results.games_used[sport] || 0} games fetched but no team met the rating threshold`;
+        results.errors.push({ sport, error: msg });
+        emit(`${sport}: ${msg}`);
+      } else {
+        emit(`${sport}: ${teamCount} teams rated`);
+      }
     }
 
     results.persist = await persistRatings(results, emit);
@@ -269,10 +282,15 @@ const EDGE_POWER = (() => {
     return true;
   }
 
+  // ESPN's seasontype parameter is designed to pair with dates=YYYY,
+  // not with an explicit date range. Sending both returns an empty
+  // event list, which silently produced zero teams for every sport.
+  // Preseason is filtered in isRatableEvent instead, from the season
+  // type on the event itself, which is reliable.
   async function fetchGamesInRange(path, start, end) {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${start}-${end}&limit=1000&seasontype=2`;
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
     try {
-      const res = await fetch(url);
+      const res = await fetch(`${base}?dates=${start}-${end}&limit=1000`, { cache: 'no-store' });
       if (!res.ok) return [];
       const data = await res.json();
       return data.events || [];
@@ -509,8 +527,24 @@ const EDGE_POWER = (() => {
       offense: round(offense, 1),
       defense: round(defense, 1),
       pythagorean: round(pyth, 4),
-      srs: adjusted.srs ?? round(avgMOV, 2),
-      elo: adjusted.elo ?? 1500,
+      // srs and elo keep their column names so nothing downstream
+      // breaks, but they now carry the opponent-adjusted Massey value
+      // and the Glicko-2 rating rather than raw margin and a reset Elo.
+      srs: adjusted.massey ?? adjusted.srs ?? round(avgMOV, 2),
+      elo: adjusted.glicko ? Math.round(adjusted.glicko.rating) : (adjusted.elo ?? 1500),
+
+      glicko_rating: adjusted.glicko ? adjusted.glicko.rating : null,
+      glicko_rd: adjusted.glicko ? adjusted.glicko.rd : null,
+      glicko_vol: adjusted.glicko ? adjusted.glicko.vol : null,
+      glicko_conservative: adjusted.glicko ? adjusted.glicko.conservative : null,
+      massey: adjusted.massey ?? null,
+      colley: adjusted.colley ?? null,
+      composite_points: adjusted.blended ? adjusted.blended.composite_points : null,
+      rating_certainty: adjusted.blended ? adjusted.blended.certainty : null,
+      attack: adjusted.attackDefense ? adjusted.attackDefense.attack : null,
+      def_rate: adjusted.attackDefense ? adjusted.attackDefense.defense : null,
+      attack_index: adjusted.attackDefense ? adjusted.attackDefense.attack_index : null,
+      defense_index: adjusted.attackDefense ? adjusted.attackDefense.defense_index : null,
       pace: round(avgPF, 1),
       record: rec,
       home_record: homeRec,
