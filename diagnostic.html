@@ -25,7 +25,6 @@
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -2213,4 +2212,36 @@ create policy "${spec.name}_anon_all" on public.${spec.name}
           out('    reasons:');
           phys.reasons.forEach(r => out('      · ' + r));
         }
-  
+      } catch (e) {
+        kv('Physics error', e.message, 'err');
+      }
+    }
+
+    // COPY
+    function copyAll() {
+      const text = lines.map(l => l.text).join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => showToast('Copied ' + lines.length + ' lines'))
+          .catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+    }
+
+    function fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showToast('Copied'); }
+      catch { showToast('Copy failed', true); }
+      document.body.removeChild(ta);
+    }
+
+    render();
+  </script>
+</body>
+</html>
