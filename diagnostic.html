@@ -293,18 +293,49 @@
 
         // Deliberately probe a narrow recent window so one chunk is enough.
         const from = new Date(Math.max(start.getTime(), now.getTime() - 14 * 86400000));
-        const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${fmt(from)}-${fmt(now)}&limit=1000`;
+        // ESPN is undocumented and its accepted query shapes drift.
+        // Rather than assume one, try each and report what answers.
+        const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
+        const isCollege = sport === 'NCAAF' || sport === 'NCAAB';
+        const variants = [
+          { label: 'dates=range&limit', url: `${base}?dates=${fmt(from)}-${fmt(now)}&limit=1000` },
+          { label: 'limit&dates=range', url: `${base}?limit=1000&dates=${fmt(from)}-${fmt(now)}` },
+          { label: 'dates=range only',  url: `${base}?dates=${fmt(from)}-${fmt(now)}` },
+          { label: 'single date',       url: `${base}?dates=${fmt(now)}` },
+          { label: 'single date+limit', url: `${base}?dates=${fmt(now)}&limit=1000` },
+          { label: 'bare scoreboard',   url: base },
+        ];
+        if (isCollege) {
+          variants.push({ label: 'range+groups=50', url: `${base}?dates=${fmt(from)}-${fmt(now)}&groups=50&limit=500` });
+          variants.push({ label: 'single+groups=50', url: `${base}?dates=${fmt(now)}&groups=50&limit=500` });
+        }
 
         let data = null;
-        try {
-          const res = await fetch(url, { cache: 'no-store' });
-          kv('HTTP', String(res.status), res.ok ? 'ok' : 'err');
-          if (!res.ok) continue;
-          data = await res.json();
-        } catch (e) {
-          kv('fetch', 'failed — ' + e.message, 'err');
+        let winner = null;
+
+        for (const v of variants) {
+          try {
+            const res = await fetch(v.url, { cache: 'no-store' });
+            if (!res.ok) {
+              out('      ' + v.label.padEnd(20) + 'HTTP ' + res.status, 'err');
+              continue;
+            }
+            const body = await res.json();
+            const n = (body.events || []).length;
+            out('      ' + v.label.padEnd(20) + 'HTTP 200 · ' + n + ' events', n ? 'ok' : 'warn');
+            if (n && !data) { data = body; winner = v; }
+          } catch (e) {
+            out('      ' + v.label.padEnd(20) + 'failed — ' + e.message, 'err');
+          }
+        }
+
+        if (!data) {
+          kv('working request', 'NONE — every variant failed', 'err');
+          out('    → If all six return 400, the block is between this page', 'warn');
+          out('      and ESPN, not in the query. Check for a blocker or VPN.', 'warn');
           continue;
         }
+        kv('working request', winner.label, 'ok');
 
         const events = data.events || [];
         kv('events returned', String(events.length), events.length ? 'ok' : 'err');
