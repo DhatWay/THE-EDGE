@@ -25,7 +25,6 @@
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -214,9 +213,12 @@
       let blocked = false;
 
       const checks = [
-        { file: 'power-engine.js', want: 'glicko_rating', label: 'power-engine emits Glicko fields' },
-        { file: 'power-engine.js', bad: 'seasontype=2', label: 'power-engine free of the seasontype bug' },
-        { file: 'rating-core.js',  want: 'rateGlicko',   label: 'rating-core.js present' },
+        { file: 'power-engine.js', want: 'glicko_rating',   label: 'emits Glicko fields' },
+        { file: 'power-engine.js', want: 'collegeGroup',    label: 'college group fix (80 for football)' },
+        { file: 'power-engine.js', want: 'fetchDayByDay',   label: 'day-by-day fallback' },
+        { file: 'power-engine.js', want: "url ${url ? 'set'", label: 'detailed persist error' },
+        { file: 'power-engine.js', bad: 'seasontype=2',     label: 'free of the seasontype bug' },
+        { file: 'rating-core.js',  want: 'rateGlicko',      label: 'rating-core.js present' },
       ];
 
       const cache = {};
@@ -247,6 +249,19 @@
           kv(c.label, 'fetch failed — ' + e.message, 'err');
           blocked = true;
         }
+      }
+
+      out('');
+      // The stamp is the only unambiguous answer to "is my deploy live".
+      kv('EDGE_POWER build',  window.EDGE_POWER?.BUILD  || 'no stamp — pre-build-stamp copy',
+         window.EDGE_POWER?.BUILD ? 'ok' : 'err');
+      kv('EDGE_RATING build', window.EDGE_RATING?.BUILD || 'no stamp — pre-build-stamp copy',
+         window.EDGE_RATING?.BUILD ? 'ok' : 'err');
+      if (!window.EDGE_POWER?.BUILD) {
+        out('    → This copy predates build stamps. If you just deployed,', 'warn');
+        out('      the browser or CDN is serving a cached file. Purge cache', 'warn');
+        out('      and hard-reload before trusting anything below.', 'warn');
+        blocked = true;
       }
 
       out('');
@@ -307,8 +322,10 @@
           { label: 'bare scoreboard',   url: base },
         ];
         if (isCollege) {
-          variants.push({ label: 'range+groups=50', url: `${base}?dates=${fmt(from)}-${fmt(now)}&groups=50&limit=500` });
-          variants.push({ label: 'single+groups=50', url: `${base}?dates=${fmt(now)}&groups=50&limit=500` });
+          // 80 is FBS football, 50 is Division I basketball.
+          const grp = sport === 'NCAAF' ? 80 : 50;
+          variants.push({ label: `range+groups=${grp}`, url: `${base}?dates=${fmt(from)}-${fmt(now)}&groups=${grp}&limit=900` });
+          variants.push({ label: `single+groups=${grp}`, url: `${base}?dates=${fmt(now)}&groups=${grp}&limit=900` });
         }
 
         let data = null;
@@ -2195,36 +2212,4 @@ create policy "${spec.name}_anon_all" on public.${spec.name}
           out('    reasons:');
           phys.reasons.forEach(r => out('      · ' + r));
         }
-      } catch (e) {
-        kv('Physics error', e.message, 'err');
-      }
-    }
-
-    // COPY
-    function copyAll() {
-      const text = lines.map(l => l.text).join('\n');
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text)
-          .then(() => showToast('Copied ' + lines.length + ' lines'))
-          .catch(() => fallbackCopy(text));
-      } else {
-        fallbackCopy(text);
-      }
-    }
-
-    function fallbackCopy(text) {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); showToast('Copied'); }
-      catch { showToast('Copy failed', true); }
-      document.body.removeChild(ta);
-    }
-
-    render();
-  </script>
-</body>
-</html>
+  
