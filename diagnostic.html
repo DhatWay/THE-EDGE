@@ -25,7 +25,6 @@
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -62,6 +61,50 @@
   </style>
 </head>
 <body>
+  <nav style="position:fixed;top:0;left:0;right:0;z-index:100;height:56px;background:rgba(8,8,8,0.97);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 18px;">
+    <a href="index.html" style="text-decoration:none;color:var(--gold);font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:4px;">EDGE</a>
+    <button id="ham" aria-label="Menu" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:6px;">
+      <span style="display:block;width:22px;height:2px;background:var(--gold);"></span>
+      <span style="display:block;width:22px;height:2px;background:var(--gold);"></span>
+      <span style="display:block;width:22px;height:2px;background:var(--gold);"></span>
+    </button>
+  </nav>
+  <div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:98;opacity:0;pointer-events:none;transition:opacity .3s;"></div>
+  <div id="drawer" style="position:fixed;top:56px;right:0;width:260px;height:calc(100vh - 56px);background:#0F0F0F;border-left:1px solid var(--border);z-index:99;transform:translateX(100%);transition:transform .3s;overflow-y:auto;padding-bottom:30px;">
+    <a href="index.html" class="dl">Dashboard</a>
+    <a href="matchups.html" class="dl">Live Matchups</a>
+    <a href="picks.html" class="dl">Today's Picks</a>
+    <a href="parlay.html" class="dl">Trend Bets</a>
+    <a href="analysis.html" class="dl">AI Analysis</a>
+    <a href="data.html" class="dl">Data Explorer</a>
+    <a href="algorithms.html" class="dl">Algorithm Suite</a>
+    <a href="power.html" class="dl">Power Ratings</a>
+    <a href="lines.html" class="dl">Line Movement</a>
+    <a href="intelligence.html" class="dl">Intelligence</a>
+    <a href="history.html" class="dl">Pick History</a>
+    <a href="performance.html" class="dl">Performance &amp; ROI</a>
+    <a href="betting.html" class="dl">Betting Control</a>
+    <a href="settings.html" class="dl">Settings</a>
+    <a href="admin.html" class="dl">Admin</a>
+    <a href="diagnostic.html" class="dl" style="color:var(--gold);border-left-color:var(--gold);">Diagnostic</a>
+  </div>
+  <style>
+    .dl { display:block; padding:12px 20px; font-family:'Barlow Condensed',sans-serif; font-size:15px;
+          font-weight:700; letter-spacing:2px; text-transform:uppercase; color:#A89878;
+          text-decoration:none; border-left:2px solid transparent; }
+    .dl:hover { color:var(--gold); border-left-color:var(--gold); background:rgba(201,168,76,0.10); }
+    body { padding-top:56px; }
+  </style>
+  <script>
+    (function(){
+      var h=document.getElementById('ham'), d=document.getElementById('drawer'), o=document.getElementById('overlay');
+      function t(){ var open=d.style.transform==='translateX(0px)';
+        d.style.transform=open?'translateX(100%)':'translateX(0px)';
+        o.style.opacity=open?'0':'1'; o.style.pointerEvents=open?'none':'all'; }
+      h.addEventListener('click',t); o.addEventListener('click',t);
+    })();
+  </script>
+
 
   <nav>
     <div class="logo-mark">ED</div>
@@ -72,6 +115,7 @@
     <div class="header">
       <div class="title">FULL <em>DIAGNOSTIC</em></div>
       <div class="btn-bar">
+        <button class="btn" id="ratingsBtn" onclick="runRatingsProbe()">▲ RATINGS PROBE</button>
         <button class="btn" id="preflightBtn" onclick="runPreflight()">◈ TABLE PREFLIGHT</button>
         <button class="btn" id="flowBtn" onclick="runWorkflow()">▶ TEST WORKFLOW</button>
         <button class="btn" id="verifyBtn" onclick="runVerify()">✓ VERIFY DEPLOY</button>
@@ -122,6 +166,262 @@
 
 
 
+
+
+    // ============================================================
+    // RATINGS PROBE
+    //
+    // "0 teams" tells you nothing about which step failed. This walks
+    // the build in order — which file is served, whether the rating
+    // core loaded, what ESPN actually returns, how many events survive
+    // each filter, and what computeAllTeamRatings reports — and stops
+    // at the first step that produces nothing.
+    // ============================================================
+
+    const ESPN_PATHS = {
+      NFL:   'football/nfl',
+      NCAAF: 'football/college-football',
+      MLB:   'baseball/mlb',
+      MLS:   'soccer/usa.1',
+      NBA:   'basketball/nba',
+      NHL:   'hockey/nhl',
+      NCAAB: 'basketball/mens-college-basketball',
+    };
+
+    async function runRatingsProbe() {
+      lines.length = 0;
+      document.getElementById('ratingsBtn').disabled = true;
+      setStatus('Probing ratings build…', true);
+
+      out('EDGE RATINGS PROBE');
+      out('Generated: ' + new Date().toISOString());
+
+      const stop = await probeStep1_Files();
+      if (!stop) {
+        const sport = await probeStep2_Espn();
+        if (sport) await probeStep3_Build(sport);
+      }
+
+      setStatus('Done · ' + new Date().toLocaleTimeString(), false);
+      document.getElementById('ratingsBtn').disabled = false;
+      render();
+    }
+
+    // ── 1. Which files are actually being served ──
+    async function probeStep1_Files() {
+      section('1. SERVED FILES');
+      let blocked = false;
+
+      const checks = [
+        { file: 'power-engine.js', want: 'glicko_rating', label: 'power-engine emits Glicko fields' },
+        { file: 'power-engine.js', bad: 'seasontype=2', label: 'power-engine free of the seasontype bug' },
+        { file: 'rating-core.js',  want: 'rateGlicko',   label: 'rating-core.js present' },
+      ];
+
+      const cache = {};
+      for (const c of checks) {
+        try {
+          if (!(c.file in cache)) {
+            const res = await fetch(c.file + '?v=' + Date.now(), { cache: 'no-store' });
+            cache[c.file] = res.ok ? await res.text() : null;
+          }
+          const body = cache[c.file];
+          if (body === null) {
+            kv(c.label, 'FILE NOT FOUND (404)', 'err');
+            blocked = true;
+            continue;
+          }
+          if (c.want) {
+            const ok = body.includes(c.want);
+            kv(c.label, ok ? 'yes' : 'NO — old version deployed', ok ? 'ok' : 'err');
+            if (!ok) blocked = true;
+          }
+          if (c.bad) {
+            // The comment mentioning it is fine; the request must not send it.
+            const sends = /scoreboard\?[^`'"]*seasontype=2/.test(body);
+            kv(c.label, sends ? 'NO — still sending seasontype=2' : 'yes', sends ? 'err' : 'ok');
+            if (sends) blocked = true;
+          }
+        } catch (e) {
+          kv(c.label, 'fetch failed — ' + e.message, 'err');
+          blocked = true;
+        }
+      }
+
+      out('');
+      kv('window.EDGE_RATING', window.EDGE_RATING ? 'loaded' : 'NOT LOADED', window.EDGE_RATING ? 'ok' : 'err');
+      if (!window.EDGE_RATING) {
+        out('    → rating-core.js is missing its script tag on this page,', 'warn');
+        out('      or loads after power-engine.js. It must come first.', 'warn');
+      }
+      kv('window.EDGE_POWER', window.EDGE_POWER ? 'loaded' : 'NOT LOADED', window.EDGE_POWER ? 'ok' : 'err');
+      if (window.EDGE_POWER) {
+        const hasNew = typeof window.EDGE_POWER.loadCarryover === 'function';
+        kv('EDGE_POWER build', hasNew ? 'current' : 'OLD — carryover missing', hasNew ? 'ok' : 'err');
+        if (!hasNew) blocked = true;
+      }
+
+      if (blocked) {
+        out('');
+        out('  STOP — the deployed files are not the current ones.', 'err');
+        out('  Nothing below will be meaningful until they are. Tap', 'warn');
+        out('  PURGE CACHE, hard-reload, and check the files uploaded.', 'warn');
+      }
+      return blocked;
+    }
+
+    // ── 2. What ESPN actually returns, unfiltered ──
+    async function probeStep2_Espn() {
+      section('2. ESPN RAW FETCH');
+
+      if (!window.EDGE_POWER) { out('  skipped — EDGE_POWER not loaded', 'err'); return null; }
+
+      const now = new Date();
+      const inSeason = Object.keys(ESPN_PATHS).filter(s => window.EDGE_POWER.isSportInSeason(s, now));
+      kv('In season today', inSeason.join(', ') || 'none', inSeason.length ? 'ok' : 'err');
+      if (!inSeason.length) return null;
+
+      let best = null;
+
+      for (const sport of inSeason) {
+        const path = ESPN_PATHS[sport];
+        const start = window.EDGE_POWER.seasonStart(sport, now);
+        const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+
+        out('');
+        out('  ── ' + sport + '  window ' + fmt(start) + ' → ' + fmt(now), 'section-title');
+
+        // Deliberately probe a narrow recent window so one chunk is enough.
+        const from = new Date(Math.max(start.getTime(), now.getTime() - 14 * 86400000));
+        const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${fmt(from)}-${fmt(now)}&limit=1000`;
+
+        let data = null;
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          kv('HTTP', String(res.status), res.ok ? 'ok' : 'err');
+          if (!res.ok) continue;
+          data = await res.json();
+        } catch (e) {
+          kv('fetch', 'failed — ' + e.message, 'err');
+          continue;
+        }
+
+        const events = data.events || [];
+        kv('events returned', String(events.length), events.length ? 'ok' : 'err');
+        if (!events.length) {
+          out('    → ESPN returned nothing for this range. If the range is', 'warn');
+          out('      valid, the request itself is malformed.', 'warn');
+          continue;
+        }
+
+        // Walk the same filters the engine applies.
+        let preseason = 0, notDone = 0, noScore = 0, usable = 0;
+        events.forEach(e => {
+          const comp = e.competitions?.[0];
+          if (!comp) return;
+          const type = e.season?.type ?? comp.season?.type;
+          if (type === 1) { preseason++; return; }
+          if (comp.status?.type?.completed !== true) { notDone++; return; }
+          const cs = comp.competitors || [];
+          if (cs.length < 2 || cs.some(c => c.score === null || c.score === undefined || c.score === '')) { noScore++; return; }
+          usable++;
+        });
+
+        out('      preseason dropped   ' + preseason);
+        out('      not yet final       ' + notDone);
+        out('      missing a score     ' + noScore);
+        kv('usable for rating', String(usable), usable ? 'ok' : 'err');
+
+        if (usable && !best) best = sport;
+        if (!usable) {
+          out('    → Every event was filtered out. In-season but nothing', 'warn');
+          out('      completed yet is normal in week 1.', 'warn');
+        }
+
+        const sample = events[0];
+        const c = sample.competitions?.[0]?.competitors || [];
+        if (c.length >= 2) {
+          out('      sample: ' + (c[1].team?.displayName || '?') + ' ' + (c[1].score ?? '-') +
+              '  @  ' + (c[0].team?.displayName || '?') + ' ' + (c[0].score ?? '-') +
+              '  · final=' + (sample.competitions[0].status?.type?.completed === true) +
+              ' · seasonType=' + (sample.season?.type ?? '?'));
+        }
+      }
+
+      return best;
+    }
+
+    // ── 3. Run the real build and capture everything it says ──
+    async function probeStep3_Build(sport) {
+      section('3. LIVE BUILD — ' + sport);
+      out('  Running computeAllTeamRatings with progress captured.');
+      out('  This is the same call the Admin button makes.');
+      out('');
+
+      const log = [];
+      let result;
+      try {
+        result = await window.EDGE_POWER.computeAllTeamRatings({
+          onProgress: m => { log.push(m); out('    ' + m); },
+        });
+      } catch (e) {
+        out('');
+        bad('THREW', e.message);
+        (e.stack || '').split('\n').slice(0, 4).forEach(l => out('      ' + l, 'err'));
+        return;
+      }
+
+      if (!log.length) {
+        out('    (no progress reported — the deployed build predates progress logging)', 'warn');
+      }
+
+      out('');
+      section('RESULT');
+      const teamCount = Object.keys(result.teams || {}).length;
+      kv('teams rated', String(teamCount), teamCount ? 'ok' : 'err');
+      kv('coaches rated', String(Object.keys(result.coaching || {}).length), 'ok');
+
+      if (result.games_used) {
+        Object.entries(result.games_used).forEach(([s, n]) => {
+          out('      ' + s.padEnd(7) + n + ' games fetched · ' + (result.counts?.[s] ?? 0) + ' teams rated',
+              n ? 'ok' : 'err');
+        });
+      }
+
+      if (result.skipped?.length) kv('skipped (out of season)', result.skipped.join(', '), 'ok');
+
+      if (result.errors?.length) {
+        out('');
+        out('  ERRORS', 'err');
+        result.errors.forEach(e => out('    · ' + (e.sport || '') + ': ' + e.error, 'err'));
+      }
+
+      if (result.persist) {
+        out('');
+        out('  PERSIST', 'section-title');
+        kv('rows written', String(result.persist.teams_written ?? 0),
+           result.persist.teams_written ? 'ok' : 'err');
+        if (result.persist.dropped_columns?.length) {
+          out('      columns dropped: ' + result.persist.dropped_columns.join(' | '), 'warn');
+          out('      → run rating-schema.sql to add them and keep the detail', 'warn');
+        }
+        (result.persist.errors || []).forEach(e => out('      ' + e, 'err'));
+      }
+
+      // A rated team, in full, so the fields can be eyeballed.
+      const first = Object.values(result.teams || {})[0];
+      if (first) {
+        out('');
+        out('  SAMPLE TEAM', 'section-title');
+        ['team_name', 'sport', 'overall', 'glicko_rating', 'glicko_rd', 'massey', 'colley',
+         'composite_points', 'attack', 'def_rate', 'games_played', 'record'].forEach(k => {
+          out('      ' + k.padEnd(18) + (first[k] ?? '—'));
+        });
+        if (first.glicko_rating == null) {
+          out('      → Glicko fields are null. rating-core.js did not run.', 'warn');
+        }
+      }
+    }
 
     // ============================================================
     // TABLE PREFLIGHT
