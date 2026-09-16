@@ -63,8 +63,20 @@
   </style>
 </head>
 <body>
+  <nav>
+    <div class="logo-mark">ED</div>
+    <div class="logo-text">EDGE · DIAGNOSTIC</div>
+    <button id="ham" aria-label="Menu"
+            style="margin-left:auto;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:10px;">
+      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
+      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
+      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
+    </button>
+  </nav>
+
   <div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:98;opacity:0;pointer-events:none;transition:opacity .3s;"></div>
-  <div id="drawer" style="position:fixed;top:60px;right:0;width:270px;height:calc(100vh - 60px);background:#0F0F0F;border-left:1px solid var(--border);z-index:99;transform:translateX(100%);transition:transform .3s;overflow-y:auto;padding-bottom:30px;">
+
+  <div id="drawer" style="position:fixed;top:60px;right:0;width:270px;height:calc(100vh - 60px);background:#0F0F0F;border-left:1px solid var(--border);z-index:101;transform:translateX(100%);transition:transform .3s;overflow-y:auto;padding-bottom:40px;">
     <a href="index.html" class="dl">Dashboard</a>
     <a href="matchups.html" class="dl">Live Matchups</a>
     <a href="picks.html" class="dl">Today's Picks</a>
@@ -82,38 +94,41 @@
     <a href="admin.html" class="dl">Admin</a>
     <a href="diagnostic.html" class="dl" style="color:var(--gold);border-left-color:var(--gold);">Diagnostic</a>
   </div>
+
   <style>
     .dl { display:block; padding:12px 20px; font-family:'Barlow Condensed',sans-serif; font-size:15px;
           font-weight:700; letter-spacing:2px; text-transform:uppercase; color:#A89878;
           text-decoration:none; border-left:2px solid transparent; }
-    .dl:hover { color:var(--gold); border-left-color:var(--gold); background:rgba(201,168,76,0.10); }
+    .dl:hover, .dl:active { color:var(--gold); border-left-color:var(--gold); background:rgba(201,168,76,0.10); }
     body { padding-top:60px; }
+    .cred-panel { margin:0 0 18px; padding:14px 16px; background:#1A1206; border:1px solid var(--gold-dim); border-radius:2px; }
+    .cred-panel h4 { font-family:'Barlow Condensed',sans-serif; font-size:12px; letter-spacing:2.5px;
+                     text-transform:uppercase; color:var(--gold); margin:0 0 10px; }
+    .cred-panel input { width:100%; background:#0B0B0B; border:1px solid var(--border); color:var(--text);
+                        font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; padding:9px 10px;
+                        margin-bottom:8px; border-radius:2px; }
+    .cred-panel .row { display:flex; gap:8px; }
+    .cred-panel button { flex:1; background:var(--gold); border:none; color:#000;
+                         font-family:'Barlow Condensed',sans-serif; font-size:12px; font-weight:700;
+                         letter-spacing:2px; text-transform:uppercase; padding:10px; cursor:pointer; border-radius:2px; }
+    .cred-panel button.ghost { background:#222; color:var(--text-dim); border:1px solid var(--border); }
+    .cred-msg { font-size:12px; color:var(--text-dim); margin-top:8px; line-height:1.5; }
   </style>
-  <script>
-    (function(){
-      var h=document.getElementById('ham'), d=document.getElementById('drawer'), o=document.getElementById('overlay');
-      function t(){ var open=d.style.transform==='translateX(0px)';
-        d.style.transform=open?'translateX(100%)':'translateX(0px)';
-        o.style.opacity=open?'0':'1'; o.style.pointerEvents=open?'none':'all'; }
-      h.addEventListener('click',t); o.addEventListener('click',t);
-    })();
-  </script>
-
-
-  <nav>
-    <div class="logo-mark">ED</div>
-    <div class="logo-text">EDGE · DIAGNOSTIC</div>
-    <button id="ham" aria-label="Menu"
-            style="margin-left:auto;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:8px;">
-      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
-      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
-      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
-    </button>
-  </nav>
 
   <main>
     <div class="header">
       <div class="title">FULL <em>DIAGNOSTIC</em></div>
+      <div class="cred-panel" id="credPanel" style="display:none;">
+        <h4>Supabase credentials missing</h4>
+        <input id="dgUrl" placeholder="https://yourproject.supabase.co" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <input id="dgKey" placeholder="anon public key (eyJhbGciOi…)" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <div class="row">
+          <button onclick="saveCreds()">Save</button>
+          <button class="ghost" onclick="testCreds()">Test</button>
+        </div>
+        <div class="cred-msg" id="credMsg">Nothing can be saved to the database without these. Entering them here writes to the same place Settings does.</div>
+      </div>
+
       <div class="btn-bar">
         <button class="btn" id="ratingsBtn" onclick="runRatingsProbe()">▲ RATINGS PROBE</button>
         <button class="btn" id="backfillBtn" onclick="runBackfill()">⟲ BACKFILL &amp; CALIBRATE</button>
@@ -2364,6 +2379,67 @@ create policy "${spec.name}_anon_all" on public.${spec.name}
     }
 
     render();
+  </script>
+  <script>
+    // Bound at the end of the document. An earlier version of this ran
+    // before the button was parsed, so getElementById returned null and
+    // the handler was never attached.
+    (function () {
+      var h = document.getElementById('ham');
+      var d = document.getElementById('drawer');
+      var o = document.getElementById('overlay');
+      if (!h || !d || !o) return;
+      var open = false;
+      function toggle() {
+        open = !open;
+        d.style.transform = open ? 'translateX(0)' : 'translateX(100%)';
+        o.style.opacity = open ? '1' : '0';
+        o.style.pointerEvents = open ? 'all' : 'none';
+      }
+      h.addEventListener('click', toggle);
+      o.addEventListener('click', toggle);
+    })();
+
+    // ── CREDENTIALS ──
+    function credPanelSync() {
+      var panel = document.getElementById('credPanel');
+      if (!panel) return;
+      var url = localStorage.getItem('edge_supabase_url');
+      var key = localStorage.getItem('edge_supabase_key');
+      panel.style.display = (url && key) ? 'none' : 'block';
+      if (url) document.getElementById('dgUrl').value = url;
+      if (key) document.getElementById('dgKey').value = key;
+    }
+
+    function saveCreds() {
+      var url = document.getElementById('dgUrl').value.trim().replace(/\/+$/, '');
+      var key = document.getElementById('dgKey').value.trim();
+      var msg = document.getElementById('credMsg');
+      if (!url || !key) { msg.textContent = 'Both fields are required.'; return; }
+      localStorage.setItem('edge_supabase_url', url);
+      localStorage.setItem('edge_supabase_key', key);
+      msg.textContent = 'Saved. Testing…';
+      testCreds();
+    }
+
+    async function testCreds() {
+      var url = (document.getElementById('dgUrl').value || '').trim().replace(/\/+$/, '');
+      var key = (document.getElementById('dgKey').value || '').trim();
+      var msg = document.getElementById('credMsg');
+      if (!url || !key) { msg.textContent = 'Enter both first.'; return; }
+      try {
+        var res = await fetch(url + '/rest/v1/power_ratings?select=id&limit=1',
+          { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+        if (res.ok) { msg.textContent = 'Connected. Saved and working.'; credPanelSync(); }
+        else {
+          var body = await res.text().catch(function () { return ''; });
+          msg.textContent = 'HTTP ' + res.status + ' — ' +
+            (/invalid api key/i.test(body) ? 'that key is not valid for this project.' : body.slice(0, 120));
+        }
+      } catch (e) { msg.textContent = 'Unreachable — ' + e.message; }
+    }
+
+    credPanelSync();
   </script>
 </body>
 </html>
