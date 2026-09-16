@@ -13,6 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="rating-core.js"></script>
+  <script src="backfill.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -115,6 +116,7 @@
       <div class="title">FULL <em>DIAGNOSTIC</em></div>
       <div class="btn-bar">
         <button class="btn" id="ratingsBtn" onclick="runRatingsProbe()">▲ RATINGS PROBE</button>
+        <button class="btn" id="backfillBtn" onclick="runBackfill()">⟲ BACKFILL &amp; CALIBRATE</button>
         <button class="btn" id="preflightBtn" onclick="runPreflight()">◈ TABLE PREFLIGHT</button>
         <button class="btn" id="flowBtn" onclick="runWorkflow()">▶ TEST WORKFLOW</button>
         <button class="btn" id="verifyBtn" onclick="runVerify()">✓ VERIFY DEPLOY</button>
@@ -166,6 +168,113 @@
 
 
 
+
+
+    // ============================================================
+    // BACKFILL & CALIBRATION
+    // Long-running. Walks several completed seasons per sport to seed
+    // carry-over, measure projection error on unseen games, and fit
+    // the constants every projection depends on.
+    // ============================================================
+
+    async function runBackfill() {
+      if (!window.EDGE_BACKFILL) {
+        showToast('backfill.js not loaded', true);
+        return;
+      }
+      const sports = prompt(
+        'Sports to backfill (comma separated).\nFewer is faster — each season is a full historical fetch.',
+        'NFL') || '';
+      const list = sports.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (!list.length) return;
+
+      const seasons = parseInt(prompt('How many completed seasons per sport?', '3') || '3', 10) || 3;
+
+      lines.length = 0;
+      document.getElementById('backfillBtn').disabled = true;
+      setStatus('Backfilling — this takes minutes…', true);
+
+      out('EDGE BACKFILL & CALIBRATION');
+      out('Generated: ' + new Date().toISOString());
+      out('Sports: ' + list.join(', ') + ' · ' + seasons + ' seasons each');
+      out('');
+      out('Walk-forward: ratings are built only from games before each');
+      out('step, then the next step is projected and the miss recorded.');
+      out('Nothing is scored against games it already absorbed.');
+
+      let result;
+      try {
+        result = await window.EDGE_BACKFILL.run({
+          sports: list, seasons,
+          onProgress: m => { out(m); render(); },
+        });
+      } catch (e) {
+        bad('THREW', e.message);
+        document.getElementById('backfillBtn').disabled = false;
+        setStatus('Failed', false);
+        render();
+        return;
+      }
+
+      section('CALIBRATION RESULTS');
+      if (!result.ok) {
+        bad('Failed', result.error);
+      } else {
+        Object.entries(result.sports).forEach(([sport, r]) => {
+          out('');
+          out('  ── ' + sport, 'section-title');
+          if (!r.ok) { bad('failed', r.error); return; }
+
+          const c = r.constants, e = r.error;
+          out('      games used          ' + r.total_games);
+          out('      seasons             ' + r.seasons.map(s => s.season).join(', '));
+          out('');
+          ok('home advantage', c.home_advantage + '  (was using ' + c.default_home_advantage + ')');
+          ok('avg total', String(c.avg_total));
+          ok('margin sd', String(c.margin_sd));
+          ok('margin scale', c.margin_scale + '  (was using ' + c.default_margin_scale + ')');
+          out('');
+          if (e.sigma == null) {
+            warn('projection error', 'not enough walk-forward games to measure');
+          } else {
+            ok('projection sigma', e.sigma + ' points on ' + e.n + ' unseen games');
+            ok('mean abs error', String(e.mae));
+            const biasBad = Math.abs(e.bias) > 1;
+            out('   ' + (biasBad ? '!' : '\u2713') + ' ' + 'bias'.padEnd(30) + e.bias +
+                (biasBad ? '  — systematically off, worth investigating' : '  — no systematic lean'),
+                biasBad ? 'warn' : 'ok');
+
+            if (e.sigma_settled && e.sigma_unsettled) {
+              out('');
+              out('      settled ratings   sigma ' + e.sigma_settled + ' on ' + e.settled_n + ' games');
+              out('      unsettled ratings sigma ' + e.sigma_unsettled + ' on ' + e.unsettled_n + ' games');
+              if (e.sigma_settled < e.sigma_unsettled) {
+                out('      → Error falls as ratings settle. Rating deviation is', 'ok');
+                out('        carrying real information.', 'ok');
+              } else {
+                out('      → Error does NOT fall as ratings settle. The deviation', 'warn');
+                out('        is not telling you what it claims to.', 'warn');
+              }
+            }
+
+            out('');
+            out('      What this means for a bet:', 'section-title');
+            const sd = e.sigma_settled ?? e.sigma;
+            [[3, 5.5], [3, 7], [7, 10]].forEach(([spread, proj]) => {
+              const cp = window.EDGE_RATING.coverProbability(proj, -spread, sd);
+              out('        project home by ' + proj + ', market -' + spread +
+                  '  →  ' + cp.side + ' ' + (cp.probability * 100).toFixed(1) + '%' +
+                  (cp.beats_vig ? '  clears -110' : '  below break-even'));
+            });
+            out('        Break-even at -110 juice is 52.4%.');
+          }
+        });
+      }
+
+      setStatus('Done · ' + new Date().toLocaleTimeString(), false);
+      document.getElementById('backfillBtn').disabled = false;
+      render();
+    }
 
     // ============================================================
     // RATINGS PROBE
