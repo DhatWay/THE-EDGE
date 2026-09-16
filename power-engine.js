@@ -8,7 +8,7 @@ const EDGE_POWER = (() => {
 
   // Build stamp. Printed by the diagnostic so there is never any doubt
   // about which copy of this file the browser is actually running.
-  const BUILD = 'pe-20260916-0405';
+  const BUILD = 'pe-20260916-0419';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -211,8 +211,17 @@ const EDGE_POWER = (() => {
         const srsMap = core ? {} : computeSRS(sport, teamMap);
         const eloMap = core ? {} : computeElo(sport, chronological);
 
+        // Conference all-star sides appear in the schedule and are not
+        // teams. They show up with a handful of games and skew a league.
+        const gameCounts = Array.from(teamMap.values()).map(s => s.games).sort((a, b) => a - b);
+        const median = gameCounts[Math.floor(gameCounts.length / 2)] || 1;
+
         for (const [teamName, state] of teamMap) {
           if (state.games < 1) continue;
+          if (isAllStarSide(teamName, state.games, median)) {
+            emit(`${sport}: excluding ${teamName} (${state.games} games — all-star side)`);
+            continue;
+          }
           const rating = buildRating(sport, teamName, state, {
             srs: srsMap[teamName],
             elo: eloMap[teamName],
@@ -355,6 +364,14 @@ const EDGE_POWER = (() => {
     // single date always is, so walk the window a day at a time.
     _espnShape.dayFallback = true;
     return fetchDayByDay(base, start, end, group);
+  }
+
+  // A real team plays a full schedule. An all-star side plays once.
+  const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
+
+  function isAllStarSide(name, games, medianGames) {
+    if (ALL_STAR_NAMES.test(name)) return true;
+    return medianGames >= 8 && games <= Math.max(2, medianGames * 0.15);
   }
 
   function collegeGroup(path) {
@@ -859,11 +876,20 @@ const EDGE_POWER = (() => {
       // error, so it is a probability rather than a direction.
       cover: (core && projection && marketSpread !== null)
         ? core.coverProbability(projection.margin, marketSpread,
-            calib?.sigma_settled ?? calib?.projection_sigma ?? null)
+            calib?.sigma_settled ?? calib?.projection_sigma ?? null,
+            {
+              // Once the model has been measured against closing lines,
+              // its disagreement is shrunk by the weight that measurement
+              // earned. Without this the probability is inflated.
+              lambda: calib?.market_lambda ?? null,
+              blendSigma: calib?.blend_sigma ?? null,
+            })
         : null,
       calibrated: !!calib,
       calibration_note: calib
-        ? `sigma ${calib.sigma_settled ?? calib.projection_sigma} from ${calib.sample_residuals} unseen games`
+        ? (calib.market_lambda != null
+            ? `lambda ${calib.market_lambda} vs the close · blend sigma ${calib.blend_sigma} on ${calib.market_sample} games`
+            : `sigma ${calib.sigma_settled ?? calib.projection_sigma} from ${calib.sample_residuals} unseen games — NOT yet measured against closing lines`)
         : 'no backfill on file — using compiled defaults',
       raw_edge: rawEdge,
       prior_home_prob: round(priorHomeProb, 4),
