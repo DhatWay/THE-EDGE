@@ -121,6 +121,10 @@ const EDGE_BACKFILL = (() => {
     for (const w of windows) {
       log(`  ${w.label}: fetching ${fmt(w.from)} → ${fmt(w.to)}`);
       const games = await P.fetchGamesBetween(sport, w.from, w.to);
+      const closing = await loadClosingLines(sport, w.from, w.to);
+      if (Object.keys(closing).length) {
+        log(`  ${w.label}: ${Object.keys(closing).length} closing lines on file`);
+      }
       const regular = games.filter(g => g.importance !== 'preseason');
       log(`  ${w.label}: ${regular.length} games`);
 
@@ -133,7 +137,7 @@ const EDGE_BACKFILL = (() => {
       allGames.push(...regular);
 
       // ── Walk forward, measuring error on unseen games ──
-      const seasonResiduals = walkForward(sport, regular, seed, R, log);
+      const seasonResiduals = walkForward(sport, regular, seed, R, log, closing);
       residuals.push(...seasonResiduals);
 
       // ── Final state of this season seeds the next ──
@@ -161,13 +165,32 @@ const EDGE_BACKFILL = (() => {
     // ── Error, from the walk-forward residuals only ──
     const error = summariseResiduals(residuals);
 
+    // ── Information beyond the closing line ──
+    // Error against the final margin says how accurate the model is.
+    // It says nothing about whether it beats the market, because the
+    // market is accurate too. This is the measure that matters.
+    const paired = residuals
+      .filter(x => x.market != null)
+      .map(x => ({ model: x.projected, market: x.market, actual: x.actual }));
+
+    const blend = paired.length >= 100
+      ? R.fitMarketBlend(paired)
+      : { ok: false, reason: `only ${paired.length} games have a closing line — run Build ATS first` };
+
+    if (blend.ok) {
+      log(`  vs market: model sigma ${blend.model_sigma} · market sigma ${blend.market_sigma}`);
+      log(`  lambda ${blend.lambda} — ${blend.verdict}`);
+    } else {
+      log(`  vs market: ${blend.reason}`);
+    }
+
     log(`  constants: home edge ${constants.home_advantage} (default ${constants.default_home_advantage})` +
         ` · margin sd ${constants.margin_sd}`);
     log(`  projection error: sigma ${error.sigma ?? 'n/a'} on ${error.n} unseen games`);
 
-    await saveCalibration(sport, constants, error, perSeason, log);
+    await saveCalibration(sport, constants, error, perSeason, log, blend);
 
-    return { ok: true, seasons: perSeason, constants, error, total_games: allGames.length };
+    return { ok: true, seasons: perSeason, constants, error, blend, total_games: allGames.length };
   }
 
   // ============================================================
@@ -177,7 +200,7 @@ const EDGE_BACKFILL = (() => {
   // from a game the ratings have already absorbed.
   // ============================================================
 
-  function walkForward(sport, games, seed, R, log) {
+  function walkForward(sport, games, seed, R, log, closing = {}) {
     const step = STEP_DAYS[sport] ?? 7;
     const minPrior = MIN_PRIOR_GAMES[sport] ?? 50;
     const out = [];
@@ -214,10 +237,16 @@ const EDGE_BACKFILL = (() => {
           const proj = R.projectScore(sport, h, a, league, { neutral: g.neutral });
           if (!proj) return;
           const actual = g.homeScore - g.awayScore;
+          // Market margin from the home side: a -3 spread is +3.
+          const close = closing[g.id];
+          const marketMargin = (close != null && isFinite(close)) ? -close : null;
+
           out.push({
             projected: proj.margin,
             actual,
             residual: actual - proj.margin,
+            market: marketMargin,
+            market_residual: marketMargin != null ? actual - marketMargin : null,
             projected_total: proj.total,
             actual_total: g.homeScore + g.awayScore,
             home_rd: state[g.home]?.rd ?? null,
@@ -336,7 +365,24 @@ const EDGE_BACKFILL = (() => {
     }
   }
 
-  async function saveCalibration(sport, constants, error, perSeason, log) {
+  // Closing lines for a window, keyed by game id.
+  async function loadClosingLines(sport, from, to) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    const out = {};
+    if (!url || !key) return out;
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=game_id,spread` +
+        `&game_date=gte.${from.toISOString()}&game_date=lte.${to.toISOString()}&limit=20000`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (res.ok) {
+        (await res.json()).forEach(r => { if (r.spread != null) out[r.game_id] = r.spread; });
+      }
+    } catch {}
+    return out;
+  }
+
+  async function saveCalibration(sport, constants, error, perSeason, log, blend = null) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     if (!url || !key) return false;
 
@@ -356,6 +402,16 @@ const EDGE_BACKFILL = (() => {
       sample_games: constants.games ?? null,
       sample_residuals: error.n ?? null,
       seasons_used: perSeason.map(s => s.season).join(','),
+
+      // Market comparison. Until these are populated a cover
+      // probability is the model marking its own homework.
+      market_lambda: blend?.ok ? blend.lambda : null,
+      market_sigma: blend?.ok ? blend.market_sigma : null,
+      blend_sigma: blend?.ok ? blend.blend_sigma : null,
+      beats_market: blend?.ok ? blend.beats_market : null,
+      market_sample: blend?.ok ? blend.n : null,
+      market_verdict: blend?.ok ? blend.verdict : (blend?.reason || null),
+
       updated_at: new Date().toISOString(),
     };
 
