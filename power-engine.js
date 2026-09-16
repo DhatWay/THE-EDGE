@@ -8,7 +8,7 @@ const EDGE_POWER = (() => {
 
   // Build stamp. Printed by the diagnostic so there is never any doubt
   // about which copy of this file the browser is actually running.
-  const BUILD = 'pe-20260915-2325';
+  const BUILD = 'pe-20260916-0405';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -657,9 +657,6 @@ const EDGE_POWER = (() => {
       record: rec,
       home_record: homeRec,
       away_record: awayRec,
-      wins: state.wins,
-      losses: state.losses,
-      draws: state.draws,
       last5_form: round(formScore, 2),
       games_played: games,
       raw_stats: {
@@ -1101,7 +1098,23 @@ const EDGE_POWER = (() => {
     // 2. Prove the insert works before deleting anything.
     const chunkSize = 200;
     const first = payload.slice(0, chunkSize);
-    const probe = await postDroppingUnknown(url, table, headers, first, report, emit);
+    let probe = await postDroppingUnknown(url, table, headers, first, report, emit);
+
+    // A unique constraint is not a schema rejection. Reaching 23505
+    // proves the payload is valid and only the previous run is in the
+    // way — coaching_ratings has a unique index on (team_id, sport),
+    // so inserting before clearing always collided. Clearing first is
+    // safe in this one case precisely because the insert got that far.
+    if (!probe.ok && probe.status === 409) {
+      emit(`${table}: unique constraint — clearing previous run and retrying`);
+      try {
+        await fetch(`${url}/rest/v1/${table}?sport=not.is.null`, {
+          method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
+        });
+      } catch {}
+      probe = await postDroppingUnknown(url, table, headers, first, report, emit);
+    }
+
     if (!probe.ok) {
       report.errors.push(`${table}: insert rejected (HTTP ${probe.status}) ${String(probe.body).slice(0, 200)}`);
       emit(`${table}: insert rejected — existing rows left in place`);
@@ -1121,9 +1134,14 @@ const EDGE_POWER = (() => {
 
     // 3. The insert works, so the rest can follow.
     for (let i = chunkSize; i < payload.length; i += chunkSize) {
-      const res = await post(url, table, headers, payload.slice(i, i + chunkSize));
-      if (res.ok) written += Math.min(chunkSize, payload.length - i);
-      else report.errors.push(`${table}: chunk ${i} HTTP ${res.status}`);
+      const slice = payload.slice(i, i + chunkSize);
+      let res = await post(url, table, headers, slice);
+      if (!res.ok && res.status === 409) {
+        res = await post(url, table,
+          { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' }, slice);
+      }
+      if (res.ok) written += slice.length;
+      else report.errors.push(`${table}: chunk ${i} HTTP ${res.status} ${String(res.body).slice(0, 140)}`);
     }
 
     // 4. Only now remove the previous run. Anything not stamped with
