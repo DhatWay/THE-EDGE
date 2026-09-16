@@ -78,6 +78,9 @@ const EDGE_RATING = (() => {
 
   return {
     BUILD,
+    coverProbability,
+    normalCdf,
+    fitConstants,
     rateGlicko,
     massey,
     colley,
@@ -508,10 +511,11 @@ const EDGE_RATING = (() => {
   // ============================================================
 
   function projectScore(sport, homeAD, awayAD, league, options = {}) {
-    const { neutral = false, paceAdjust = true, interactions = null } = options;
+    const { neutral = false, paceAdjust = true, interactions = null, homeAdvantage = null } = options;
     if (!homeAD || !awayAD || !league) return null;
 
-    const hfa = neutral ? 0 : (HOME_POINTS[sport] ?? 2);
+    // A measured home edge beats a compiled one.
+    const hfa = neutral ? 0 : (homeAdvantage ?? HOME_POINTS[sport] ?? 2);
     const poss = league.possessions || POSSESSIONS[sport] || 100;
     const lg = league.per_possession;
 
@@ -557,6 +561,113 @@ const EDGE_RATING = (() => {
       possessions: round(gamePoss, 1),
       interactions: applied,
     };
+  }
+
+  // ============================================================
+  // ── COVER PROBABILITY ──
+  // A margin is a direction. This turns it into the only question a
+  // spread actually asks: how often does this side beat that number?
+  //
+  // Projection error is roughly normal around the projected margin,
+  // so the probability of covering is the area of that distribution
+  // beyond the spread. sigma is the model's own standard error,
+  // measured by the backfill — not guessed.
+  // ============================================================
+
+  function coverProbability(projectedMargin, marketSpreadHome, sigma, options = {}) {
+    if (!isFinite(projectedMargin) || !isFinite(marketSpreadHome)) return null;
+    const sd = (isFinite(sigma) && sigma > 0) ? sigma : 13.5;   // NFL-ish default
+    const { push = 0.5 } = options;
+
+    // Market spread is quoted from the home side: -3 means home gives 3.
+    // Home covers when its actual margin exceeds that number.
+    const needed = -marketSpreadHome;
+    const z = (projectedMargin - needed) / sd;
+    let pHome = normalCdf(z);
+
+    // A whole number can push, which is neither side's win.
+    if (Number.isInteger(needed)) {
+      const pPush = normalPdf((needed - projectedMargin) / sd) / sd;
+      pHome = pHome - pPush * push;
+    }
+
+    const p = clamp(pHome, 0.01, 0.99);
+    return {
+      home_cover: round(p, 4),
+      away_cover: round(1 - p, 4),
+      side: p > 0.5 ? 'home' : 'away',
+      probability: round(Math.max(p, 1 - p), 4),
+      edge_points: round(projectedMargin - needed, 2),
+      sigma: round(sd, 2),
+      // Break-even at standard -110 juice.
+      beats_vig: Math.max(p, 1 - p) > 0.5238,
+      z: round(z, 3),
+    };
+  }
+
+  // Abramowitz and Stegun 7.1.26 — accurate to about 1e-7.
+  function normalCdf(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989422804014327 * Math.exp(-z * z / 2);
+    const p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+              t * (-1.821255978 + t * 1.330274429))));
+    return z >= 0 ? 1 - p : p;
+  }
+
+  function normalPdf(z) {
+    return 0.3989422804014327 * Math.exp(-z * z / 2);
+  }
+
+  // ============================================================
+  // ── CONSTANT FITTING ──
+  // Home advantage, scoring rate and margin scale are defaults until
+  // they are measured against real results. These are the numbers
+  // every projection depends on, so guessing them is not good enough.
+  // ============================================================
+
+  function fitConstants(sport, games) {
+    if (!games || games.length < 50) {
+      return { ok: false, reason: `only ${games?.length || 0} games — need 50+` };
+    }
+
+    const margins = games.map(g => g.homeScore - g.awayScore);
+    const totals = games.map(g => g.homeScore + g.awayScore);
+    const nonNeutral = games.filter(g => !g.neutral);
+
+    const homeAdvantage = nonNeutral.length
+      ? mean(nonNeutral.map(g => g.homeScore - g.awayScore))
+      : mean(margins);
+
+    const avgTotal = mean(totals);
+    const sdMargin = stdev(margins);
+
+    // The Glicko margin scale sets how much one result moves a rating.
+    // Tie it to observed spread so a sport's own variance decides it.
+    const marginScale = round(sdMargin / 1.8, 2);
+
+    const poss = POSSESSIONS[sport] ?? 100;
+
+    return {
+      ok: true,
+      sport,
+      games: games.length,
+      home_advantage: round(homeAdvantage, 3),
+      avg_total: round(avgTotal, 2),
+      avg_points_per_team: round(avgTotal / 2, 2),
+      points_per_possession: round((avgTotal / 2) / poss, 5),
+      margin_sd: round(sdMargin, 2),
+      margin_scale: marginScale,
+      possessions_assumed: poss,
+      // Defaults currently in force, for comparison.
+      default_home_advantage: HOME_POINTS[sport] ?? null,
+      default_margin_scale: MARGIN_SCALE[sport] ?? null,
+    };
+  }
+
+  function mean(a) { return a.reduce((x, y) => x + y, 0) / a.length; }
+  function stdev(a) {
+    const m = mean(a);
+    return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length);
   }
 
   // ============================================================
