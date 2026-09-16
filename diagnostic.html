@@ -62,16 +62,8 @@
   </style>
 </head>
 <body>
-  <nav style="position:fixed;top:0;left:0;right:0;z-index:100;height:56px;background:rgba(8,8,8,0.97);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 18px;">
-    <a href="index.html" style="text-decoration:none;color:var(--gold);font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:4px;">EDGE</a>
-    <button id="ham" aria-label="Menu" style="background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:6px;">
-      <span style="display:block;width:22px;height:2px;background:var(--gold);"></span>
-      <span style="display:block;width:22px;height:2px;background:var(--gold);"></span>
-      <span style="display:block;width:22px;height:2px;background:var(--gold);"></span>
-    </button>
-  </nav>
   <div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:98;opacity:0;pointer-events:none;transition:opacity .3s;"></div>
-  <div id="drawer" style="position:fixed;top:56px;right:0;width:260px;height:calc(100vh - 56px);background:#0F0F0F;border-left:1px solid var(--border);z-index:99;transform:translateX(100%);transition:transform .3s;overflow-y:auto;padding-bottom:30px;">
+  <div id="drawer" style="position:fixed;top:60px;right:0;width:270px;height:calc(100vh - 60px);background:#0F0F0F;border-left:1px solid var(--border);z-index:99;transform:translateX(100%);transition:transform .3s;overflow-y:auto;padding-bottom:30px;">
     <a href="index.html" class="dl">Dashboard</a>
     <a href="matchups.html" class="dl">Live Matchups</a>
     <a href="picks.html" class="dl">Today's Picks</a>
@@ -94,7 +86,7 @@
           font-weight:700; letter-spacing:2px; text-transform:uppercase; color:#A89878;
           text-decoration:none; border-left:2px solid transparent; }
     .dl:hover { color:var(--gold); border-left-color:var(--gold); background:rgba(201,168,76,0.10); }
-    body { padding-top:56px; }
+    body { padding-top:60px; }
   </style>
   <script>
     (function(){
@@ -110,6 +102,12 @@
   <nav>
     <div class="logo-mark">ED</div>
     <div class="logo-text">EDGE · DIAGNOSTIC</div>
+    <button id="ham" aria-label="Menu"
+            style="margin-left:auto;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:8px;">
+      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
+      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
+      <span style="display:block;width:24px;height:2px;background:var(--gold);"></span>
+    </button>
   </nav>
 
   <main>
