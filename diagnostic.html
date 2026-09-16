@@ -12,6 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="rating-core.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -196,6 +197,17 @@
       out('EDGE RATINGS PROBE');
       out('Generated: ' + new Date().toISOString());
 
+      const sbUrl = localStorage.getItem('edge_supabase_url');
+      const sbKey = localStorage.getItem('edge_supabase_key');
+      if (!sbUrl || !sbKey) {
+        out('');
+        out('  ⚠ SUPABASE CREDENTIALS ARE MISSING', 'err');
+        out('    url ' + (sbUrl ? 'set' : 'MISSING') + ' · key ' + (sbKey ? 'set' : 'MISSING'), 'err');
+        out('    Ratings will compute but cannot be saved. Settings ›', 'warn');
+        out('    Connections. Note that clearing site data in the browser', 'warn');
+        out('    wipes these — the PURGE CACHE button here does not.', 'warn');
+      }
+
       const stop = await probeStep1_Files();
       if (!stop) {
         const sport = await probeStep2_Espn();
@@ -255,7 +267,10 @@
       // The stamp is the only unambiguous answer to "is my deploy live".
       kv('EDGE_POWER build',  window.EDGE_POWER?.BUILD  || 'no stamp — pre-build-stamp copy',
          window.EDGE_POWER?.BUILD ? 'ok' : 'err');
-      kv('EDGE_RATING build', window.EDGE_RATING?.BUILD || 'no stamp — pre-build-stamp copy',
+      kv('EDGE_RATING build',
+         window.EDGE_RATING
+           ? (window.EDGE_RATING.BUILD || 'no stamp — pre-build-stamp copy')
+           : 'module not loaded on this page',
          window.EDGE_RATING?.BUILD ? 'ok' : 'err');
       if (!window.EDGE_POWER?.BUILD) {
         out('    → This copy predates build stamps. If you just deployed,', 'warn');
