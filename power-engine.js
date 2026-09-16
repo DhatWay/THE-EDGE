@@ -78,6 +78,12 @@ const EDGE_POWER = (() => {
   // temporal dead zone and throws the first time it is touched.
   const _espnShape = { chosen: null, dayFallback: false };
 
+  // Measured constants from the backfill, loaded once per session.
+  // Until a backfill has run this stays empty and the compiled
+  // defaults apply — which is why a projection is only as honest as
+  // the calibration behind it.
+  const _calibration = { loaded: false, bySport: {} };
+
   return {
     computeGamePrior,
     computeAllTeamRatings,
@@ -89,6 +95,10 @@ const EDGE_POWER = (() => {
     getCoachingRating,
     getGamePrior,
     BUILD,
+    loadCalibrationOnce,
+    getCalibration,
+    fetchGamesBetween,
+    parseEvents,
     isSportInSeason,
     seasonStart,
     loadCarryover,
@@ -764,10 +774,14 @@ const EDGE_POWER = (() => {
           possessions: awayStats.possessions || (core?.POSSESSIONS?.[sport] ?? 100) }
       : null;
 
+    const calib = getCalibration(sport);
+
     if (core && homeAD && awayAD && options.league) {
       projection = core.projectScore(sport, homeAD, awayAD, options.league, {
         neutral: game.neutral === true,
         interactions: options.interactions || null,
+        // Measured from real results when a backfill has run.
+        homeAdvantage: calib?.home_advantage ?? null,
       });
       if (projection) modelSpread = projection.model_spread;
     }
@@ -842,6 +856,18 @@ const EDGE_POWER = (() => {
       defense_matchup: defenseMatchup,
       model_spread: totalModelSpread,
       projection,
+
+      // The only question a spread actually asks: how often does this
+      // side beat that number? Answered from the model's own measured
+      // error, so it is a probability rather than a direction.
+      cover: (core && projection && marketSpread !== null)
+        ? core.coverProbability(projection.margin, marketSpread,
+            calib?.sigma_settled ?? calib?.projection_sigma ?? null)
+        : null,
+      calibrated: !!calib,
+      calibration_note: calib
+        ? `sigma ${calib.sigma_settled ?? calib.projection_sigma} from ${calib.sample_residuals} unseen games`
+        : 'no backfill on file — using compiled defaults',
       raw_edge: rawEdge,
       prior_home_prob: round(priorHomeProb, 4),
       rating_home_prob: ratingProb != null ? round(ratingProb, 4) : null,
@@ -854,6 +880,76 @@ const EDGE_POWER = (() => {
       },
       computed_at: new Date().toISOString(),
     };
+  }
+
+  // ============================================================
+  // ── CALIBRATION ──
+  // ============================================================
+
+  async function loadCalibrationOnce(force = false) {
+    if (_calibration.loaded && !force) return _calibration.bySport;
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) { _calibration.loaded = true; return _calibration.bySport; }
+    try {
+      const res = await fetch(`${url}/rest/v1/model_calibration?limit=20`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+      if (res.ok) {
+        (await res.json()).forEach(r => { _calibration.bySport[r.sport] = r; });
+      }
+    } catch {}
+    _calibration.loaded = true;
+    return _calibration.bySport;
+  }
+
+  function getCalibration(sport) { return _calibration.bySport[sport] || null; }
+
+  // ============================================================
+  // ── PUBLIC FETCH ──
+  // The backfill needs history over arbitrary windows and must not
+  // reimplement the ESPN quirks solved here.
+  // ============================================================
+
+  async function fetchGamesBetween(sport, startDate, endDate, options = {}) {
+    const path = ESPN_MAP[sport];
+    if (!path) return [];
+    const { raw = false } = options;
+    const events = await fetchSeasonEvents(sport, path, new Date(startDate), new Date(endDate));
+    return raw ? events : parseEvents(sport, events);
+  }
+
+  // Flatten ESPN events into the shape the rating core consumes.
+  function parseEvents(sport, events) {
+    const out = [];
+    (events || []).forEach(e => {
+      const comp = e.competitions?.[0];
+      if (!comp) return;
+      const home = comp.competitors?.find(c => c.homeAway === 'home');
+      const away = comp.competitors?.find(c => c.homeAway === 'away');
+      if (!home || !away) return;
+      const hs = parseInt(home.score, 10), as = parseInt(away.score, 10);
+      if (!isFinite(hs) || !isFinite(as)) return;
+      const hn = home.team?.displayName, an = away.team?.displayName;
+      if (!hn || !an) return;
+
+      out.push({
+        id: String(e.id),
+        date: e.date,
+        home: hn, away: an,
+        homeScore: hs, awayScore: as,
+        neutral: comp.neutralSite === true,
+        importance: importanceOf(e, comp),
+      });
+    });
+    return out.sort((a, b) => new Date(a.date) - new Date(b.date));
+  }
+
+  // Season type 3 is the postseason; those results carry more weight.
+  function importanceOf(e, comp) {
+    const type = e.season?.type ?? comp?.season?.type;
+    if (type === 3) return 'playoff';
+    if (type === 1) return 'preseason';
+    return 'regular';
   }
 
   // ============================================================
