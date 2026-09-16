@@ -79,6 +79,8 @@ const EDGE_RATING = (() => {
   return {
     BUILD,
     coverProbability,
+    anchorToMarket,
+    fitMarketBlend,
     normalCdf,
     fitConstants,
     rateGlicko,
@@ -576,18 +578,29 @@ const EDGE_RATING = (() => {
 
   function coverProbability(projectedMargin, marketSpreadHome, sigma, options = {}) {
     if (!isFinite(projectedMargin) || !isFinite(marketSpreadHome)) return null;
-    const sd = (isFinite(sigma) && sigma > 0) ? sigma : 13.5;   // NFL-ish default
-    const { push = 0.5 } = options;
+    const { push = 0.5, lambda = null, blendSigma = null } = options;
 
     // Market spread is quoted from the home side: -3 means home gives 3.
     // Home covers when its actual margin exceeds that number.
     const needed = -marketSpreadHome;
-    const z = (projectedMargin - needed) / sd;
+
+    // When a market blend has been fitted, the number that gets bet is
+    // the anchored one, not the raw projection. Skipping this step is
+    // what makes an unvalidated model look like it has edge.
+    const anchored = (lambda != null)
+      ? anchorToMarket(projectedMargin, needed, lambda)
+      : projectedMargin;
+
+    const sd = (isFinite(blendSigma) && blendSigma > 0) ? blendSigma
+             : (isFinite(sigma) && sigma > 0) ? sigma
+             : 13.5;
+
+    const z = (anchored - needed) / sd;
     let pHome = normalCdf(z);
 
     // A whole number can push, which is neither side's win.
     if (Number.isInteger(needed)) {
-      const pPush = normalPdf((needed - projectedMargin) / sd) / sd;
+      const pPush = normalPdf((needed - anchored) / sd) / sd;
       pHome = pHome - pPush * push;
     }
 
@@ -597,12 +610,116 @@ const EDGE_RATING = (() => {
       away_cover: round(1 - p, 4),
       side: p > 0.5 ? 'home' : 'away',
       probability: round(Math.max(p, 1 - p), 4),
-      edge_points: round(projectedMargin - needed, 2),
+      edge_points: round(anchored - needed, 2),
+      raw_edge_points: round(projectedMargin - needed, 2),
+      anchored_margin: anchored,
+      lambda: lambda,
       sigma: round(sd, 2),
+      anchored_to_market: lambda != null,
       // Break-even at standard -110 juice.
       beats_vig: Math.max(p, 1 - p) > 0.5238,
       z: round(z, 3),
     };
+  }
+
+  // ============================================================
+  // ── MARKET ANCHORING ──
+  //
+  // Scoring a projection against the final margin credits the model
+  // with edge that is mostly its own noise. When the model and the
+  // market have similar error and disagree by two points, almost all
+  // of that gap is noise, not a market mistake.
+  //
+  // The honest measure is how much information the model adds beyond
+  // the closing line. Regress actual margin on both numbers: the
+  // coefficient on the model is the weight its disagreement deserves.
+  // For most models it is near zero, and the maths should be allowed
+  // to say so.
+  // ============================================================
+
+  // rows: [{ model, market, actual }] — market as a home-perspective
+  // margin, so a -3 spread is a market margin of +3.
+  function fitMarketBlend(rows) {
+    const clean = (rows || []).filter(r =>
+      isFinite(r.model) && isFinite(r.market) && isFinite(r.actual));
+    if (clean.length < 100) {
+      return { ok: false, reason: `only ${clean.length} paired games — need 100+` };
+    }
+
+    const n = clean.length;
+    const y = clean.map(r => r.actual);
+    const x1 = clean.map(r => r.model);
+    const x2 = clean.map(r => r.market);
+
+    // Normal equations for actual = b0 + b1·model + b2·market.
+    const S = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
+    const ones = new Array(n).fill(1);
+    const A = [
+      [n,          S(ones, x1), S(ones, x2)],
+      [S(x1, ones), S(x1, x1),  S(x1, x2)],
+      [S(x2, ones), S(x2, x1),  S(x2, x2)],
+    ];
+    const b = [S(ones, y), S(x1, y), S(x2, y)];
+    const coef = solve(A, b);
+    if (!coef) return { ok: false, reason: 'singular system' };
+
+    const [b0, bModel, bMarket] = coef;
+
+    // Errors of each number on its own.
+    const modelErr = clean.map(r => r.actual - r.model);
+    const marketErr = clean.map(r => r.actual - r.market);
+    const modelSigma = sd(modelErr);
+    const marketSigma = sd(marketErr);
+
+    // How much of the model's disagreement with the market to trust.
+    // A coefficient at or below zero means none of it.
+    const denom = bModel + bMarket;
+    let lambda = denom > 0 ? bModel / denom : 0;
+    lambda = clamp(lambda, 0, 1);
+
+    // Error of the blended number, which is what a bet actually faces.
+    const blendErr = clean.map(r =>
+      r.actual - (r.market + lambda * (r.model - r.market)));
+    const blendSigma = sd(blendErr);
+
+    return {
+      ok: true,
+      n,
+      model_sigma: round(modelSigma, 3),
+      market_sigma: round(marketSigma, 3),
+      blend_sigma: round(blendSigma, 3),
+      lambda: round(lambda, 4),
+      coef_model: round(bModel, 4),
+      coef_market: round(bMarket, 4),
+      intercept: round(b0, 3),
+      // Below 1 the market is the better number on its own.
+      information_ratio: round(marketSigma / Math.max(modelSigma, 1e-6), 4),
+      beats_market: modelSigma < marketSigma,
+      // lambda alone flatters a weak model, because blending two
+      // noisy estimates helps even when one is worse. The harder
+      // test is whether the blend actually beats the market number.
+      blend_improvement: round(marketSigma - blendSigma, 3),
+      verdict: (marketSigma - blendSigma) < 0.05
+        ? 'No usable edge — the closing line is as good on its own'
+        : (marketSigma - blendSigma) < 0.25
+          ? 'Marginal — blend barely improves on the close'
+          : 'Real information — the blend beats the closing line',
+    };
+  }
+
+  // Pull a raw projection toward the market by the fitted weight.
+  // With lambda 0 the model defers entirely; with 1 it stands alone.
+  function anchorToMarket(modelMargin, marketMargin, lambda) {
+    if (!isFinite(modelMargin)) return null;
+    if (!isFinite(marketMargin) || lambda == null) return modelMargin;
+    const w = clamp(lambda, 0, 1);
+    return round(marketMargin + w * (modelMargin - marketMargin), 3);
+  }
+
+  function sd(a) {
+    if (!a.length) return 0;
+    const m = a.reduce((x, y) => x + y, 0) / a.length;
+    return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length);
   }
 
   // Abramowitz and Stegun 7.1.26 — accurate to about 1e-7.
