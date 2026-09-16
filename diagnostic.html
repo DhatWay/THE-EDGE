@@ -273,10 +273,37 @@
             }
 
             out('');
+            out('      VERSUS THE CLOSING LINE', 'section-title');
+            if (!r.blend || !r.blend.ok) {
+              warn('market comparison', (r.blend && r.blend.reason) || 'unavailable');
+              out('      → Error against the final margin says how accurate the', 'warn');
+              out('        model is. It says nothing about beating the market,', 'warn');
+              out('        because the market is accurate too. Run Build ATS to', 'warn');
+              out('        collect closing lines, then run this again.', 'warn');
+            } else {
+              const bl = r.blend;
+              ok('model sigma', String(bl.model_sigma));
+              ok('market sigma', String(bl.market_sigma));
+              ok('blend sigma', String(bl.blend_sigma));
+              ok('improves on close by', bl.blend_improvement + ' points');
+              ok('lambda', bl.lambda + '  (weight your disagreement earns)');
+              out('');
+              out('      ' + bl.verdict, bl.blend_improvement >= 0.25 ? 'ok' : 'warn');
+              if (bl.blend_improvement < 0.05) {
+                out('      → Betting this model against the spread would be a', 'warn');
+                out('        coin flip minus the juice.', 'warn');
+              }
+            }
+
+            out('');
             out('      What this means for a bet:', 'section-title');
-            const sd = e.sigma_settled ?? e.sigma;
+            const bl = r.blend && r.blend.ok ? r.blend : null;
+            const sd = bl ? bl.blend_sigma : (e.sigma_settled ?? e.sigma);
+            const lam = bl ? bl.lambda : null;
+            if (!bl) out('        (unanchored — these overstate the edge)', 'warn');
             [[3, 5.5], [3, 7], [7, 10]].forEach(([spread, proj]) => {
-              const cp = window.EDGE_RATING.coverProbability(proj, -spread, sd);
+              const cp = window.EDGE_RATING.coverProbability(proj, -spread, sd,
+                { lambda: lam, blendSigma: bl ? bl.blend_sigma : null });
               out('        project home by ' + proj + ', market -' + spread +
                   '  →  ' + cp.side + ' ' + (cp.probability * 100).toFixed(1) + '%' +
                   (cp.beats_vig ? '  clears -110' : '  below break-even'));
