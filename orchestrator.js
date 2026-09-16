@@ -47,6 +47,11 @@ const EDGE_ORCHESTRATOR = (() => {
       // Family weights are learned from graded results. If this never
       // runs, every cycle uses the same static weights no matter how
       // the families have actually performed.
+      // Measured constants, if a backfill has produced any.
+      if (typeof EDGE_POWER.loadCalibrationOnce === 'function') {
+        try { await EDGE_POWER.loadCalibrationOnce(); } catch {}
+      }
+
       if (window.EDGE_LEARNING && typeof EDGE_LEARNING.runIfDue === 'function') {
         try {
           const learned = await EDGE_LEARNING.runIfDue();
