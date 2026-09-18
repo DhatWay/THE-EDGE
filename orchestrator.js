@@ -319,7 +319,7 @@ const EDGE_ORCHESTRATOR = (() => {
     };
   }
 
-  async function buildPriors(games, powerIndex, context = null) {
+  async function buildPriors(games, powerIndex, context = null, log = () => {}) {
     const priors = [];
     const skipped = { live: 0, no_rating: 0, no_spread: 0 };
 
