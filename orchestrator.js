@@ -112,7 +112,7 @@ const EDGE_ORCHESTRATOR = (() => {
       }
 
       log('Stage 3/7 · Computing game priors');
-      const priors = await buildPriors(gameList, powerIndex, builtContext);
+      const priors = await buildPriors(gameList, powerIndex, builtContext, log);
       summary.stages.priors_built = priors.length;
 
       if (!priors.length) {
@@ -319,7 +319,8 @@ const EDGE_ORCHESTRATOR = (() => {
     };
   }
 
-  async function buildPriors(games, powerIndex, context = null, log = () => {}) {
+  async function buildPriors(games, powerIndex, context = null)
+  {
     const priors = [];
     const skipped = { live: 0, no_rating: 0, no_spread: 0 };
 
