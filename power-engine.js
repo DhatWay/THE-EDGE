@@ -159,8 +159,10 @@ const EDGE_POWER = (() => {
       : null;
 
     const now = new Date();
+_espnShape.chosen = null;
+_espnShape.dayFallback = false;
 
-    for (const [sport, path] of Object.entries(ESPN_MAP)) {
+for (const [sport, path] of Object.entries(ESPN_MAP)) {
       if (!isSportInSeason(sport, now)) {
         results.skipped.push(sport);
         results.counts[sport] = 0;
