@@ -66,12 +66,23 @@ const EDGE_INJURY = (() => {
 
     // Fetch ESPN injuries once per sport, cache in localStorage.
     const sports = Array.from(new Set(
-      games.map(g => g._sport || g.sport).filter(s => s && ESPN_MAP[s])
-    ));
-    const injuriesBySport = {};
-    for (const sport of sports) {
-      injuriesBySport[sport] = await getCachedInjuries(sport);
-    }
+  games.map(g => g._sport || g.sport).filter(s => s && ESPN_MAP[s])
+));
+
+// Collect teams per sport so the fetch only walks teams actually on the slate.
+const teamsForInjuries = {};
+games.forEach(g => {
+  const sport = g._sport || g.sport;
+  if (!ESPN_MAP[sport]) return;
+  if (!teamsForInjuries[sport]) teamsForInjuries[sport] = new Set();
+  teamsForInjuries[sport].add(g.home_team || g.home);
+  teamsForInjuries[sport].add(g.away_team || g.away);
+});
+
+const injuriesBySport = {};
+for (const sport of sports) {
+  injuriesBySport[sport] = await getCachedInjuries(sport, teamsForInjuries[sport]);
+}
 
     // Collect every team on today's slate so we can pull their rosters
     // in a single round trip per sport instead of per team.
@@ -267,7 +278,7 @@ const EDGE_INJURY = (() => {
   // ── ESPN INJURY FETCH ──
   // ============================================================
 
-  async function getCachedInjuries(sport) {
+  async function getCachedInjuries(sport, teamFilter = null) {
     let cache = {};
     try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch {}
 
@@ -277,7 +288,7 @@ const EDGE_INJURY = (() => {
       return entry.byTeam;
     }
 
-    const fresh = await fetchEspnInjuries(sport);
+    const fresh = await fetchEspnInjuries(sport, teamFilter);
     // An empty result means the fetch failed, not that nobody is hurt.
     // Caching it hid the outage behind a valid-looking TTL.
     if (fresh && Object.keys(fresh).length) {
