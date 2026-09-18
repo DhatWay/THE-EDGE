@@ -941,10 +941,10 @@
       });
 
       CONN_FIELDS.forEach(({ input, store }) => {
-        const el = document.getElementById(input);
-        if (!el) return;
-        const v = el.value.trim().replace(/\/+$/, '');
-        if (v) localStorage.setItem(store, v); else localStorage.removeItem(store);
+  const el = document.getElementById(input);
+  if (!el) return;
+  const val = el.value.trim().replace(/\/+$/, '');
+  if (val) localStorage.setItem(store, val);
       });
       refreshConnectionDots();
 
