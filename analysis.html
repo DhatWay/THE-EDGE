@@ -481,20 +481,34 @@
           <div class="section">
             <div class="loading-row"><div class="spinner"></div> Claude risk review…</div>
           </div>`;
-        const batch = await EDGE_CLAUDE.reviewBatch([{
-          pick_id: physics.pick_id,
-          physics,
-          prior,
-          context: {
-            lineHistory: context.lineHistory,
-            weather: context.weather,
-            injuries: { home: context.homeInjuries || [], away: context.awayInjuries || [] },
-            rest: { home: context.homeRestDays, away: context.awayRestDays },
-            ats: { home: context.homeAts, away: context.awayAts },
-            h2h: context.h2h,
-          },
-        }], context);
-        claudeResult = batch[0] || null;
+        const candidates = [{
+  prior,
+  families,
+  governor,
+  context: {
+    lineHistory: context.lineHistory,
+    weather: context.weather,
+    injuries: { home: context.homeInjuries || [], away: context.awayInjuries || [] },
+    rest: { home: context.homeRestDays, away: context.awayRestDays },
+    ats: { home: context.homeAts, away: context.awayAts },
+    h2h: context.h2h,
+  },
+}];
+const selection = await EDGE_CLAUDE.selectFromSlate(candidates, { floor: 0 });
+if (selection.ok && selection.selections.length) {
+  const s = selection.selections[0];
+  claudeResult = {
+    decision: s.confidence >= physics.confidence ? 'approve' : 'reduce',
+    confidence_adjustment: 0,
+    reason: s.reason || s.key_factor || 'Selected',
+  };
+} else {
+  claudeResult = {
+    decision: 'veto',
+    confidence_adjustment: 0,
+    reason: selection.note || 'Claude declined this game',
+  };
+}
         if (claudeResult) {
           const adjusted = EDGE_PHYSICS.applyClaudeAdjustment(physics, claudeResult);
           Object.assign(physics, adjusted);
