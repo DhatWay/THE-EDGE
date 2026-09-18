@@ -390,7 +390,10 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
       days.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`);
     }
-    if (days.length > 400) return [];   // guard against a bad window
+    if (days.length > 400) {
+  console.warn(`[EDGE_POWER] day-by-day fetch skipped: ${days.length} days exceeds 400-day cap`);
+  return [];
+}   // guard against a bad window
 
     const suffix = group ? `&groups=${group}&limit=900` : '&limit=1000';
     const seen = new Map();
