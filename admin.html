@@ -253,7 +253,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Refresh Injuries. Takes 3-5 minutes. Use this before a fresh pipeline run.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Refresh Injuries. Takes 10-30 minutes on the first run. Use this before a fresh pipeline run.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -315,15 +315,28 @@
 
       <div class="pipeline-panel">
         <div class="pipeline-head">
-          <div class="pipeline-title">Build ATS & H2H</div>
+          <div class="pipeline-title">Build ATS &amp; H2H</div>
         </div>
         <div class="pipeline-desc">
-          Builds team ATS form and head-to-head spread history from two seasons of results. Feeds the trend family and the analysis page.
+          Builds team ATS form and head-to-head spread history from several seasons of results. Feeds the trend family and the analysis page. First run is slow; subsequent runs are near-instant because closing lines are cached.
         </div>
         <div class="pipeline-actions single">
-          <button class="pipeline-btn secondary" id="runAtsBtn" onclick="runAtsBuild()">▲ Build ATS & H2H</button>
+          <button class="pipeline-btn secondary" id="runAtsBtn" onclick="runAtsBuild()">▲ Build ATS &amp; H2H</button>
         </div>
         <div class="pipeline-log" id="atsLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Build Trends</div>
+        </div>
+        <div class="pipeline-desc">
+          Mines historical results for repeatable situations: off a bye, after a loss, in revenge spots, home favourites, QB-anchored streaks. Writes the trends table that feeds the trend family and the Trend Bets page. Run after Build ATS — it uses the cached closing lines to grade ATS records.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runTrendsBtn" onclick="runTrendsBuild()">▲ Build Trends</button>
+        </div>
+        <div class="pipeline-log" id="trendsLog">Idle.</div>
       </div>
 
       <div class="pipeline-panel">
@@ -497,6 +510,7 @@
         <button class="raw-tab" data-tab="players" onclick="setRawTab('players',this)">Players</button>
         <button class="raw-tab" data-tab="ats" onclick="setRawTab('ats',this)">Team ATS</button>
         <button class="raw-tab" data-tab="h2h" onclick="setRawTab('h2h',this)">Matchup ATS</button>
+        <button class="raw-tab" data-tab="trends" onclick="setRawTab('trends',this)">Trends</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -530,6 +544,14 @@
     drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
+
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
 
     // ── TOAST ──
     function showToast(msg, type = '') {
@@ -572,19 +594,22 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/5 · Power Ratings');
+      log('Stage 1/6 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/5 · Build Rosters');
+      log('Stage 2/6 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/5 · Enrich Rosters');
+      log('Stage 3/6 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/5 · Build ATS & H2H');
+      log('Stage 4/6 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/5 · Refresh Injuries');
+      log('Stage 5/6 · Build Trends');
+      try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 6/6 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
@@ -613,27 +638,29 @@
       logEl.textContent = 'Starting…\n';
       statusEl.textContent = '';
 
-      const result = await window.EDGE_ORCHESTRATOR.run({
-        games,
-        onProgress: (msg) => {
-          logEl.textContent += msg + '\n';
-          logEl.scrollTop = logEl.scrollHeight;
-        },
-      });
+      try {
+        const result = await window.EDGE_ORCHESTRATOR.run({
+          games,
+          onProgress: (msg) => {
+            logEl.textContent += msg + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+          },
+        });
 
-      btn.disabled = false;
+        if (result.errors.length) {
+          logEl.textContent += '\nERRORS:\n' + result.errors.join('\n');
+          statusEl.textContent = 'Failed';
+          showToast('Pipeline error', 'error');
+          return;
+        }
 
-      if (result.errors.length) {
-        logEl.textContent += '\nERRORS:\n' + result.errors.join('\n');
-        statusEl.textContent = 'Failed';
-        showToast('Pipeline error', 'error');
-        return;
+        const pickCount = result.picks.length;
+        statusEl.textContent = `${pickCount} picks · ${result.duration_ms}ms · mode: ${result.mode}`;
+        logEl.textContent += `\n✓ Done · ${pickCount} picks · ${result.duration_ms}ms`;
+        showToast(`✓ Pipeline: ${pickCount} picks`, '');
+      } finally {
+        btn.disabled = false;
       }
-
-      const pickCount = result.picks.length;
-      statusEl.textContent = `${pickCount} picks · ${result.duration_ms}ms · mode: ${result.mode}`;
-      logEl.textContent += `\n✓ Done · ${pickCount} picks · ${result.duration_ms}ms`;
-      showToast(`✓ Pipeline: ${pickCount} picks`, '');
     }
 
     // ── RUN LEARNING ──
@@ -679,7 +706,12 @@
 
       if (!window.EDGE_POWER) { showToast('Power engine not loaded', 'error'); return; }
 
-      const result = await window.EDGE_POWER.computeAllTeamRatings();
+      const result = await window.EDGE_POWER.computeAllTeamRatings({
+        onProgress: silent ? null : (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
 
       if (!silent) btn.disabled = false;
 
@@ -761,6 +793,28 @@
       return result;
     }
 
+    // ── BUILD TRENDS ──
+    async function runTrendsBuild(silent = false) {
+      const btn = document.getElementById('runTrendsBtn');
+      const logEl = document.getElementById('trendsLog');
+      if (!window.EDGE_TRENDS) { showToast('Trends engine not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Mining historical trends…\n'; }
+
+      const result = await window.EDGE_TRENDS.buildAll({
+        onProgress: silent ? null : (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      if (!silent) {
+        btn.disabled = false;
+        logEl.textContent += `\n✓ ${result.totals.trends} trends · ${result.totals.qualifying} qualifying`;
+        showToast(`✓ Trends: ${result.totals.trends} written · ${result.totals.qualifying} qualifying`, '');
+      }
+      return result;
+    }
+
     // ── REFRESH INJURIES ──
     async function refreshInjuries() {
       const btn = document.getElementById('runInjuryBtn');
@@ -793,10 +847,6 @@
       lowvig: 'LowVig', pinnacle: 'Pinnacle',
     };
 
-    // Selecting a book is what matters: edge_book_key is the Odds API
-    // bookmaker filter, so every line shown and every line the pipeline
-    // grades against comes from that book. The API key field is only
-    // needed if the book itself offers a direct feed.
     function saveSportsbook() {
       const bookKey = document.getElementById('sportsbookName').value;
       const apiKey  = document.getElementById('sportsbookKey').value.trim();
@@ -816,7 +866,6 @@
                 bookKey ? label : 'Consensus');
       showToast(bookKey ? `Lines now from ${label}` : 'Using consensus lines');
 
-      // The cached board was priced against the old selection.
       localStorage.removeItem('edge_todays_games');
       localStorage.removeItem('edge_games_cache');
     }
@@ -861,7 +910,7 @@
           updateDot('dotSupabase','statusSupabase','err','Error ' + res.status);
           showToast('Supabase error ' + res.status, 'error');
         }
-      } catch { showToast('Connection failed', 'error'); }
+      } catch (e) { logEdgeError('admin.testSupabase', e); showToast('Connection failed', 'error'); }
     }
 
     async function testOddsAPI() {
@@ -876,7 +925,7 @@
           updateDot('dotOdds','statusOdds','err','Invalid key');
           showToast('Invalid Odds API key', 'error');
         }
-      } catch { showToast('Connection failed', 'error'); }
+      } catch (e) { logEdgeError('admin.testOdds', e); showToast('Connection failed', 'error'); }
     }
 
     async function testESPN() {
@@ -889,7 +938,7 @@
           updateDot('dotESPN','statusESPN','err','Unreachable');
           showToast('ESPN error', 'error');
         }
-      } catch { showToast('ESPN unreachable', 'error'); }
+      } catch (e) { logEdgeError('admin.testESPN', e); showToast('ESPN unreachable', 'error'); }
     }
 
     async function testClaude() {
@@ -917,7 +966,7 @@
           updateDot('dotClaude','statusClaude','err','Invalid key');
           showToast('Invalid Claude API key', 'error');
         }
-      } catch { showToast('Claude API error', 'error'); }
+      } catch (e) { logEdgeError('admin.testClaude', e); showToast('Claude API error', 'error'); }
     }
 
     // ── RESULT ENTRY ──
@@ -954,7 +1003,7 @@
             body: JSON.stringify(record),
           });
           showToast('Result saved');
-        } catch { showToast('Saved locally', 'error'); }
+        } catch (e) { logEdgeError('admin.submitResult', e); showToast('Saved locally', 'error'); }
       } else {
         const existing = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
         existing.unshift(record);
@@ -1053,6 +1102,16 @@
           return;
         }
 
+        if (currentRawTab === 'trends') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/trends?select=*&limit=30&order=hit_rate.desc`, {
+            headers: { apikey: key, Authorization: `Bearer ${key}` }
+          });
+          const data = await res.json();
+          out.textContent = JSON.stringify(data, null, 2);
+          return;
+        }
+
         if (currentRawTab === 'odds') {
           const oddsKey = localStorage.getItem('edge_odds_api_key');
           if (!oddsKey) { out.textContent = 'No Odds API key'; return; }
@@ -1069,6 +1128,7 @@
           return;
         }
       } catch (e) {
+        logEdgeError('admin.fetchRaw', e);
         out.textContent = 'Error: ' + e.message;
       }
     }
@@ -1094,7 +1154,7 @@
           headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
         showToast('Shadow picks cleared');
-      } catch { showToast('Error clearing', 'error'); }
+      } catch (e) { logEdgeError('admin.clearShadowPicks', e); showToast('Error clearing', 'error'); }
     }
 
     function clearInjuryCache() {
