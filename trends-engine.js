@@ -1,27 +1,18 @@
 // ============================================================
-// EDGE — TRENDS ENGINE v1.0
+// EDGE — TRENDS ENGINE v1.1
 //
 // A trend is a repeatable situation with a track record — not a
-// pattern in your own pick history. The previous trend code scored
-// league-wide heuristics against shadow_picks, so with no graded
-// picks nothing ever qualified and no trend could ever fire.
+// pattern in your own pick history.
 //
-// This builds a real trend database from historical results:
-//
-//   SITUATIONAL   home opener · off a bye · off a loss · short rest ·
-//                 as home favourite · as road dog · primetime ·
-//                 revenge spot · after a blowout · late season
-//   STREAK        consecutive covers or wins inside a situation,
-//                 current and longest, with the seasons spanned
-//   RIVALRY       one team against one specific opponent
-//   QB-ANCHORED   the same situation filtered to the quarterback who
-//                 started, so "this QB in his first home game of the
-//                 season" is a first-class trend
-//
-// Sources: ESPN scoreboard for results and starting quarterbacks,
-// historical_odds for the closing line that grades ATS.
-// Writes: `trends` — one row per team/situation with its record,
-// streak and qualification state.
+// v1.1 — situationContext now accepts a shared context and falls
+// back to it when the game object doesn't carry enriched fields.
+// Without this, seven of the twenty situations (rest, prior
+// result, prior margin, game-of-season, season progress) could
+// never fire on today's board — the historical table held them,
+// but nothing matched a current game against them.
+// writeTrends now clears previous rows on a 409 unique-constraint
+// clash instead of failing the whole batch.
+// fetchRange tries multiple ESPN URL shapes.
 // ============================================================
 
 const EDGE_TRENDS = (() => {
@@ -39,31 +30,19 @@ const EDGE_TRENDS = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // Football is the only sport where a single player so dominates the
-  // result that a QB-anchored trend is meaningful.
   const QB_SPORTS = new Set(['NFL', 'NCAAF']);
 
   const HISTORY_YEARS = { NFL: 6, NCAAF: 6, NBA: 4, NHL: 4, MLB: 4, NCAAB: 4, MLS: 5 };
   const CHUNK_DAYS = { NFL: 30, NCAAF: 21, MLS: 30, MLB: 14, NBA: 14, NHL: 14, NCAAB: 5 };
 
-  // A trend has to clear all of these before it is allowed on a ticket.
-  const MIN_SAMPLE = 5;          // occurrences of the situation
-  const MIN_HIT_RATE = 0.70;     // record inside it
-  const MIN_STREAK = 4;          // or an unbroken active run this long
+  const MIN_SAMPLE = 5;
+  const MIN_HIT_RATE = 0.70;
+  const MIN_STREAK = 4;
   const FETCH_CONCURRENCY = 4;
 
-  // Long rest thresholds per sport, in days.
   const LONG_REST = { NFL: 10, NCAAF: 10, NBA: 3, NHL: 3, MLB: 2, NCAAB: 5, MLS: 7 };
   const SHORT_REST = { NFL: 5, NCAAF: 5, NBA: 1, NHL: 1, MLB: 1, NCAAB: 2, MLS: 3 };
-
-  // Margin that counts as a blowout, per sport.
   const BLOWOUT = { NFL: 14, NCAAF: 21, NBA: 15, NCAAB: 15, NHL: 3, MLB: 5, MLS: 2 };
-
-  // ============================================================
-  // ── SITUATION LIBRARY ──
-  // Each takes a team's game (with its precomputed context) and says
-  // whether the situation applied. `label` is what the user reads.
-  // ============================================================
 
   const SITUATIONS = [
     { id: 'season_opener',    label: 'in season openers',
@@ -166,10 +145,21 @@ const EDGE_TRENDS = (() => {
     const odds = await loadClosingLines(sport, url, key);
     log(`  ${Object.keys(odds).length} closing lines available`);
 
-    // Build a per-team game log with every contextual field the
-    // situations need.
     const logs = buildTeamLogs(sport, events, odds);
     log(`  ${Object.keys(logs).length} teams`);
+
+    // Report QB coverage so a silent gap is visible rather than
+    // producing zero QB-anchored trends with no explanation.
+    if (QB_SPORTS.has(sport)) {
+      let qbGames = 0, totalGames = 0;
+      Object.values(logs).forEach(games => {
+        games.forEach(g => { totalGames++; if (g.qb) qbGames++; });
+      });
+      log(`  ${qbGames}/${totalGames} team-game entries with an identified starting QB`);
+      if (!qbGames) {
+        log(`  no QB-anchored trends will be built — ESPN did not include leaders`);
+      }
+    }
 
     const rows = [];
     Object.entries(logs).forEach(([team, games]) => {
@@ -237,7 +227,6 @@ const EDGE_TRENDS = (() => {
       });
     });
 
-    // Second pass: everything that depends on a team's own sequence.
     Object.values(logs).forEach(games => {
       games.sort((a, b) => a.date - b.date);
 
@@ -251,7 +240,6 @@ const EDGE_TRENDS = (() => {
         g.prevResult = prev ? (prev.margin > 0 ? 'W' : prev.margin < 0 ? 'L' : 'T') : null;
         g.prevMargin = prev ? prev.margin : null;
 
-        // Same-season sequencing
         if (!perSeason[g.season]) perSeason[g.season] = { all: 0, home: 0 };
         perSeason[g.season].all++;
         g.gameOfSeason = perSeason[g.season].all;
@@ -260,7 +248,6 @@ const EDGE_TRENDS = (() => {
           g.homeGameOfSeason = perSeason[g.season].home;
         }
 
-        // Rivalry context
         const key = g.opponent;
         g.playedBefore = !!metBefore[key];
         g.lostLastMeeting = metBefore[key] ? metBefore[key].margin < 0 : false;
@@ -275,8 +262,6 @@ const EDGE_TRENDS = (() => {
                    : g.combined < g.total ? 'U' : 'P';
       });
 
-      // Season progress needs the season's full length, so it is a
-      // third pass over the same array.
       const counts = {};
       games.forEach(g => { counts[g.season] = (counts[g.season] || 0) + 1; });
       games.forEach(g => { g.seasonProgress = g.gameOfSeason / (counts[g.season] || 1); });
@@ -285,9 +270,6 @@ const EDGE_TRENDS = (() => {
     return logs;
   }
 
-  // ESPN puts the passing leader on the competitor. For football that
-  // is the starting quarterback in all but a handful of games, and it
-  // costs no extra request.
   function startingQb(competitor) {
     const leaders = competitor.leaders || [];
     const passing = leaders.find(l =>
@@ -309,13 +291,12 @@ const EDGE_TRENDS = (() => {
     const rows = [];
 
     SITUATIONS.forEach(sit => {
-      if (sit.qbOnly) return;                 // handled in the QB pass
+      if (sit.qbOnly) return;
       const hits = games.filter(g => safeTest(sit, g));
       if (hits.length < MIN_SAMPLE) return;
       rows.push(...recordsFor(sport, team, sit, hits, { scope: 'team' }));
     });
 
-    // ── Rivalry: this team against one specific opponent ──
     const byOpp = {};
     games.forEach(g => { (byOpp[g.opponent] = byOpp[g.opponent] || []).push(g); });
     Object.entries(byOpp).forEach(([opp, hits]) => {
@@ -325,7 +306,6 @@ const EDGE_TRENDS = (() => {
         hits, { scope: 'rivalry', opponent: opp }));
     });
 
-    // ── QB-anchored: the same situations, filtered to one starter ──
     if (QB_SPORTS.has(sport)) {
       const byQb = {};
       games.forEach(g => { if (g.qb) (byQb[g.qb] = byQb[g.qb] || []).push(g); });
@@ -335,8 +315,6 @@ const EDGE_TRENDS = (() => {
 
         SITUATIONS.forEach(sit => {
           const hits = qbGames.filter(g => safeTest(sit, g));
-          // A QB trend is allowed a smaller sample — "his first home
-          // game of the season" can only occur once a year.
           if (hits.length < Math.max(3, MIN_SAMPLE - 2)) return;
           rows.push(...recordsFor(sport, team, sit, hits, { scope: 'player', player: qb }));
         });
@@ -346,8 +324,6 @@ const EDGE_TRENDS = (() => {
     return rows;
   }
 
-  // Each situation produces up to three trends: straight up, against
-  // the spread, and over/under.
   function recordsFor(sport, team, sit, hits, meta) {
     const out = [];
 
@@ -377,8 +353,6 @@ const EDGE_TRENDS = (() => {
     const streaks = streakOf(hits, isHit);
     const seasons = Array.from(new Set(hits.map(g => g.season))).sort();
 
-    // A trend counts when the record is strong, or when the run is
-    // currently unbroken and long enough to be worth a ticket.
     const qualified = (rec.total >= MIN_SAMPLE && rate >= MIN_HIT_RATE)
                    || streaks.current >= MIN_STREAK;
 
@@ -425,8 +399,6 @@ const EDGE_TRENDS = (() => {
     return { wins, losses, pushes, total: wins + losses };
   }
 
-  // Current streak counts back from the most recent occurrence and
-  // stops at the first miss. Pushes are skipped, not counted as a break.
   function streakOf(games, isHit) {
     let current = 0, longest = 0, run = 0;
     games.forEach(g => {
@@ -446,22 +418,37 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── APPLY TO TODAY ──
+  //
+  // context (optional) may carry these team-keyed maps, built by the
+  // caller from the same historical pull that produced the trends:
+  //
+  //   restByTeam            { "NFL:Kansas City Chiefs": 7 }
+  //   prevResultByTeam      { "NFL:Kansas City Chiefs": "W" }
+  //   prevMarginByTeam      { "NFL:Kansas City Chiefs": 10 }
+  //   gameOfSeasonByTeam    { "NFL:Kansas City Chiefs": 4 }
+  //   homeGameOfSeasonByTeam{ "NFL:Kansas City Chiefs": 2 }
+  //   lostLastMeetingByTeam { "NFL:Kansas City Chiefs": true }
+  //   playedBeforeByTeam    { "NFL:Kansas City Chiefs": true }
+  //   seasonProgressByGame  { "<gameId>": 0.8 }
+  //
+  // game fields (home_rest_days, home_prev_result, etc.) take
+  // precedence when set, so an orchestrator that has already
+  // enriched the board does not need to build the maps.
   // ============================================================
 
-  // Which stored trends actually apply to a specific game right now.
   async function trendsForGame(game, options = {}) {
+    const { qualifiedOnly = true, context = null } = options;
     const sport = game._sport || game.sport;
     const home = game.home_team || game.home;
     const away = game.away_team || game.away;
-    const { qualifiedOnly = true } = options;
 
     const [homeRows, awayRows] = await Promise.all([
       getTeamTrends(sport, home, qualifiedOnly),
       getTeamTrends(sport, away, qualifiedOnly),
     ]);
 
-    const homeCtx = situationContext(game, true);
-    const awayCtx = situationContext(game, false);
+    const homeCtx = situationContext(game, true, context);
+    const awayCtx = situationContext(game, false, context);
 
     const applies = (row, ctx, oppName) => {
       if (row.situation_id === 'vs_opponent') return row.opponent === oppName;
@@ -490,28 +477,62 @@ const EDGE_TRENDS = (() => {
     return out;
   }
 
-  // Today's game carries less context than a historical one — rest and
-  // prior result are unknown unless the caller supplies them — so only
-  // the situations that can be determined from the board are tested.
-  function situationContext(game, isHome) {
-    const when = new Date(game.commence_time || game.time);
+  function situationContext(game, isHome, ctx) {
     const sport = game._sport || game.sport;
+    const home = game.home_team || game.home;
+    const away = game.away_team || game.away;
+    const team = isHome ? home : away;
+    const teamKey = `${sport}:${team}`;
+    const when = new Date(game.commence_time || game.time);
+
     const spread = isHome ? (game.spread ?? null)
                           : (game.spread != null ? -game.spread : null);
+
+    // Prefer values set directly on the game. Fall back to the shared
+    // context when the caller provides one.
+    const restDays = isHome
+      ? (game.home_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null)
+      : (game.away_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null);
+
+    const prevResult = isHome
+      ? (game.home_prev_result ?? ctx?.prevResultByTeam?.[teamKey] ?? null)
+      : (game.away_prev_result ?? ctx?.prevResultByTeam?.[teamKey] ?? null);
+
+    const prevMargin = isHome
+      ? (game.home_prev_margin ?? ctx?.prevMarginByTeam?.[teamKey] ?? null)
+      : (game.away_prev_margin ?? ctx?.prevMarginByTeam?.[teamKey] ?? null);
+
+    const gameOfSeason = isHome
+      ? (game.home_game_of_season ?? ctx?.gameOfSeasonByTeam?.[teamKey] ?? null)
+      : (game.away_game_of_season ?? ctx?.gameOfSeasonByTeam?.[teamKey] ?? null);
+
+    const homeGameOfSeason = isHome
+      ? (game.home_home_game_of_season ?? ctx?.homeGameOfSeasonByTeam?.[teamKey] ?? null)
+      : null;
+
+    const playedBefore = game.played_before
+      ?? ctx?.playedBeforeByTeam?.[teamKey] ?? null;
+
+    const lostLastMeeting = isHome
+      ? (game.home_lost_last_meeting ?? ctx?.lostLastMeetingByTeam?.[teamKey] ?? null)
+      : (game.away_lost_last_meeting ?? ctx?.lostLastMeetingByTeam?.[teamKey] ?? null);
+
+    const seasonProgress = game.season_progress
+      ?? ctx?.seasonProgressByGame?.[game.id] ?? null;
+
     return {
       sport,
       isHome,
       spread,
       hour: isNaN(when) ? null : when.getHours(),
-      restDays: isHome ? (game.home_rest_days ?? null) : (game.away_rest_days ?? null),
-      prevResult: isHome ? (game.home_prev_result ?? null) : (game.away_prev_result ?? null),
-      prevMargin: isHome ? (game.home_prev_margin ?? null) : (game.away_prev_margin ?? null),
-      gameOfSeason: isHome ? (game.home_game_of_season ?? null) : (game.away_game_of_season ?? null),
-      homeGameOfSeason: isHome ? (game.home_home_game_of_season ?? null) : null,
-      seasonProgress: game.season_progress ?? null,
-      playedBefore: game.played_before ?? null,
-      lostLastMeeting: isHome ? (game.home_lost_last_meeting ?? null)
-                              : (game.away_lost_last_meeting ?? null),
+      restDays,
+      prevResult,
+      prevMargin,
+      gameOfSeason,
+      homeGameOfSeason,
+      seasonProgress,
+      playedBefore,
+      lostLastMeeting,
     };
   }
 
@@ -546,26 +567,44 @@ const EDGE_TRENDS = (() => {
 
     const seen = new Map();
     await parallelMap(windows, FETCH_CONCURRENCY, async ([a, b]) => {
-      const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      try {
-        const res = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${fmt(a)}-${fmt(b)}&limit=1000`,
-          { cache: 'no-store' }
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        (data.events || []).forEach(e => {
-          if (!e?.id || seen.has(e.id)) return;
-          const comp = e.competitions?.[0];
-          if (!comp) return;
-          if ((e.season?.type ?? comp.season?.type) === 1) return;   // preseason
-          if (comp.status?.type?.completed !== true) return;
-          seen.set(e.id, e);
-        });
-      } catch {}
+      const events = await fetchWindow(path, a, b);
+      events.forEach(e => {
+        if (!e?.id || seen.has(e.id)) return;
+        const comp = e.competitions?.[0];
+        if (!comp) return;
+        if ((e.season?.type ?? comp.season?.type) === 1) return;
+        if (comp.status?.type?.completed !== true) return;
+        seen.set(e.id, e);
+      });
     });
 
     return Array.from(seen.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
+  }
+
+  // ESPN's accepted query shapes drift without notice. Try the known
+  // ones in order and return the first that produces events.
+  async function fetchWindow(path, a, b) {
+    const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
+    const group = /college-football/.test(path) ? 80
+                : /college-basketball/.test(path) ? 50
+                : null;
+
+    const urls = [];
+    if (group) urls.push(`${base}?dates=${fmt(a)}-${fmt(b)}&groups=${group}&limit=900`);
+    urls.push(`${base}?dates=${fmt(a)}-${fmt(b)}&limit=1000`);
+    urls.push(`${base}?limit=1000&dates=${fmt(a)}-${fmt(b)}`);
+    urls.push(`${base}?dates=${fmt(a)}-${fmt(b)}`);
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.events && data.events.length) return data.events;
+      } catch {}
+    }
+    return [];
   }
 
   async function loadClosingLines(sport, url, key) {
@@ -599,18 +638,37 @@ const EDGE_TRENDS = (() => {
     const stamp = new Date().toISOString();
     rows.forEach(r => { r.updated_at = stamp; });
 
-    // Insert first, delete the previous run second — a rejected batch
-    // must never leave the table empty.
     const size = 400;
-    const probe = await postRows(url, headers, rows.slice(0, size));
+    let probe = await postRows(url, headers, rows.slice(0, size));
+
+    // A unique constraint is not a schema rejection. Reaching 409
+    // proves the payload is valid — the previous run's rows are the
+    // only thing in the way. Clearing them first is safe precisely
+    // because the insert got that far.
+    if (!probe.ok && probe.status === 409) {
+      log(`  trends: unique constraint — clearing previous run and retrying`);
+      try {
+        await fetch(`${url}/rest/v1/trends?sport=eq.${sport}`, {
+          method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
+        });
+      } catch {}
+      probe = await postRows(url, headers, rows.slice(0, size));
+    }
+
     if (!probe.ok) {
       log(`  trends: insert rejected HTTP ${probe.status} ${probe.body.slice(0, 160)}`);
       return 0;
     }
+
     let written = Math.min(size, rows.length);
 
     for (let i = size; i < rows.length; i += size) {
-      const res = await postRows(url, headers, rows.slice(i, i + size));
+      let res = await postRows(url, headers, rows.slice(i, i + size));
+      if (!res.ok && res.status === 409) {
+        res = await postRows(url,
+          { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' },
+          rows.slice(i, i + size));
+      }
       if (res.ok) written += Math.min(size, rows.length - i);
     }
 
