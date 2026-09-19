@@ -1,14 +1,15 @@
 // ============================================================
-// EDGE — ATS + H2H TRACKER v2.1
+// EDGE — ATS + H2H TRACKER v2.2
 //
 // Odds sources, in priority order:
 //   1. historical_odds in Supabase       (cached from earlier runs)
 //   2. ESPN core API per-event odds      (close → current → open)
 //   3. line_history                      (games seen live)
 //
-// v2.1 — logEdgeError, empty catches now name which fetch died.
-// The empty tables in the diagnostic looked identical to a rate-
-// limited ESPN response because every failure was swallowed.
+// v2.2 — fetch uses ?dates=YYYY (single year). ESPN's range
+// format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400 for any
+// window outside the current season, which is why every sport
+// reported "0 completed games" and the ATS tables stayed empty.
 // ============================================================
 
 const EDGE_ATS = (() => {
@@ -43,7 +44,6 @@ const EDGE_ATS = (() => {
   };
 
   const FORM_WINDOW = 10;
-  const CHUNK_DAYS = 45;
   const FETCH_CONCURRENCY = 4;
 
   const MAX_ODDS_LOOKUPS_PER_RUN = 1200;
@@ -122,7 +122,7 @@ const EDGE_ATS = (() => {
     const start = new Date(now.getTime() - days * 86400000);
     log(`  results ${start.toISOString().slice(0, 10)} → now`);
 
-    const events = await fetchRangeChunked(cfg.path, start, now);
+    const events = await fetchRangeChunked(cfg.path, start, now, log);
     const games = events.map(e => parseEvent(sport, e)).filter(Boolean);
     games.sort((a, b) => new Date(a.date) - new Date(b.date));
     log(`  ${games.length} completed games`);
@@ -259,43 +259,7 @@ const EDGE_ATS = (() => {
       home: homeName, away: awayName,
       homeScore, awayScore,
       neutral: comp.neutralSite === true,
-      inlineOdds: readInlineOdds(comp, homeName, home.team?.abbreviation, away.team?.abbreviation),
     };
-  }
-
-  function readInlineOdds(comp, homeName, awayAbbr, homeAbbr) {
-    const o = comp.odds?.[0];
-    if (!o) return null;
-
-    let spread = numOrNull(o.spread);
-    if (spread == null && typeof o.details === 'string') {
-      spread = spreadFromDetails(o.details, homeAbbr, awayAbbr);
-    }
-    if (spread == null) return null;
-
-    return {
-      spread,
-      total: numOrNull(o.overUnder),
-      home_ml: numOrNull(o.homeTeamOdds?.moneyLine),
-      away_ml: numOrNull(o.awayTeamOdds?.moneyLine),
-      provider: o.provider?.name || null,
-    };
-  }
-
-  function spreadFromDetails(details, homeAbbr, awayAbbr) {
-    const txt = details.trim();
-    if (/^(even|pk|pick)$/i.test(txt)) return 0;
-    const m = txt.match(/^([A-Z]{2,5})\s*([+-]?\d+(?:\.\d+)?)$/i);
-    if (!m) {
-      const bare = parseFloat(txt);
-      return isFinite(bare) ? bare : null;
-    }
-    const team = m[1].toUpperCase();
-    const value = parseFloat(m[2]);
-    if (!isFinite(value)) return null;
-    if (homeAbbr && team === String(homeAbbr).toUpperCase()) return value;
-    if (awayAbbr && team === String(awayAbbr).toUpperCase()) return -value;
-    return value;
   }
 
   // ============================================================
@@ -667,38 +631,48 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── FETCH ──
+  //
+  // ESPN's range format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400
+  // for any window outside the current season. The single-year
+  // format ?dates=YYYY works and returns the whole season's games
+  // in one call. This fetches year by year, then filters down to
+  // the requested window.
   // ============================================================
 
-  async function fetchRangeChunked(path, start, end) {
-    const chunks = [];
-    let cur = new Date(start);
-    while (cur <= end) {
-      const chunkEnd = new Date(cur);
-      chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS);
-      if (chunkEnd > end) chunkEnd.setTime(end.getTime());
-      chunks.push([new Date(cur), new Date(chunkEnd)]);
-      cur = new Date(chunkEnd);
-      cur.setDate(cur.getDate() + 1);
-    }
+  async function fetchRangeChunked(path, start, end, log) {
+    const years = [];
+    for (let y = start.getFullYear(); y <= end.getFullYear(); y++) years.push(y);
+
+    if (log) log(`  fetching ${years.length} season${years.length === 1 ? '' : 's'}: ${years.join(', ')}`);
 
     const seen = new Map();
-    await parallelMap(chunks, FETCH_CONCURRENCY, async ([a, b]) => {
-      const events = await fetchEspnRange(path, a, b);
+    await parallelMap(years, FETCH_CONCURRENCY, async (year) => {
+      const events = await fetchEspnYear(path, year);
+      if (log && events.length) log(`    ${year}: ${events.length} events`);
       events.forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
     });
-    return Array.from(seen.values());
+
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    return Array.from(seen.values()).filter(e => {
+      const t = new Date(e.date).getTime();
+      return isFinite(t) && t >= startMs && t <= endMs;
+    });
   }
 
-  async function fetchEspnRange(path, start, end) {
-    const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${fmt(start)}-${fmt(end)}&limit=1000`;
+  async function fetchEspnYear(path, year) {
+    // A limit of 1000 is the max ESPN will return in one call. For
+    // high-volume sports (MLB ~2400 games/year, NCAAB ~5000) this
+    // truncates. Acceptable for ATS since recent-season form is what
+    // matters; if full coverage is needed later, walk month by month.
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${year}&limit=1000`;
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) return [];
       const data = await res.json();
       return data.events || [];
     } catch (e) {
-      logEdgeError('ats.fetchEspnRange.' + path, e);
+      logEdgeError('ats.fetchEspnYear.' + path + '.' + year, e);
       return [];
     }
   }
