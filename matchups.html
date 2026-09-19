@@ -62,7 +62,6 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; color: var(--text); }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* TIME WINDOW */
     .time-bar { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); align-items: center; }
     .time-bar::-webkit-scrollbar { display: none; }
     .time-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
@@ -218,9 +217,9 @@
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
@@ -300,11 +299,19 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     // ── STATE ──
     let currentSport = 'all';
     let currentWindow = localStorage.getItem('edge_game_window') || 'week';
-    let allGamesRaw = [];   // everything ever fetched, unfiltered
-    let allGames = [];      // what's shown after time + sport filter
+    let allGamesRaw = [];
+    let allGames = [];
     let pickIndex = {};
     let openIndex = {};
 
@@ -339,9 +346,8 @@
         return { start: now, end: new Date(now.getTime() + 2 * 86400000) };
       }
       if (currentWindow === 'week') {
-        // Through end of this week (Sunday 11:59pm local)
         const end = new Date(now);
-        const dow = end.getDay(); // 0=Sun
+        const dow = end.getDay();
         const daysUntilSun = dow === 0 ? 0 : 7 - dow;
         end.setDate(end.getDate() + daysUntilSun);
         end.setHours(23, 59, 59, 999);
@@ -350,15 +356,9 @@
       if (currentWindow === 'next7') {
         return { start: now, end: new Date(now.getTime() + 7 * 86400000) };
       }
-      // all
       return { start: now, end: new Date(now.getTime() + 365 * 86400000) };
     }
 
-    // Grading window. A game that has kicked off is no longer a betting
-    // opportunity, and the odds feed switches to in-play prices the
-    // moment it starts — that is where spreads like -26.5 came from on
-    // an NFL board. Started games are kept for display only and are
-    // flagged so nothing downstream prices them.
     const LIVE_GRACE_MS = 90 * 1000;
 
     function isLive(g) {
@@ -398,7 +398,6 @@
       const el = document.getElementById('timeInfo');
       if (!el) return;
       const { start, end } = windowBounds();
-      const w = TIME_WINDOWS[currentWindow];
       if (currentWindow === 'all') {
         el.textContent = `${allGames.length} upcoming`;
       } else {
@@ -415,7 +414,7 @@
         localStorage.setItem('edge_game_window', currentWindow);
         localStorage.setItem('edge_games_live_excluded',
           String(allGames.length - gradable.length));
-      } catch {}
+      } catch (e) { logEdgeError('matchups.writeStorage', e); }
     }
 
     document.getElementById('timeBar').querySelectorAll('.time-btn').forEach(btn => {
@@ -427,12 +426,10 @@
       });
     });
 
-    // Restore active state on load
     document.querySelectorAll('.time-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.window === currentWindow);
     });
 
-    // ── SPORT FILTERS ──
     document.getElementById('filterBar').querySelectorAll('.filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -448,6 +445,7 @@
       const apiKey = localStorage.getItem('edge_odds_api_key');
       const proxy = (localStorage.getItem('edge_proxy_url') || '').trim();
       const statusEl = document.getElementById('refreshStatus');
+      const refreshBtn = document.getElementById('refreshBtn');
 
       if (!apiKey && !proxy) {
         statusEl.textContent = 'Add your Odds API key in Settings';
@@ -467,53 +465,54 @@
       }
 
       statusEl.textContent = 'Refreshing…';
-      document.getElementById('refreshBtn').disabled = true;
+      refreshBtn.disabled = true;
 
-      const fetched = [];
-      let failedSports = 0;
+      try {
+        const fetched = [];
+        let failedSports = 0;
 
-      for (const sport of SPORTS) {
-        try {
-          const res = await fetch(oddsEndpoint(sport.key, apiKey, proxy), { cache: 'no-store' });
-          if (!res.ok) { failedSports++; continue; }
-          const data = await res.json();
-          data.forEach(g => {
-            const normalized = normalizeGame(g, sport.label);
-            if (normalized) fetched.push(normalized);
-          });
-        } catch { failedSports++; }
-      }
+        for (const sport of SPORTS) {
+          try {
+            const res = await fetch(oddsEndpoint(sport.key, apiKey, proxy), { cache: 'no-store' });
+            if (!res.ok) { failedSports++; continue; }
+            const data = await res.json();
+            data.forEach(g => {
+              const normalized = normalizeGame(g, sport.label);
+              if (normalized) fetched.push(normalized);
+            });
+          } catch (e) {
+            failedSports++;
+            logEdgeError('matchups.oddsFetch.' + sport.label, e);
+          }
+        }
 
-      if (fetched.length === 0) {
-        statusEl.textContent = failedSports > 0
-          ? 'Fetch failed — check API key or rate limit'
-          : 'No games returned';
-        document.getElementById('refreshBtn').disabled = false;
+        if (fetched.length === 0) {
+          statusEl.textContent = failedSports > 0
+            ? 'Fetch failed — check API key or rate limit'
+            : 'No games returned';
+          renderGames();
+          return;
+        }
+
+        allGamesRaw = fetched;
+        writeRawCache(allGamesRaw);
+
+        applyWindow();
+
+        await saveLineSnapshots(allGames);
+        await loadContextIndexes();
+        writeFilteredToStorage();
         renderGames();
-        return;
+
+        const live = allGames.length - allGames.filter(isGradable).length;
+        statusEl.textContent =
+          `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ` +
+          `${allGames.length - live} gradable` + (live ? ` · ${live} live/final excluded` : '');
+      } finally {
+        refreshBtn.disabled = false;
       }
-
-      allGamesRaw = fetched;
-      writeRawCache(allGamesRaw);
-
-      applyWindow();
-
-      await saveLineSnapshots(allGames);
-      await loadContextIndexes();
-      // Rewrite the cache now that open_spread is on each game.
-      writeFilteredToStorage();
-      renderGames();
-
-      const live = allGames.length - allGames.filter(isGradable).length;
-      statusEl.textContent =
-        `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ` +
-        `${allGames.length - live} gradable` + (live ? ` · ${live} live/final excluded` : '');
-      document.getElementById('refreshBtn').disabled = false;
     }
 
-    // The book the operator actually holds an account with. When set,
-    // every price on this page and every price the pipeline grades
-    // against comes from that book rather than a blended consensus.
     function activeBook() {
       return (localStorage.getItem('edge_book_key') || '').trim().toLowerCase();
     }
@@ -521,8 +520,6 @@
     function oddsEndpoint(sportKey, apiKey, proxy) {
       let query = 'regions=us&markets=spreads,h2h,totals&oddsFormat=american';
       const book = activeBook();
-      // Always request the full board as well — if the chosen book has
-      // not priced a game we still want the consensus fallback.
       if (book) query += `&bookmakers=${encodeURIComponent(book)}&includeLinks=true`;
       if (proxy) return `${proxy.replace(/\/+$/, '')}/odds?sport=${encodeURIComponent(sportKey)}&${query}`;
       return `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${apiKey}&${query}`;
@@ -537,10 +534,6 @@
       const bookKey = activeBook();
       const mine = bookKey ? books.find(b => b.key === bookKey) : null;
 
-      // Price against the operator's own book when it has priced the
-      // game. v1 took books[0] — whichever book the API happened to
-      // list first — so the number modelled was rarely the number
-      // available to bet.
       const pick = (marketKey) => {
         if (mine) {
           const mkt = mine.markets?.find(k => k.key === marketKey);
@@ -624,10 +617,9 @@
       return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     }
 
-    // ── CACHE (raw, unfiltered) ──
     function writeRawCache(games) {
       try { localStorage.setItem('edge_all_games_raw', JSON.stringify(games)); }
-      catch {}
+      catch (e) { logEdgeError('matchups.rawCache', e); }
     }
 
     function readCache() {
@@ -660,7 +652,7 @@
             rows.forEach(r => { if (!latest[r.game_id]) latest[r.game_id] = r; });
           }
         }
-      } catch {}
+      } catch (e) { logEdgeError('matchups.snapshotPrefetch', e); }
 
       const rows = games.filter(g => {
         const prev = latest[g.id];
@@ -683,7 +675,7 @@
           },
           body: JSON.stringify(rows),
         });
-      } catch {}
+      } catch (e) { logEdgeError('matchups.snapshotWrite', e); }
     }
 
     // ── CONTEXT INDEXES ──
@@ -708,7 +700,7 @@
           const rows = await res.json();
           rows.forEach(r => { if (!openIndex[r.game_id]) openIndex[r.game_id] = r; });
         }
-      } catch {}
+      } catch (e) { logEdgeError('matchups.ctx.lineHistory', e); }
 
       try {
         const inList = gameIds.map(id => `"${id}"`).join(',');
@@ -724,7 +716,7 @@
             }
           });
         }
-      } catch {}
+      } catch (e) { logEdgeError('matchups.ctx.picks', e); }
 
       allGames.forEach(g => {
         const open = openIndex[g.id];
@@ -733,7 +725,6 @@
       });
     }
 
-    // ── COUNTS ──
     function updateCounts() {
       const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
       const el = document.getElementById('cnt-all');
@@ -744,7 +735,6 @@
       });
     }
 
-    // ── STATUS ──
     function gameStatusLabel(game) {
       const start = new Date(game.commence_time);
       const now = new Date();
@@ -760,7 +750,6 @@
       return { cls: 'live', text: 'LIVE' };
     }
 
-    // ── RENDER ──
     function renderGames() {
       const container = document.getElementById('gamesContainer');
       const games = currentSport === 'all'
@@ -906,7 +895,6 @@
         return;
       }
 
-      // Run only on the visible window, not every game ever fetched.
       const gamesToRun = currentSport === 'all'
         ? allGames
         : allGames.filter(g => g._sport === currentSport);
@@ -917,29 +905,29 @@
       }
 
       btn.disabled = true;
-      const mode = window.EDGE_ORCHESTRATOR.getMode();
 
-      const result = await window.EDGE_ORCHESTRATOR.run({
-        games: gamesToRun,
-        onProgress: (msg) => { statusEl.textContent = msg; },
-      });
+      try {
+        const result = await window.EDGE_ORCHESTRATOR.run({
+          games: gamesToRun,
+          onProgress: (msg) => { statusEl.textContent = msg; },
+        });
 
-      btn.disabled = false;
+        if (result.errors.length) {
+          statusEl.textContent = `Error: ${result.errors[0]}`;
+          return;
+        }
 
-      if (result.errors.length) {
-        statusEl.textContent = `Error: ${result.errors[0]}`;
-        return;
+        await loadContextIndexes();
+        renderGames();
+
+        const pickCount = result.picks.length;
+        const scope = currentSport === 'all' ? 'window' : currentSport;
+        statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games · ${result.duration_ms}ms`;
+      } finally {
+        btn.disabled = false;
       }
-
-      await loadContextIndexes();
-      renderGames();
-
-      const pickCount = result.picks.length;
-      const scope = currentSport === 'all' ? 'window' : currentSport;
-      statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games · ${result.duration_ms}ms`;
     }
 
-    // ── AUTO REFRESH ──
     function scheduleRefresh() {
       const hasLive = allGames.some(g => gameStatusLabel(g).cls === 'live');
       if (hasLive) {
@@ -947,7 +935,6 @@
       }
     }
 
-    // ── INIT ──
     fetchMatchups().then(scheduleRefresh);
   </script>
 
