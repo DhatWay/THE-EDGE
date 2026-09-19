@@ -112,7 +112,6 @@
     .family-vote.neu { border-color: var(--border); color: var(--text-dim); }
     .family-reason { font-size: 12px; color: var(--text-dim); font-weight: 300; margin-top: 4px; padding-left: 12px; }
 
-    /* ── CONTEXT PANELS ── */
     .context-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .context-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; border-radius: 2px; }
     .context-card h4 { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
@@ -136,7 +135,6 @@
     .team-col-stat .v.pos { color: var(--green); }
     .team-col-stat .v.neg { color: var(--red); }
 
-    /* Injuries list */
     .inj-list { display: flex; flex-direction: column; gap: 5px; }
     .inj-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--bg4); border: 1px solid var(--border); border-radius: 2px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; }
     .inj-status { font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; min-width: 48px; text-align: center; }
@@ -287,6 +285,14 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     let allGames = [];
     let currentAnalysis = null;
 
@@ -353,7 +359,6 @@
       if (urlGame) runAnalysis();
     }
 
-    // ── RUN ANALYSIS ──
     async function runAnalysis() {
       const select = document.getElementById('gameSelect');
       if (!select.value) return;
@@ -367,14 +372,12 @@
           <div class="loading-row"><div class="spinner"></div> Loading ratings + context…</div>
         </div>`;
 
-      // Full game object
       const fullGame = allGames.find(g => g.id === gameRef.id) || {
         id: gameRef.id, home_team: gameRef.home, away_team: gameRef.away,
         _sport: gameRef.sport, sport: gameRef.sport, commence_time: gameRef.time,
         spread: null, total: null, ml: null,
       };
 
-      // Power index
       const powerIndex = await loadPowerIndex();
       const homeKey = `${gameRef.sport}:${gameRef.home}`;
       const awayKey = `${gameRef.sport}:${gameRef.away}`;
@@ -398,8 +401,6 @@
       const homePower = { ...homeStats, _coach: homeCoach || null };
       const awayPower = { ...awayStats, _coach: awayCoach || null };
 
-      // Build full context using the live context builder so we get
-      // injuries, ATS, H2H, rest, travel, weather all in one call.
       let context = {};
       if (window.EDGE_CONTEXT) {
         try {
@@ -432,14 +433,13 @@
             context.awayOffDeduction = inj.away_off_deduction || 0;
             context.awayDefDeduction = inj.away_def_deduction || 0;
           }
-        } catch {}
+        } catch (e) { logEdgeError('analysis.context', e); }
       }
 
       if (fullGame.commence_time) {
         context.hoursToGame = Math.max(0, (new Date(fullGame.commence_time) - Date.now()) / 3600000);
       }
 
-      // Compute prior
       let prior;
       try {
         prior = await EDGE_POWER.computeGamePrior(fullGame, {
@@ -454,61 +454,68 @@
           },
         });
       } catch (e) {
+        logEdgeError('analysis.prior', e);
         output.innerHTML = `<div class="section"><div class="empty-sub">Error: ${e.message}</div></div>`;
         return;
       }
 
       prior._raw_game = fullGame;
 
-      // Run algorithms
       const families = await EDGE_ALGOS.runAll(prior, context);
-
-      // Governor
       const governor = EDGE_GOVERNOR.run(families, prior);
-
-      // Physics
       const physics = EDGE_PHYSICS.decide(governor, prior, context);
       physics.pick_id = `analysis_${fullGame.id}`;
       physics.game_id = fullGame.id;
       physics.sport = prior.sport;
 
-      // Claude — only if AI-assisted mode AND actionable
+      // ── Claude selector ──
+      // v2 of claude.js replaced reviewBatch() with a no-op stub.
+      // The selector is the real entry point now — it decides whether
+      // this game is worth a bet and on which side. If the game has
+      // already started, selectFromSlate correctly returns nothing.
       const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
       let claudeResult = null;
 
       if (mode === 'ai_assisted' && physics.decision !== 'PASS' && physics.decision !== 'CAPPED' && physics.units > 0) {
         output.innerHTML = `
           <div class="section">
-            <div class="loading-row"><div class="spinner"></div> Claude risk review…</div>
+            <div class="loading-row"><div class="spinner"></div> Claude review…</div>
           </div>`;
-        const candidates = [{
-  prior,
-  families,
-  governor,
-  context: {
-    lineHistory: context.lineHistory,
-    weather: context.weather,
-    injuries: { home: context.homeInjuries || [], away: context.awayInjuries || [] },
-    rest: { home: context.homeRestDays, away: context.awayRestDays },
-    ats: { home: context.homeAts, away: context.awayAts },
-    h2h: context.h2h,
-  },
-}];
-const selection = await EDGE_CLAUDE.selectFromSlate(candidates, { floor: 0 });
-if (selection.ok && selection.selections.length) {
-  const s = selection.selections[0];
-  claudeResult = {
-    decision: s.confidence >= physics.confidence ? 'approve' : 'reduce',
-    confidence_adjustment: 0,
-    reason: s.reason || s.key_factor || 'Selected',
-  };
-} else {
-  claudeResult = {
-    decision: 'veto',
-    confidence_adjustment: 0,
-    reason: selection.note || 'Claude declined this game',
-  };
-}
+
+        let selection = { ok: false, selections: [], note: 'Claude not available' };
+        try {
+          selection = await EDGE_CLAUDE.selectFromSlate([{
+            prior,
+            families,
+            governor,
+            context,
+            trends: null,
+            h2h: context.h2h || null,
+          }], { floor: 0 });
+        } catch (e) {
+          logEdgeError('analysis.claude', e);
+        }
+
+        if (selection.ok && selection.selections && selection.selections.length) {
+          const s = selection.selections[0];
+          claudeResult = {
+            decision: s.confidence >= physics.confidence ? 'approve' : 'reduce',
+            confidence_adjustment: 0,
+            reason: s.reason || s.key_factor || 'Selected',
+            side: s.side,
+            market: s.market,
+            confidence: s.confidence,
+            selected: true,
+          };
+        } else {
+          claudeResult = {
+            decision: 'veto',
+            confidence_adjustment: 0,
+            reason: (selection && selection.note) || 'Claude declined this game',
+            selected: false,
+          };
+        }
+
         if (claudeResult) {
           const adjusted = EDGE_PHYSICS.applyClaudeAdjustment(physics, claudeResult);
           Object.assign(physics, adjusted);
@@ -538,13 +545,12 @@ if (selection.ok && selection.selections.length) {
               return idx;
             }
           }
-        } catch {}
+        } catch (e) { logEdgeError('analysis.powerIndexRead', e); }
       }
       const fresh = await EDGE_POWER.computeAllTeamRatings();
       return { teams: fresh.teams, coaching: fresh.coaching };
     }
 
-    // ── RENDER ──
     function renderAnalysis({ prior, families, governor, physics, claudeResult, mode, context }) {
       const output = document.getElementById('analysisOutput');
       const conf = physics.confidence || 0;
@@ -591,21 +597,20 @@ if (selection.ok && selection.selections.length) {
           <div class="sec-title">CLAUDE <em>REVIEW</em></div>
           <div class="claude-panel">
             <div class="claude-head">
-              <div class="claude-title">Risk Officer Verdict</div>
+              <div class="claude-title">Selector Verdict</div>
               <span class="claude-decision ${claudeResult.decision}">${(claudeResult.decision || '').toUpperCase()}</span>
             </div>
             <div class="claude-reason">${claudeResult.reason || 'No reason provided'}</div>
             <div class="claude-meta">
-              Adjustment: ${((claudeResult.confidence_adjustment || 0) * 100).toFixed(1)}%
-              ${claudeResult.latency_ms ? ' · ' + claudeResult.latency_ms + 'ms' : ''}
-              ${claudeResult.fallback ? ' · fallback' : ''}
+              ${claudeResult.selected
+                ? `Confidence ${claudeResult.confidence}% · side ${claudeResult.side || '—'} · market ${claudeResult.market || 'spread'}`
+                : 'Not selected for the slate'}
             </div>
           </div>
         </div>` : '';
 
       output.innerHTML = `
 
-        <!-- GAME SUMMARY -->
         <div class="section">
           <div class="sec-title">GAME <em>SUMMARY</em></div>
           <div class="game-card">
@@ -645,7 +650,6 @@ if (selection.ok && selection.selections.length) {
           </div>
         </div>
 
-        <!-- POWER RATINGS COMPARISON -->
         <div class="section">
           <div class="sec-title">POWER <em>COMPARISON</em></div>
           <div class="context-card">
@@ -672,22 +676,12 @@ if (selection.ok && selection.selections.length) {
           </div>
         </div>
 
-        <!-- INJURY REPORT -->
         ${buildInjurySection(prior, context)}
-
-        <!-- ATS FORM -->
         ${buildAtsSection(prior, context)}
-
-        <!-- H2H -->
         ${buildH2HSection(prior, context)}
-
-        <!-- FATIGUE / TRAVEL -->
         ${buildFatigueSection(context)}
-
-        <!-- WEATHER -->
         ${buildWeatherSection(context)}
 
-        <!-- CONSENSUS -->
         <div class="section">
           <div class="sec-title">CONSENSUS <em>DETAILS</em></div>
           <div class="sizing-grid">
@@ -700,7 +694,6 @@ if (selection.ok && selection.selections.length) {
           </div>
         </div>
 
-        <!-- FAMILY VOTES -->
         <div class="section">
           <div class="sec-title">FAMILY <em>VOTES</em></div>
           <div class="family-list">${familyRows}</div>
@@ -708,7 +701,6 @@ if (selection.ok && selection.selections.length) {
 
         ${claudeSection}
 
-        <!-- SIZING -->
         <div class="section">
           <div class="sec-title">FINAL <em>SIZING</em></div>
           <div class="sizing-grid">
@@ -720,7 +712,6 @@ if (selection.ok && selection.selections.length) {
         </div>`;
     }
 
-    // ── INJURY SECTION ──
     function buildInjurySection(prior, context) {
       const homeInj = context.homeInjuries || [];
       const awayInj = context.awayInjuries || [];
@@ -778,7 +769,6 @@ if (selection.ok && selection.selections.length) {
         </div>`;
     }
 
-    // ── ATS SECTION ──
     function buildAtsSection(prior, context) {
       const h = context.homeAts;
       const a = context.awayAts;
@@ -833,7 +823,6 @@ if (selection.ok && selection.selections.length) {
         </div>`;
     }
 
-    // ── H2H SECTION ──
     function buildH2HSection(prior, context) {
       const h2h = context.h2h;
       if (!h2h || !h2h.meetings) {
@@ -863,7 +852,6 @@ if (selection.ok && selection.selections.length) {
         </div>`;
     }
 
-    // ── FATIGUE SECTION ──
     function buildFatigueSection(context) {
       const rows = [];
       if (context.homeRestDays != null || context.awayRestDays != null) {
@@ -890,7 +878,6 @@ if (selection.ok && selection.selections.length) {
         </div>`;
     }
 
-    // ── WEATHER SECTION ──
     function buildWeatherSection(context) {
       const w = context.weather;
       if (!w) return '';
