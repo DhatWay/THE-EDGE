@@ -1,31 +1,28 @@
 // ============================================================
-// EDGE — ATS + H2H TRACKER v2.0
-//
-// v1 could never write a row: it needed historical closing spreads
-// and nothing in the project produced any. ESPN's scoreboard feed
-// drops the line the moment a game goes final, so the spread has to
-// come from the core API, where a `close` block survives on every
-// completed game.
+// EDGE — ATS + H2H TRACKER v2.1
 //
 // Odds sources, in priority order:
 //   1. historical_odds in Supabase       (cached from earlier runs)
 //   2. ESPN core API per-event odds      (close → current → open)
 //   3. line_history                      (games seen live)
-// Anything newly resolved in step 2 is written back to
-// historical_odds, so the second build is near-instant.
 //
-// Tables written:
-//   team_ats       — per team: season ATS, last-10, home/away,
-//                    streak, cover margin, heating/cooling label
-//   matchup_ats    — per unordered pair: H2H ATS over the window,
-//                    per-team cover rates, margins, meeting log
-//   historical_odds— resolved closing lines, cached
+// v2.1 — logEdgeError, empty catches now name which fetch died.
+// The empty tables in the diagnostic looked identical to a rate-
+// limited ESPN response because every failure was swallowed.
 // ============================================================
 
 const EDGE_ATS = (() => {
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
 
   const ESPN_MAP = {
     NFL:   { path: 'football/nfl',                        sport: 'football',   league: 'nfl' },
@@ -37,16 +34,9 @@ const EDGE_ATS = (() => {
     MLS:   { path: 'soccer/usa.1',                        sport: 'soccer',     league: 'usa.1' },
   };
 
-  // Head-to-head needs several seasons of meetings to say anything.
-  // In the NFL two teams may meet once a year, so the history window
-  // has to be at least as long as the H2H window — v1 capped history
-  // at 2 years while claiming a 5-season H2H.
   const H2H_SEASONS = 5;
   const HISTORY_DAYS = H2H_SEASONS * 365;
 
-  // Per-sport history caps. Basketball and baseball generate so many
-  // games that a full 5 years is a very long build; ATS form saturates
-  // well before that, and H2H meetings are frequent anyway.
   const SPORT_HISTORY_DAYS = {
     NFL: 1825, NCAAF: 1825, MLS: 1460,
     NHL: 1095, NBA: 1095, MLB: 1095, NCAAB: 1095,
@@ -56,9 +46,6 @@ const EDGE_ATS = (() => {
   const CHUNK_DAYS = 45;
   const FETCH_CONCURRENCY = 4;
 
-  // Per-event odds lookups are one HTTP call each. Cap them per run so
-  // a first build finishes instead of hanging; whatever resolves gets
-  // cached, and the next run picks up where this one stopped.
   const MAX_ODDS_LOOKUPS_PER_RUN = 1200;
   const ODDS_CONCURRENCY = 6;
 
@@ -80,7 +67,10 @@ const EDGE_ATS = (() => {
         const awayAts = bRes.ok ? (await bRes.json())[0] : null;
         const h2h = await getMatchupHistory(sport, home, away);
         return { home_ats: homeAts, away_ats: awayAts, h2h };
-      } catch { return null; }
+      } catch (e) {
+        logEdgeError('ats.trendSignal', e);
+        return null;
+      }
     },
   };
 
@@ -127,7 +117,6 @@ const EDGE_ATS = (() => {
     const cfg = ESPN_MAP[sport];
     if (!cfg) throw new Error(`Unknown sport: ${sport}`);
 
-    // ── 1. Results ──
     const days = SPORT_HISTORY_DAYS[sport] || HISTORY_DAYS;
     const now = new Date();
     const start = new Date(now.getTime() - days * 86400000);
@@ -142,7 +131,6 @@ const EDGE_ATS = (() => {
       return { teams_written: 0, matchups_written: 0, odds_resolved: 0, note: 'No results' };
     }
 
-    // ── 2. Odds ──
     log('  loading cached odds');
     const oddsIndex = await loadCachedOdds(sport, url, key);
     log(`  ${Object.keys(oddsIndex).length} cached`);
@@ -191,12 +179,11 @@ const EDGE_ATS = (() => {
       return { teams_written: 0, matchups_written: 0, odds_resolved: resolved, note: 'No spreads resolved' };
     }
 
-    // ── 3. Grade every game ATS ──
     const teamState = {};
     const matchupState = {};
 
     priced.forEach(g => {
-      const closeSpread = oddsIndex[g.id].spread;   // home perspective, negative = home favoured
+      const closeSpread = oddsIndex[g.id].spread;
       const margin = g.homeScore - g.awayScore;
       const homeCoverMargin = round(margin + closeSpread, 2);
 
@@ -225,12 +212,10 @@ const EDGE_ATS = (() => {
       });
     });
 
-    // ── 4. Summarise ──
     const teamRows = Object.values(teamState).map(computeTeamSummary).filter(Boolean);
     const matchupRows = Object.values(matchupState).map(computeMatchupSummary).filter(Boolean);
     log(`  ${teamRows.length} team rows · ${matchupRows.length} matchup rows`);
 
-    // ── 5. Write ──
     await upsert(`${url}/rest/v1/team_ats?on_conflict=sport,team_name`, teamRows, key, log, 'team_ats');
     await upsert(`${url}/rest/v1/matchup_ats?on_conflict=sport,team_a,team_b`, matchupRows, key, log, 'matchup_ats');
 
@@ -251,7 +236,6 @@ const EDGE_ATS = (() => {
     const comp = e.competitions?.[0];
     if (!comp) return null;
 
-    // Preseason is season type 1 and must never reach an ATS record.
     const type = e.season?.type ?? comp.season?.type;
     if (type === 1) return null;
 
@@ -267,7 +251,6 @@ const EDGE_ATS = (() => {
 
     const homeScore = parseInt(home.score, 10);
     const awayScore = parseInt(away.score, 10);
-    // A genuine 0-0 draw is a real result; completed is the gate, not the score.
     if (!isFinite(homeScore) || !isFinite(awayScore)) return null;
 
     return {
@@ -276,13 +259,10 @@ const EDGE_ATS = (() => {
       home: homeName, away: awayName,
       homeScore, awayScore,
       neutral: comp.neutralSite === true,
-      // The scoreboard still carries a line on games that have not
-      // gone final, and occasionally on recent ones.
-      inlineOdds: readInlineOdds(comp, homeName, away.team?.abbreviation, home.team?.abbreviation),
+      inlineOdds: readInlineOdds(comp, homeName, home.team?.abbreviation, away.team?.abbreviation),
     };
   }
 
-  // Scoreboard odds, when present: competitions[0].odds[0]
   function readInlineOdds(comp, homeName, awayAbbr, homeAbbr) {
     const o = comp.odds?.[0];
     if (!o) return null;
@@ -302,7 +282,6 @@ const EDGE_ATS = (() => {
     };
   }
 
-  // "BUF -6.5" → -6.5 if BUF is home, +6.5 if BUF is away. "EVEN" → 0.
   function spreadFromDetails(details, homeAbbr, awayAbbr) {
     const txt = details.trim();
     if (/^(even|pk|pick)$/i.test(txt)) return 0;
@@ -321,9 +300,6 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── CORE API ODDS ──
-  // The scoreboard drops the line once a game is final. The core API
-  // keeps open/current/close per provider, which is what a closing
-  // line actually is.
   // ============================================================
 
   async function resolveGameOdds(cfg, eventId) {
@@ -336,7 +312,6 @@ const EDGE_ATS = (() => {
       const items = data.items || [];
       if (!items.length) return null;
 
-      // Prefer a provider that actually carries a close block.
       let best = null;
       for (const item of items) {
         const parsed = parseOddsItem(item);
@@ -345,7 +320,10 @@ const EDGE_ATS = (() => {
         if (!best) best = parsed;
       }
       return best;
-    } catch { return null; }
+    } catch (e) {
+      logEdgeError('ats.resolveGameOdds.' + eventId, e);
+      return null;
+    }
   }
 
   function parseOddsItem(item) {
@@ -358,7 +336,6 @@ const EDGE_ATS = (() => {
     for (const [phase, block] of phases) {
       if (!block) continue;
 
-      // pointSpread lives either on the block or on the home side.
       let spread =
         numOrNull(block.pointSpread?.alternateDisplayValue) ??
         numOrNull(block.pointSpread?.american) ??
@@ -391,7 +368,6 @@ const EDGE_ATS = (() => {
       };
     }
 
-    // Some providers only expose the flat legacy fields.
     const flat = numOrNull(item.spread);
     if (flat != null) {
       return {
@@ -414,7 +390,6 @@ const EDGE_ATS = (() => {
     const out = {};
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-    // historical_odds is the cache this module fills itself.
     try {
       const res = await fetch(
         `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=game_id,spread,total,home_ml,away_ml&limit=50000`,
@@ -426,11 +401,8 @@ const EDGE_ATS = (() => {
           if (r.spread != null) out[r.game_id] = r;
         });
       }
-    } catch {}
+    } catch (e) { logEdgeError('ats.loadCachedOdds.historical.' + sport, e); }
 
-    // line_history covers games the app watched live. Its last row per
-    // game is the closest thing to a close we captured ourselves.
-    // v1 returned early before ever reaching this.
     try {
       const res = await fetch(
         `${url}/rest/v1/line_history?sport=eq.${sport}&select=game_id,spread,total,ml,created_at&order=created_at.asc&limit=50000`,
@@ -444,7 +416,7 @@ const EDGE_ATS = (() => {
           out[r.game_id] = { spread: r.spread, total: r.total ?? null, home_ml: r.ml ?? null };
         });
       }
-    } catch {}
+    } catch (e) { logEdgeError('ats.loadCachedOdds.lineHistory.' + sport, e); }
 
     return out;
   }
@@ -501,7 +473,6 @@ const EDGE_ATS = (() => {
     const homeSplit = recordSplit(seasonGames.filter(g => g.wasHome));
     const awaySplit = recordSplit(seasonGames.filter(g => !g.wasHome));
 
-    // As a favourite vs as an underdog — a real, separable trend.
     const favSplit = recordSplit(seasonGames.filter(g => g.spread < 0));
     const dogSplit = recordSplit(seasonGames.filter(g => g.spread > 0));
 
@@ -570,12 +541,10 @@ const EDGE_ATS = (() => {
       if (aResult === 'W') aW++; else if (aResult === 'L') aL++; else aP++;
       if (bResult === 'W') bW++; else if (bResult === 'L') bL++; else bP++;
 
-      // Straight-up winner
       const aScore = aIsHome ? g.home_score : g.away_score;
       const bScore = aIsHome ? g.away_score : g.home_score;
       if (aScore > bScore) aSU++; else if (bScore > aScore) bSU++;
 
-      // Over / under, when a total was recorded
       if (g.total != null) {
         const combined = g.home_score + g.away_score;
         if (combined > g.total) overs++;
@@ -587,8 +556,6 @@ const EDGE_ATS = (() => {
     const aTotal = aW + aL;
     const bTotal = bW + bL;
 
-    // The last five meetings in plain text — this is what the trend
-    // family and the analysis page quote back to the user.
     const log = recent.slice(-5).map(g => ({
       date: g.date.slice(0, 10),
       home: g.home,
@@ -665,8 +632,6 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── MATCHUP HISTORY (read path) ──
-  // Used by the trend family, the parlay engine, and the analysis
-  // page. Returns everything known about this specific pairing.
   // ============================================================
 
   async function getMatchupHistory(sport, homeTeam, awayTeam) {
@@ -686,7 +651,6 @@ const EDGE_ATS = (() => {
       const h2h = rows[0] || null;
       if (!h2h) return null;
 
-      // Orient the record to the current home/away assignment.
       const homeIsA = h2h.team_a === homeTeam;
       return {
         ...h2h,
@@ -695,9 +659,11 @@ const EDGE_ATS = (() => {
         home_su_wins: homeIsA ? h2h.team_a_su_wins : h2h.team_b_su_wins,
         away_su_wins: homeIsA ? h2h.team_b_su_wins : h2h.team_a_su_wins,
       };
-    } catch { return null; }
+    } catch (e) {
+      logEdgeError('ats.getMatchupHistory', e);
+      return null;
+    }
   }
-
 
   // ============================================================
   // ── FETCH ──
@@ -731,13 +697,14 @@ const EDGE_ATS = (() => {
       if (!res.ok) return [];
       const data = await res.json();
       return data.events || [];
-    } catch { return []; }
+    } catch (e) {
+      logEdgeError('ats.fetchEspnRange.' + path, e);
+      return [];
+    }
   }
 
   // ============================================================
   // ── WRITE ──
-  // on_conflict is required — without it PostgREST cannot resolve
-  // merge-duplicates and either errors or inserts duplicate rows.
   // ============================================================
 
   async function upsert(endpoint, rows, key, log, tableName) {
@@ -767,9 +734,6 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── SEASON LABEL ──
-  // Every cross-year season needs cross-year handling. v1 only did
-  // NBA and NHL, so NFL and college playoff games in January were
-  // filed under the following season and split every record.
   // ============================================================
 
   function seasonLabel(sport, date) {
@@ -781,11 +745,11 @@ const EDGE_ATS = (() => {
 
     switch (sport) {
       case 'NBA':
-      case 'NHL':   return cross(9);   // Oct → Jun
-      case 'NCAAB': return cross(9);   // Nov → Apr
-      case 'NFL':   return cross(3);   // Sep → Feb, labelled by start year
-      case 'NCAAF': return cross(3);   // Aug → Jan
-      default:      return String(y);  // MLB, MLS run inside one year
+      case 'NHL':   return cross(9);
+      case 'NCAAB': return cross(9);
+      case 'NFL':   return cross(3);
+      case 'NCAAF': return cross(3);
+      default:      return String(y);
     }
   }
 
