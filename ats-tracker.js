@@ -1,15 +1,15 @@
 // ============================================================
-// EDGE — ATS + H2H TRACKER v2.2
+// EDGE — ATS + H2H TRACKER v2.3
 //
 // Odds sources, in priority order:
 //   1. historical_odds in Supabase       (cached from earlier runs)
 //   2. ESPN core API per-event odds      (close → current → open)
 //   3. line_history                      (games seen live)
 //
-// v2.2 — fetch uses ?dates=YYYY (single year). ESPN's range
-// format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400 for any
-// window outside the current season, which is why every sport
-// reported "0 completed games" and the ATS tables stayed empty.
+// v2.3 — fetch uses ?dates=YYYY (single year). College endpoints
+// need a groups filter (80 FBS / 50 D-I) or they return nothing.
+// Soccer wants a range rather than a year. Writes now retry on
+// transient fetch failures instead of dropping the chunk.
 // ============================================================
 
 const EDGE_ATS = (() => {
@@ -122,7 +122,7 @@ const EDGE_ATS = (() => {
     const start = new Date(now.getTime() - days * 86400000);
     log(`  results ${start.toISOString().slice(0, 10)} → now`);
 
-    const events = await fetchRangeChunked(cfg.path, start, now, log);
+    const events = await fetchRangeChunked(cfg.path, start, now, log, sport);
     const games = events.map(e => parseEvent(sport, e)).filter(Boolean);
     games.sort((a, b) => new Date(a.date) - new Date(b.date));
     log(`  ${games.length} completed games`);
@@ -633,13 +633,18 @@ const EDGE_ATS = (() => {
   // ── FETCH ──
   //
   // ESPN's range format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400
-  // for any window outside the current season. The single-year
-  // format ?dates=YYYY works and returns the whole season's games
-  // in one call. This fetches year by year, then filters down to
-  // the requested window.
+  // for anything outside the current season. The single-year format
+  // ?dates=YYYY works and returns that season's games in one call.
+  //
+  // College endpoints additionally need a groups filter — 80 is FBS
+  // football, 50 is Division I basketball — or they return an empty
+  // event list even for a valid year.
+  //
+  // Soccer does not honour ?dates=YYYY at all; it needs a range, and
+  // its season fits inside a calendar year, so a full-year range works.
   // ============================================================
 
-  async function fetchRangeChunked(path, start, end, log) {
+  async function fetchRangeChunked(path, start, end, log, sport) {
     const years = [];
     for (let y = start.getFullYear(); y <= end.getFullYear(); y++) years.push(y);
 
@@ -647,7 +652,7 @@ const EDGE_ATS = (() => {
 
     const seen = new Map();
     await parallelMap(years, FETCH_CONCURRENCY, async (year) => {
-      const events = await fetchEspnYear(path, year);
+      const events = await fetchEspnYear(path, year, sport);
       if (log && events.length) log(`    ${year}: ${events.length} events`);
       events.forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
     });
@@ -660,12 +665,18 @@ const EDGE_ATS = (() => {
     });
   }
 
-  async function fetchEspnYear(path, year) {
-    // A limit of 1000 is the max ESPN will return in one call. For
-    // high-volume sports (MLB ~2400 games/year, NCAAB ~5000) this
-    // truncates. Acceptable for ATS since recent-season form is what
-    // matters; if full coverage is needed later, walk month by month.
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${year}&limit=1000`;
+  async function fetchEspnYear(path, year, sport) {
+    const group = sport === 'NCAAF' ? 80
+                : sport === 'NCAAB' ? 50
+                : null;
+
+    const dateParam = sport === 'MLS'
+      ? `${year}0101-${year}1231`
+      : String(year);
+
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard` +
+                `?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=1000`;
+
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) return [];
@@ -679,30 +690,57 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── WRITE ──
+  //
+  // A single failed fetch used to drop an entire chunk of rows. Now
+  // each chunk retries with backoff. A 409 gets one more attempt with
+  // merge-duplicates set explicitly, in case the first request's
+  // Prefer header was lost in transit.
   // ============================================================
 
   async function upsert(endpoint, rows, key, log, tableName) {
     if (!rows.length) return;
     const chunkSize = 400;
+
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
-      try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            apikey: key, Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates,return=minimal',
-          },
-          body: JSON.stringify(chunk),
-        });
-        if (!res.ok) {
+      let ok = false;
+
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              apikey: key, Authorization: `Bearer ${key}`,
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates,return=minimal',
+            },
+            body: JSON.stringify(chunk),
+          });
+          if (res.ok) { ok = true; break; }
+
+          if (res.status === 409) {
+            const retry = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                apikey: key, Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+                Prefer: 'resolution=merge-duplicates,return=minimal',
+              },
+              body: JSON.stringify(chunk),
+            });
+            if (retry.ok) { ok = true; break; }
+          }
+
           const txt = await res.text().catch(() => '');
-          log(`  ${tableName} chunk ${i}: HTTP ${res.status} ${txt.slice(0, 140)}`);
+          log(`  ${tableName} chunk ${i} attempt ${attempt + 1}: HTTP ${res.status} ${txt.slice(0, 140)}`);
+        } catch (e) {
+          log(`  ${tableName} chunk ${i} attempt ${attempt + 1}: ${e.message}`);
         }
-      } catch (e) {
-        log(`  ${tableName} chunk ${i}: ${e.message}`);
+
+        if (!ok) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
       }
+
+      if (!ok) log(`  ${tableName} chunk ${i}: giving up after 3 attempts`);
     }
   }
 
