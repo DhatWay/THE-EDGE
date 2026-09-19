@@ -737,7 +737,8 @@ const EDGE_ORCHESTRATOR = (() => {
     }
 
     const maxBets = parseInt(localStorage.getItem('edge_max_bets') || '0');
-    let betsUsed = parseInt(localStorage.getItem('edge_bets_used') || '0');
+const counterKey = isSim ? 'edge_sim_bets_used' : 'edge_bets_used';
+let betsUsed = parseInt(localStorage.getItem(counterKey) || '0');
 
     const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
     const unitSizeKey = isSim ? 'edge_sim_unit_size' : 'edge_unit_size';
@@ -782,7 +783,7 @@ const EDGE_ORCHESTRATOR = (() => {
 
     localStorage.setItem(bankrollKey, String(bankroll));
     localStorage.setItem(dailyUsedKey, String(dailyUsed));
-    if (!isSim) localStorage.setItem('edge_bets_used', String(betsUsed));
+    localStorage.setItem(counterKey, String(betsUsed));
 
     try {
       const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
