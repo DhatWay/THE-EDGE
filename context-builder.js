@@ -1,7 +1,11 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v3.2
+// EDGE — CONTEXT BUILDER v3.3
 // Adds ATS + H2H trend data loading. Feeds the trend family
 // in algorithms.js with team ATS form and matchup history.
+//
+// v3.3 — logEdgeError, empty catches now surface which fetch
+// failed. v3 previously swallowed everything, so a rate-limited
+// ESPN window looked identical to an empty slate.
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
@@ -20,6 +24,14 @@ const EDGE_CONTEXT = (() => {
   };
 
   const REST_LOOKBACK_DAYS = 60;
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
 
   const TEAM_CITIES = {
     'Arizona Cardinals': [33.5276, -112.2626],
@@ -235,7 +247,7 @@ const EDGE_CONTEXT = (() => {
           { headers }
         );
         if (res.ok) { rows = await res.json(); break; }
-      } catch {}
+      } catch (e) { logEdgeError('context.lineHistory', e); }
     }
     if (!rows) return out;
 
@@ -358,7 +370,10 @@ const EDGE_CONTEXT = (() => {
       if (!res.ok) return [];
       const data = await res.json();
       return data.events || [];
-    } catch { return []; }
+    } catch (e) {
+      logEdgeError('context.espnRange.' + path, e);
+      return [];
+    }
   }
 
   async function loadWeather(games) {
@@ -444,7 +459,7 @@ const EDGE_CONTEXT = (() => {
           precip_type: (snowCm && snowCm > 0) ? 'snow' : (rainIn && rainIn > 0) ? 'rain' : 'none',
           forecast_for: times[bestIdx],
         };
-      } catch {}
+      } catch (e) { logEdgeError('context.weather.' + g.id, e); }
     }));
 
     return out;
@@ -454,7 +469,10 @@ const EDGE_CONTEXT = (() => {
     if (window.EDGE_INJURY && typeof window.EDGE_INJURY.fragment === 'function') {
       try {
         return await window.EDGE_INJURY.fragment(games);
-      } catch { return {}; }
+      } catch (e) {
+        logEdgeError('context.injuries', e);
+        return {};
+      }
     }
     return {};
   }
@@ -469,7 +487,6 @@ const EDGE_CONTEXT = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return out;
 
-    // Collect unique teams per sport
     const teamsBySport = {};
     games.forEach(g => {
       const sport = g._sport || g.sport;
@@ -481,7 +498,6 @@ const EDGE_CONTEXT = (() => {
       if (away) teamsBySport[sport].add(away);
     });
 
-    // Batch team_ats lookups
     for (const sport of Object.keys(teamsBySport)) {
       const teams = Array.from(teamsBySport[sport]);
       if (!teams.length) continue;
@@ -495,11 +511,9 @@ const EDGE_CONTEXT = (() => {
           const rows = await res.json();
           rows.forEach(r => { out.atsByTeam[`${sport}:${r.team_name}`] = r; });
         }
-      } catch {}
+      } catch (e) { logEdgeError('context.atsLookup.' + sport, e); }
     }
 
-    // Batch matchup_ats lookups — one query per sport returns every
-    // matchup involving any of today's teams. Filter after.
     for (const sport of Object.keys(teamsBySport)) {
       const teams = Array.from(teamsBySport[sport]);
       if (!teams.length) continue;
@@ -511,7 +525,6 @@ const EDGE_CONTEXT = (() => {
         );
         if (res.ok) {
           const rows = await res.json();
-          // Map back to each game by matching both teams
           games.forEach(g => {
             const s = g._sport || g.sport;
             if (s !== sport) return;
@@ -522,7 +535,7 @@ const EDGE_CONTEXT = (() => {
             if (match) out.h2hByGame[g.id] = match;
           });
         }
-      } catch {}
+      } catch (e) { logEdgeError('context.h2hLookup.' + sport, e); }
     }
 
     return out;
