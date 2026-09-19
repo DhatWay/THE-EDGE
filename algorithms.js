@@ -1,12 +1,14 @@
 // ============================================================
-// EDGE — ALGORITHMS ENGINE v1.2
+// EDGE — ALGORITHMS ENGINE v1.3
 // 9 signal families · Each consumes a GamePrior from EDGE_POWER
 // Returns: { family, vote, confidence, edge, reason, subs }
 // Deterministic. No Claude. Pure math.
 //
-// v1.2 — familyTrend now reads team ATS form + H2H cover history
-// from context.atsByTeam / context.h2h. Trend is judged on how
-// teams actually perform against the number, not just straight-up.
+// v1.3 — coaching: drop the always-zero halftime sub-signal, it
+// was voting neutral on every game and diluting the family's two
+// real signals. environment: drop the calendar-based cold-month
+// early returns, which exited before resolveFamily() and threw
+// away the actual wind/temp/precip subs.
 // ============================================================
 
 const EDGE_ALGOS = (() => {
@@ -66,7 +68,6 @@ const EDGE_ALGOS = (() => {
     },
   };
 
-  // Minimum sample sizes for ATS signals to fire.
   const MIN_ATS_SAMPLE = 6;
   const MIN_H2H_SAMPLE = 3;
 
@@ -126,10 +127,6 @@ const EDGE_ALGOS = (() => {
     const home = prior.home_power;
     const away = prior.away_power;
 
-    // Glicko-2 carries a deviation alongside the rating — how sure
-    // the system is. The same edge over a settled team is stronger
-    // evidence than over one it has barely seen, so every sub-signal
-    // here is scaled by that certainty rather than taken at face value.
     const homeRd = home.glicko_rd ?? null;
     const awayRd = away.glicko_rd ?? null;
     const certainty = (homeRd != null && awayRd != null)
@@ -148,9 +145,6 @@ const EDGE_ALGOS = (() => {
 
     const subs = [eloVote, srsVote, pythVote];
 
-    // A fourth signal: do the three independent engines agree? When
-    // Glicko, Massey and Colley rank the pairing the same way the
-    // rating is solid; when they diverge the team is hard to read.
     if (home.massey != null && away.massey != null &&
         home.colley != null && away.colley != null) {
       const glickoSide = Math.sign((home.glicko_rating ?? home.elo ?? 1500) - (away.glicko_rating ?? away.elo ?? 1500));
@@ -176,8 +170,6 @@ const EDGE_ALGOS = (() => {
       certainty: certainty != null ? round(certainty, 3) : null,
     });
 
-    // Pull confidence toward neutral when the ratings are thin. This
-    // is what stops a week-1 edge from voting like a week-12 one.
     if (certainty != null && family.vote !== 'neu') {
       const scaled = 0.5 + (family.confidence - 0.5) * (0.55 + 0.45 * certainty);
       family.confidence = round(scaled, 3);
@@ -228,15 +220,11 @@ const EDGE_ALGOS = (() => {
     const coachDiff = (homeC.overall || 50) - (awayC.overall || 50);
     const coachVote = signalVote(coachDiff, 10, 30);
 
-    const htDiff = (homeC.halftime_adjustment || 0) - (awayC.halftime_adjustment || 0);
-    const htVote = signalVote(htDiff, 1, 3);
-
     const closeDiff = ((homeC.close_game_record || 0.5) - (awayC.close_game_record || 0.5)) * 100;
     const closeVote = signalVote(closeDiff, 8, 20);
 
-    return resolveFamily('coaching', [coachVote, htVote, closeVote], {
+    return resolveFamily('coaching', [coachVote, closeVote], {
       coach_diff: round(coachDiff, 1),
-      halftime_diff: round(htDiff, 2),
       close_diff: round(closeDiff, 1),
     });
   }
@@ -476,11 +464,6 @@ const EDGE_ALGOS = (() => {
 
   // ============================================================
   // ── FAMILY 8: TREND ──
-  // Judges how teams actually perform against the number, not
-  // just straight up. Three signals:
-  //   1. ATS form (last 10 cover rate, season cover rate)
-  //   2. ATS momentum (heating up / cooling off from team_ats)
-  //   3. Head-to-head cover history in the matchup
   // ============================================================
 
   function familyTrend(prior, context) {
@@ -492,11 +475,6 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // ── Sub 0: live historical trends ──
-    // Situational, streak, rivalry and player-anchored records that
-    // apply to this exact game. A trend's weight is its sample size
-    // shrunk toward neutral: a 6-0 run on six occurrences is real but
-    // thin, and must not outvote 21-9 on thirty.
     const homeTrends = context.homeTrends || [];
     const awayTrends = context.awayTrends || [];
     if (homeTrends.length || awayTrends.length) {
@@ -505,7 +483,6 @@ const EDGE_ALGOS = (() => {
         list.filter(t => t.market === 'SU' || t.market === 'ATS').forEach(t => {
           const n = t.sample || 0;
           if (n < 3) return;
-          // Beta-style shrink toward 0.5 with a prior of 8 observations.
           const shrunk = ((t.hit_rate || 0.5) * n + 0.5 * 8) / (n + 8);
           const w = Math.min(n / 20, 1) * (t.market === 'ATS' ? 1 : 0.7);
           total += (shrunk - 0.5) * w;
@@ -533,8 +510,6 @@ const EDGE_ALGOS = (() => {
       }
     }
 
-    // ── Sub 1: last-10 ATS cover rate differential ──
-    // Higher cover rate → stronger signal in that team's favor.
     if (homeAts && awayAts &&
         homeAts.last10_wins != null && homeAts.last10_losses != null &&
         awayAts.last10_wins != null && awayAts.last10_losses != null) {
@@ -553,17 +528,11 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No ATS form data'));
     }
 
-    // ── Sub 2: momentum — is a team heating up or cooling off? ──
-    // team_ats.trend_label is 'heating_up' | 'cooling_off' | 'stable'
-    // and trend_delta is last10_rate - season_rate.
     const homeMomentum = momentumSignal(homeAts);
     const awayMomentum = momentumSignal(awayAts);
     const momDiff = homeMomentum - awayMomentum;
     subs.push(signalVote(momDiff, 0.08, 0.20));
 
-    // ── Sub 3: home/away ATS split for each side ──
-    // The home team benefits from being home; use the away team's
-    // road ATS record and the home team's home ATS record.
     if (homeAts && homeAts.home_cover_pct != null &&
         awayAts && awayAts.away_cover_pct != null) {
       const homeHome = homeAts.home_cover_pct;
@@ -574,14 +543,12 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('No H/A split data'));
     }
 
-    // ── Sub 4: H2H cover history ──
     if (h2h && h2h.meetings >= MIN_H2H_SAMPLE) {
       const homeIsA = h2h.team_a === prior.home_team;
       const teamACover = h2h.team_a_cover_pct;
       const teamBCover = h2h.team_b_cover_pct;
 
       if (teamACover != null && teamBCover != null) {
-        // Home team cover rate vs away team's cover rate in this matchup
         const homeCover = homeIsA ? teamACover : teamBCover;
         const awayCover = homeIsA ? teamBCover : teamACover;
         const h2hDiff = (homeCover - awayCover) * 100;
@@ -593,8 +560,6 @@ const EDGE_ALGOS = (() => {
       subs.push(neutral('Not enough H2H meetings'));
     }
 
-    // ── Sub 5: straight regression signal (from team_quality) ──
-    // Kept because regression to mean still matters over the long haul.
     const homeReg = regressionSignal(home);
     const awayReg = regressionSignal(away);
     const regDiff = awayReg - homeReg;
@@ -611,9 +576,6 @@ const EDGE_ALGOS = (() => {
     });
   }
 
-  // Returns a signed value:
-  //   > 0 = team covering better recently than season baseline (heating up)
-  //   < 0 = team covering worse recently (cooling off)
   function momentumSignal(ats) {
     if (!ats) return 0;
     if (typeof ats.trend_delta === 'number' && ats.trend_delta !== 0) {
