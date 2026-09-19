@@ -147,7 +147,6 @@
     .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
     .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
 
-    /* ── CONTEXT PANEL: injuries + ATS + H2H ── */
     .context-panel {
       background: var(--bg2);
       border: 1px solid var(--border);
@@ -380,10 +379,18 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     let portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
     let currentFilter = 'all';
     let allPicks = [];
-    let contextIndex = {};  // game_id → { injuries, ats, h2h }
+    let contextIndex = {};
 
     function setPortfolio(p) {
       portfolio = p;
@@ -440,13 +447,12 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         allPicks = await res.json();
       } catch (e) {
+        logEdgeError('picks.loadFromSupabase', e);
         allPicks = loadCachedPicks();
         if (allPicks.length) showToast('Offline — showing last saved picks', '');
       }
       if (!allPicks.length) allPicks = loadCachedPicks();
 
-      // Load context for the teams in today's picks so the cards can
-      // show injury deductions, ATS form, and H2H data.
       await loadContextIndex();
 
       renderPicks();
@@ -460,7 +466,6 @@
     }
 
     // ── LOAD CONTEXT FOR TODAY'S TEAMS ──
-    // One query per table, filtered to the teams on today's slate.
     async function loadContextIndex() {
       contextIndex = {};
       const url = localStorage.getItem('edge_supabase_url');
@@ -476,7 +481,6 @@
         if (p.away_team) teamsBySport[s].add(p.away_team);
       });
 
-      // ATS by team
       for (const sport of Object.keys(teamsBySport)) {
         const teams = Array.from(teamsBySport[sport]);
         if (!teams.length) continue;
@@ -494,13 +498,11 @@
               contextIndex[k].ats = r;
             });
           }
-        } catch {}
+        } catch (e) { logEdgeError('picks.ctx.ats.' + sport, e); }
       }
 
-      // H2H by matchup (using each pick's game_id)
       const gameIds = allPicks.map(p => p.game_id).filter(Boolean);
       if (gameIds.length) {
-        const inList = gameIds.map(id => `"${id}"`).join(',');
         try {
           const res = await fetch(
             `${url}/rest/v1/matchup_ats?sport=neq.none&select=*&limit=200`,
@@ -519,11 +521,8 @@
               }
             });
           }
-        } catch {}
+        } catch (e) { logEdgeError('picks.ctx.h2h', e); }
       }
-
-      // Injuries: read from the last run cache if present (the pipeline
-      // stores them inline in governor_snapshot for each pick).
     }
 
     // ── RUN PIPELINE ──
@@ -535,20 +534,24 @@
 
       btn.disabled = true;
       btn.textContent = 'RUNNING…';
-      const result = await window.EDGE_ORCHESTRATOR.run({
-        games,
-        minConfidence: parseFloat(localStorage.getItem('edge_min_conf') || '0'),
-        onProgress: (msg) => { btn.textContent = msg.slice(0, 20); },
-      });
-      btn.disabled = false;
-      btn.textContent = '▶ RUN';
 
-      if (result.errors.length) {
-        showToast('Error: ' + result.errors[0], 'red');
-        return;
+      try {
+        const result = await window.EDGE_ORCHESTRATOR.run({
+          games,
+          minConfidence: parseFloat(localStorage.getItem('edge_min_conf') || '0'),
+          onProgress: (msg) => { btn.textContent = msg.slice(0, 20); },
+        });
+
+        if (result.errors.length) {
+          showToast('Error: ' + result.errors[0], 'red');
+          return;
+        }
+        await loadPicks();
+        showToast(`✓ ${result.picks.length} pick${result.picks.length === 1 ? '' : 's'}`, '');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '▶ RUN';
       }
-      await loadPicks();
-      showToast(`✓ ${result.picks.length} pick${result.picks.length === 1 ? '' : 's'}`, '');
     }
 
     async function clearTodaysPicks() {
@@ -577,6 +580,7 @@
         renderPicks();
         showToast('Today\'s picks cleared', '');
       } catch (e) {
+        logEdgeError('picks.clearTodaysPicks', e);
         showToast('Clear failed: ' + e.message, 'red');
       }
     }
@@ -685,7 +689,6 @@
     function pickHasHeavyInjuries(p) {
       const ph = p.physics_output || p;
       const gs = ph.governor_snapshot || p.governor_snapshot || {};
-      // Look for injury family breakdown with a strong "no" vote
       const bd = gs.breakdown || [];
       const inj = bd.find(b => b.family === 'injury');
       if (!inj) return false;
@@ -732,7 +735,6 @@
       list.innerHTML = filtered.map(buildPickCard).join('');
     }
 
-    // ── BUILD PICK CARD ──
     function buildPickCard(p) {
       const conf = p.confidence || 0;
       const t = tier(conf);
@@ -766,7 +768,6 @@
           new Date(p.commence_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '—';
 
-      // Family chips from governor snapshot
       const ph = p.physics_output || p;
       const gs = p.governor_snapshot || ph.governor_snapshot || {};
       const breakdown = gs.breakdown || [];
@@ -776,7 +777,6 @@
         return `<span class="family-chip ${b.vote}">${label} ${vote}</span>`;
       }).join('');
 
-      // Context panel: injuries, ATS, H2H
       const contextPanel = buildContextPanel(p);
 
       const claudeNote = isAi && p.claude_output
@@ -884,7 +884,6 @@
         </div>`;
     }
 
-    // ── CONTEXT PANEL: injuries + ATS + H2H ──
     function buildContextPanel(p) {
       const ctx = getPickContext(p);
       const ph = p.physics_output || p;
@@ -893,7 +892,6 @@
 
       const rows = [];
 
-      // ── ATS form ──
       const homeAts = ctx.homeAts;
       const awayAts = ctx.awayAts;
 
@@ -901,7 +899,6 @@
         rows.push(`<div class="ctx-row"><span class="ctx-label">ATS Form</span><span class="ctx-value">${formatAtsCompare(p, homeAts, awayAts)}</span></div>`);
       }
 
-      // ── H2H ──
       if (ctx.h2h && ctx.h2h.meetings >= 3) {
         const homeIsA = ctx.h2h.team_a === p.home_team;
         const homeCover = homeIsA ? ctx.h2h.team_a_cover_pct : ctx.h2h.team_b_cover_pct;
@@ -911,7 +908,6 @@
         }
       }
 
-      // ── Injury impact ──
       const inj = bd.find(b => b.family === 'injury');
       if (inj && inj.vote !== 'neu') {
         const data = inj.data || {};
@@ -1051,7 +1047,7 @@
           },
           body: JSON.stringify(row),
         });
-      } catch {}
+      } catch (e) { logEdgeError('picks.logBet', e); }
     }
 
     function showToast(msg, color) {
