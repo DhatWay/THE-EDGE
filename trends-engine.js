@@ -1,24 +1,29 @@
 // ============================================================
-// EDGE — TRENDS ENGINE v1.1
+// EDGE — TRENDS ENGINE v1.2
 //
 // A trend is a repeatable situation with a track record — not a
 // pattern in your own pick history.
 //
-// v1.1 — situationContext now accepts a shared context and falls
-// back to it when the game object doesn't carry enriched fields.
-// Without this, seven of the twenty situations (rest, prior
-// result, prior margin, game-of-season, season progress) could
-// never fire on today's board — the historical table held them,
-// but nothing matched a current game against them.
-// writeTrends now clears previous rows on a 409 unique-constraint
-// clash instead of failing the whole batch.
-// fetchRange tries multiple ESPN URL shapes.
+// v1.2 — fetch uses ?dates=YYYY (single year). ESPN's range
+// format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400 for anything
+// outside the current season, which is why every sport reported
+// "0 completed games" and no trend was ever built.
+// College endpoints need a groups filter (80 FBS / 50 D-I) or
+// they return nothing. Soccer wants a range, not a year.
 // ============================================================
 
 const EDGE_TRENDS = (() => {
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
 
   const ESPN_MAP = {
     NFL:   'football/nfl',
@@ -33,7 +38,6 @@ const EDGE_TRENDS = (() => {
   const QB_SPORTS = new Set(['NFL', 'NCAAF']);
 
   const HISTORY_YEARS = { NFL: 6, NCAAF: 6, NBA: 4, NHL: 4, MLB: 4, NCAAB: 4, MLS: 5 };
-  const CHUNK_DAYS = { NFL: 30, NCAAF: 21, MLS: 30, MLB: 14, NBA: 14, NHL: 14, NCAAB: 5 };
 
   const MIN_SAMPLE = 5;
   const MIN_HIT_RATE = 0.70;
@@ -138,7 +142,7 @@ const EDGE_TRENDS = (() => {
     const start = new Date(end.getTime() - years * 365 * 86400000);
     log(`  results ${start.toISOString().slice(0, 10)} → now`);
 
-    const events = await fetchRange(sport, start, end);
+    const events = await fetchRange(sport, start, end, log);
     log(`  ${events.length} completed games`);
     if (!events.length) return { games: 0, trends_written: 0, qualifying: 0 };
 
@@ -148,17 +152,12 @@ const EDGE_TRENDS = (() => {
     const logs = buildTeamLogs(sport, events, odds);
     log(`  ${Object.keys(logs).length} teams`);
 
-    // Report QB coverage so a silent gap is visible rather than
-    // producing zero QB-anchored trends with no explanation.
     if (QB_SPORTS.has(sport)) {
       let qbGames = 0, totalGames = 0;
       Object.values(logs).forEach(games => {
         games.forEach(g => { totalGames++; if (g.qb) qbGames++; });
       });
       log(`  ${qbGames}/${totalGames} team-game entries with an identified starting QB`);
-      if (!qbGames) {
-        log(`  no QB-anchored trends will be built — ESPN did not include leaders`);
-      }
     }
 
     const rows = [];
@@ -418,22 +417,6 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── APPLY TO TODAY ──
-  //
-  // context (optional) may carry these team-keyed maps, built by the
-  // caller from the same historical pull that produced the trends:
-  //
-  //   restByTeam            { "NFL:Kansas City Chiefs": 7 }
-  //   prevResultByTeam      { "NFL:Kansas City Chiefs": "W" }
-  //   prevMarginByTeam      { "NFL:Kansas City Chiefs": 10 }
-  //   gameOfSeasonByTeam    { "NFL:Kansas City Chiefs": 4 }
-  //   homeGameOfSeasonByTeam{ "NFL:Kansas City Chiefs": 2 }
-  //   lostLastMeetingByTeam { "NFL:Kansas City Chiefs": true }
-  //   playedBeforeByTeam    { "NFL:Kansas City Chiefs": true }
-  //   seasonProgressByGame  { "<gameId>": 0.8 }
-  //
-  // game fields (home_rest_days, home_prev_result, etc.) take
-  // precedence when set, so an orchestrator that has already
-  // enriched the board does not need to build the maps.
   // ============================================================
 
   async function trendsForGame(game, options = {}) {
@@ -488,8 +471,6 @@ const EDGE_TRENDS = (() => {
     const spread = isHome ? (game.spread ?? null)
                           : (game.spread != null ? -game.spread : null);
 
-    // Prefer values set directly on the game. Fall back to the shared
-    // context when the caller provides one.
     const restDays = isHome
       ? (game.home_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null)
       : (game.away_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null);
@@ -552,22 +533,27 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── FETCH ──
+  //
+  // ESPN's range format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400
+  // for anything outside the current season. Single-year ?dates=YYYY
+  // works and returns a whole season in one call.
+  //
+  // College needs a groups filter (80 FBS / 50 D-I) or returns nothing.
+  // Soccer does not honour ?dates=YYYY — it wants a range, and its
+  // season fits inside a calendar year.
   // ============================================================
 
-  async function fetchRange(sport, start, end) {
+  async function fetchRange(sport, start, end, log) {
     const path = ESPN_MAP[sport];
-    const days = CHUNK_DAYS[sport] || 21;
-    const windows = [];
-    let cur = new Date(start);
-    while (cur < end) {
-      const to = new Date(Math.min(cur.getTime() + days * 86400000, end.getTime()));
-      windows.push([new Date(cur), to]);
-      cur = new Date(to.getTime() + 86400000);
-    }
+    const years = [];
+    for (let y = start.getFullYear(); y <= end.getFullYear(); y++) years.push(y);
+
+    if (log) log(`  fetching ${years.length} season${years.length === 1 ? '' : 's'}: ${years.join(', ')}`);
 
     const seen = new Map();
-    await parallelMap(windows, FETCH_CONCURRENCY, async ([a, b]) => {
-      const events = await fetchWindow(path, a, b);
+    await parallelMap(years, FETCH_CONCURRENCY, async (year) => {
+      const events = await fetchYear(path, year, sport);
+      if (log && events.length) log(`    ${year}: ${events.length} events`);
       events.forEach(e => {
         if (!e?.id || seen.has(e.id)) return;
         const comp = e.competitions?.[0];
@@ -578,33 +564,37 @@ const EDGE_TRENDS = (() => {
       });
     });
 
-    return Array.from(seen.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    return Array.from(seen.values())
+      .filter(e => {
+        const t = new Date(e.date).getTime();
+        return isFinite(t) && t >= startMs && t <= endMs;
+      })
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
-  // ESPN's accepted query shapes drift without notice. Try the known
-  // ones in order and return the first that produces events.
-  async function fetchWindow(path, a, b) {
-    const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
-    const group = /college-football/.test(path) ? 80
-                : /college-basketball/.test(path) ? 50
+  async function fetchYear(path, year, sport) {
+    const group = sport === 'NCAAF' ? 80
+                : sport === 'NCAAB' ? 50
                 : null;
 
-    const urls = [];
-    if (group) urls.push(`${base}?dates=${fmt(a)}-${fmt(b)}&groups=${group}&limit=900`);
-    urls.push(`${base}?dates=${fmt(a)}-${fmt(b)}&limit=1000`);
-    urls.push(`${base}?limit=1000&dates=${fmt(a)}-${fmt(b)}`);
-    urls.push(`${base}?dates=${fmt(a)}-${fmt(b)}`);
+    const dateParam = sport === 'MLS'
+      ? `${year}0101-${year}1231`
+      : String(year);
 
-    for (const url of urls) {
-      try {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) continue;
-        const data = await res.json();
-        if (data.events && data.events.length) return data.events;
-      } catch {}
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard` +
+                `?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=1000`;
+
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events || [];
+    } catch (e) {
+      logEdgeError('trends.fetchYear.' + path + '.' + year, e);
+      return [];
     }
-    return [];
   }
 
   async function loadClosingLines(sport, url, key) {
@@ -619,7 +609,7 @@ const EDGE_TRENDS = (() => {
           if (r.spread != null) out[r.game_id] = r;
         });
       }
-    } catch {}
+    } catch (e) { logEdgeError('trends.loadClosingLines.' + sport, e); }
     return out;
   }
 
@@ -641,10 +631,6 @@ const EDGE_TRENDS = (() => {
     const size = 400;
     let probe = await postRows(url, headers, rows.slice(0, size));
 
-    // A unique constraint is not a schema rejection. Reaching 409
-    // proves the payload is valid — the previous run's rows are the
-    // only thing in the way. Clearing them first is safe precisely
-    // because the insert got that far.
     if (!probe.ok && probe.status === 409) {
       log(`  trends: unique constraint — clearing previous run and retrying`);
       try {
@@ -676,7 +662,7 @@ const EDGE_TRENDS = (() => {
       await fetch(`${url}/rest/v1/trends?sport=eq.${sport}&updated_at=neq.${encodeURIComponent(stamp)}`, {
         method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
       });
-    } catch {}
+    } catch (e) { logEdgeError('trends.writeTrends.cleanup', e); }
 
     return written;
   }
