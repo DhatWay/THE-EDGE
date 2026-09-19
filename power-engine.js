@@ -1,14 +1,13 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v4.0
+// EDGE — POWER RATINGS ENGINE v4.1
 // Regular season only · chunked fetch (no silent truncation)
 // Opponent-adjusted SRS · sequential Elo · draws handled
+// v4.1 — ESPN shape fallback resets per run · day-by-day warns
 // ============================================================
 
 const EDGE_POWER = (() => {
 
-  // Build stamp. Printed by the diagnostic so there is never any doubt
-  // about which copy of this file the browser is actually running.
-  const BUILD = 'pe-20260916-0419';
+  const BUILD = 'pe-20260918-1400';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -23,9 +22,6 @@ const EDGE_POWER = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // ── SEASON WINDOWS (month/day) ──
-  // Only sports whose window contains today get computed. The start date is
-  // also the earliest date we pull games from, so last season never bleeds in.
   const SEASON_WINDOWS = {
     NFL:   { start: [9, 1],   end: [2, 15]  },
     NBA:   { start: [10, 15], end: [6, 30]  },
@@ -36,15 +32,13 @@ const EDGE_POWER = (() => {
     MLS:   { start: [2, 20],  end: [12, 15] },
   };
 
-  // Days per ESPN request. ESPN caps a scoreboard response at ~1000 events,
-  // so high-volume sports need narrower windows or games vanish silently.
   const CHUNK_DAYS = {
     NFL: 30, NCAAF: 21, MLS: 30,
     MLB: 14, NBA: 14, NHL: 14,
     NCAAB: 5,
   };
 
-  const MAX_CHUNKS = 40; // hard stop so a bad date can't spin forever
+  const MAX_CHUNKS = 40;
 
   const SPORT_CONFIG = {
     NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22,  k: 8,  movCap: 28, eloK: 20, eloHFA: 55  },
@@ -56,7 +50,6 @@ const EDGE_POWER = (() => {
     MLS:   { avgPF: 1.5, avgPA: 1.5, pyExp: 2.0,   scale: 1.2, k: 15, movCap: 3,  eloK: 20, eloHFA: 60  },
   };
 
-  // Sports where a regulation draw is a real outcome.
   const DRAWS_POSSIBLE = new Set(['MLS', 'NFL', 'NCAAF']);
 
   const COACHING_WEIGHTS = {
@@ -67,21 +60,12 @@ const EDGE_POWER = (() => {
     DEFAULT: { halftime: 0.8, close: 0.5, maxAdj: 2.5 },
   };
 
-  // Margin that counts as a "close game" for the coaching rating.
   const CLOSE_MARGIN = { NFL: 7, NCAAF: 7, NBA: 5, NCAAB: 5, MLB: 1, NHL: 1, MLS: 1, DEFAULT: 5 };
 
   const MAX_LOOKBACK_DAYS = 400;
 
-  // Which ESPN query shape works, remembered for the run. Declared up
-  // here with the other constants: this module returns its exports
-  // near the top, so anything declared below that return is in the
-  // temporal dead zone and throws the first time it is touched.
   const _espnShape = { chosen: null, dayFallback: false };
 
-  // Measured constants from the backfill, loaded once per session.
-  // Until a backfill has run this stays empty and the compiled
-  // defaults apply — which is why a projection is only as honest as
-  // the calibration behind it.
   const _calibration = { loaded: false, bySport: {} };
 
   return {
@@ -122,7 +106,6 @@ const EDGE_POWER = (() => {
     return now >= start || now <= end;
   }
 
-  // The most recent occurrence of this sport's season start, at or before now.
   function seasonStart(sport, now = new Date()) {
     const w = SEASON_WINDOWS[sport];
     if (!w) return new Date(now.getTime() - MAX_LOOKBACK_DAYS * 86400000);
@@ -139,14 +122,15 @@ const EDGE_POWER = (() => {
   // ── MAIN ──
   // ============================================================
 
-  // scopeTeams: when supplied, only these teams are written to the
-  // database. The ratings are still computed across the whole league
-  // because SRS and Elo are opponent-adjusted — a rating built from a
-  // subset of the schedule is not a rating. The scope applies at the
-  // persist step, so the table holds only the teams in play.
   async function computeAllTeamRatings(options = {}) {
     const { scopeTeams = null, onProgress = null } = options;
     const emit = (m) => { if (typeof onProgress === 'function') onProgress(m); };
+
+    // Reset the ESPN query-shape memory for each run. Without this a
+    // single range failure in any sport forced every subsequent sport
+    // through the slower day-by-day path for the life of the page.
+    _espnShape.chosen = null;
+    _espnShape.dayFallback = false;
 
     const results = {
       teams: {}, coaching: {}, errors: [], counts: {},
@@ -159,10 +143,8 @@ const EDGE_POWER = (() => {
       : null;
 
     const now = new Date();
-_espnShape.chosen = null;
-_espnShape.dayFallback = false;
 
-for (const [sport, path] of Object.entries(ESPN_MAP)) {
+    for (const [sport, path] of Object.entries(ESPN_MAP)) {
       if (!isSportInSeason(sport, now)) {
         results.skipped.push(sport);
         results.counts[sport] = 0;
@@ -189,9 +171,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
         const { teamMap, chronological } = buildTeamStates(sport, events);
         if (!teamMap.size) { results.counts[sport] = 0; continue; }
 
-        // Glicko-2, Massey and Colley replace the in-file SRS and Elo.
-        // The old Elo reset every team to 1500 on each rebuild and the
-        // old "SRS" was raw average margin with no opponent adjustment.
         let glickoState = {}, masseyMap = {}, colleyMap = {}, blended = {}, adMap = {};
         const core = window.EDGE_RATING;
 
@@ -213,8 +192,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
         const srsMap = core ? {} : computeSRS(sport, teamMap);
         const eloMap = core ? {} : computeElo(sport, chronological);
 
-        // Conference all-star sides appear in the schedule and are not
-        // teams. They show up with a handful of games and skew a league.
         const gameCounts = Array.from(teamMap.values()).map(s => s.games).sort((a, b) => a - b);
         const median = gameCounts[Math.floor(gameCounts.length / 2)] || 1;
 
@@ -233,8 +210,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
             blended: blended[teamName],
             attackDefense: adMap[teamName],
           });
-          // Scope filter is applied here, after the league-wide SRS and
-          // Elo passes have already used every team.
           if (scope && !scope.has(teamName)) continue;
 
           if (rating) {
@@ -263,9 +238,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
   // ============================================================
   // ── FETCH ──
-  // Chunked so ESPN's ~1000-event response cap never truncates a
-  // season, and filtered to completed regular/post season games so
-  // preseason results never reach the ratings.
   // ============================================================
 
   async function fetchSeasonEvents(sport, path, start, end) {
@@ -296,12 +268,7 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
-  // Preseason is season type 1. Only completed regular (2) and
-  // postseason (3) games are allowed to move a rating.
   function isRatableEvent(e) {
-    // Football and the US leagues use 1=pre, 2=regular, 3=post. Soccer
-    // uses competition ids instead (MLS returns values like 13846), so
-    // anything that is not explicitly preseason is allowed through.
     const type = e.season?.type ?? e.competitions?.[0]?.season?.type;
     if (type === 1) return false;
 
@@ -316,23 +283,10 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     return true;
   }
 
-  // ESPN's seasontype parameter is designed to pair with dates=YYYY,
-  // not with an explicit date range. Sending both returns an empty
-  // event list, which silently produced zero teams for every sport.
-  // Preseason is filtered in isRatableEvent instead, from the season
-  // type on the event itself, which is reliable.
-  // ESPN is undocumented and its accepted query shapes drift without
-  // notice. A single hard-coded URL returning 400 took the entire
-  // ratings build down silently, so this tries the known-good shapes
-  // in order and remembers which one worked for the rest of the run.
   async function fetchGamesInRange(path, start, end) {
     const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
     const college = /college/.test(path);
 
-    // ESPN truncates college slates unless a group is named, and the
-    // group differs by sport: 80 is FBS football, 50 is Division I
-    // basketball. Sending 50 to football returns almost nothing, which
-    // is why a month of college football produced fifteen games.
     const group = collegeGroup(path);
 
     const shapes = [
@@ -342,7 +296,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     ];
     if (group) shapes.unshift((s, e) => `${base}?dates=${s}-${e}&groups=${group}&limit=900`);
 
-    // A shape that already worked this run is tried first.
     const order = _espnShape.chosen != null
       ? [shapes[_espnShape.chosen], ...shapes.filter((_, i) => i !== _espnShape.chosen)]
       : shapes;
@@ -362,13 +315,10 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       }
     }
 
-    // Every range shape failed. Ranges are not always honoured, but a
-    // single date always is, so walk the window a day at a time.
     _espnShape.dayFallback = true;
     return fetchDayByDay(base, start, end, group);
   }
 
-  // A real team plays a full schedule. An all-star side plays once.
   const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
 
   function isAllStarSide(name, games, medianGames) {
@@ -377,8 +327,8 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
   }
 
   function collegeGroup(path) {
-    if (/college-football/.test(path)) return 80;   // FBS
-    if (/college-basketball/.test(path)) return 50; // Division I
+    if (/college-football/.test(path)) return 80;
+    if (/college-basketball/.test(path)) return 50;
     return null;
   }
 
@@ -391,9 +341,9 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       days.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`);
     }
     if (days.length > 400) {
-  console.warn(`[EDGE_POWER] day-by-day fetch skipped: ${days.length} days exceeds 400-day cap`);
-  return [];
-}   // guard against a bad window
+      console.warn(`[EDGE_POWER] day-by-day fetch skipped: ${days.length} days exceeds the 400-day cap`);
+      return [];
+    }
 
     const suffix = group ? `&groups=${group}&limit=900` : '&limit=1000';
     const seen = new Map();
@@ -459,7 +409,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       const awayScore = parseInt(away.score, 10);
       if (!isFinite(homeScore) || !isFinite(awayScore)) return;
 
-      // A neutral-site game gets no home edge in the Elo pass.
       const neutral = comp.neutralSite === true;
 
       pushGame(sport, teamMap, homeName, home.team, homeScore, awayScore, true, awayName);
@@ -514,9 +463,7 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
   }
 
   // ============================================================
-  // ── SRS (opponent adjusted) ──
-  // rating = capped average margin + average opponent rating,
-  // solved iteratively then centred on zero.
+  // ── SRS ──
   // ============================================================
 
   function computeSRS(sport, teamMap, iterations = 40) {
@@ -548,7 +495,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       rating = next;
     }
 
-    // Centre so the league averages zero.
     const mean = names.length
       ? names.reduce((acc, n) => acc + rating[n], 0) / names.length
       : 0;
@@ -558,7 +504,7 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
   }
 
   // ============================================================
-  // ── ELO (sequential, margin aware) ──
+  // ── ELO ──
   // ============================================================
 
   function computeElo(sport, chronological) {
@@ -657,9 +603,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       offense: round(offense, 1),
       defense: round(defense, 1),
       pythagorean: round(pyth, 4),
-      // srs and elo keep their column names so nothing downstream
-      // breaks, but they now carry the opponent-adjusted Massey value
-      // and the Glicko-2 rating rather than raw margin and a reset Elo.
       srs: adjusted.massey ?? adjusted.srs ?? round(avgMOV, 2),
       elo: adjusted.glicko ? Math.round(adjusted.glicko.rating) : (adjusted.elo ?? 1500),
 
@@ -775,11 +718,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
     const marketSpread = market?.current_spread ?? null;
 
-    // ── Projected score ──
-    // Attack meets defence, per possession, opponent-adjusted. No
-    // betting line is read to produce this number, so the comparison
-    // against the market at the end is a genuine disagreement rather
-    // than a residual from a model fitted to spreads.
     let projection = null;
     let modelSpread = null;
 
@@ -799,14 +737,11 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       projection = core.projectScore(sport, homeAD, awayAD, options.league, {
         neutral: game.neutral === true,
         interactions: options.interactions || null,
-        // Measured from real results when a backfill has run.
         homeAdvantage: calib?.home_advantage ?? null,
       });
       if (projection) modelSpread = projection.model_spread;
     }
 
-    // Fall back to the rating gap when the possession model has no
-    // data for one of these teams.
     if (modelSpread === null) {
       const homePts = homeStats.composite_points;
       const awayPts = awayStats.composite_points;
@@ -841,9 +776,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
     let priorHomeProb = clamp(0.5 + (rawEdge * probShiftPerPoint), 0.05, 0.95);
 
-    // When both teams carry a Glicko rating, the win probability comes
-    // from the distributions rather than a linear shift — it accounts
-    // for how sure the system is of each team.
     let ratingProb = null;
     if (core && homeStats.glicko_rating != null && awayStats.glicko_rating != null) {
       ratingProb = core.glickoWinProbability(
@@ -858,10 +790,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       home_team: game.home_team || game.home,
       away_team: game.away_team || game.away,
       commence_time: game.commence_time || game.time || null,
-      // Pass the market through whole. The caller decides what's on it —
-      // spread prices, which book quoted them, the deep link — and
-      // whitelisting five fields here silently dropped the rest before
-      // physics could stamp them onto the pick.
       market: {
         ...(market || {}),
         open_spread: market?.open_spread ?? null,
@@ -876,16 +804,10 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       model_spread: totalModelSpread,
       projection,
 
-      // The only question a spread actually asks: how often does this
-      // side beat that number? Answered from the model's own measured
-      // error, so it is a probability rather than a direction.
       cover: (core && projection && marketSpread !== null)
         ? core.coverProbability(projection.margin, marketSpread,
             calib?.sigma_settled ?? calib?.projection_sigma ?? null,
             {
-              // Once the model has been measured against closing lines,
-              // its disagreement is shrunk by the weight that measurement
-              // earned. Without this the probability is inflated.
               lambda: calib?.market_lambda ?? null,
               blendSigma: calib?.blend_sigma ?? null,
             })
@@ -902,7 +824,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       rating_certainty: {
         home_rd: homeStats.glicko_rd ?? null,
         away_rd: awayStats.glicko_rd ?? null,
-        // Wider deviation means the projection deserves less trust.
         combined: (homeStats.glicko_rd != null && awayStats.glicko_rd != null)
           ? round(Math.sqrt(homeStats.glicko_rd ** 2 + awayStats.glicko_rd ** 2), 1) : null,
       },
@@ -934,8 +855,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
   // ============================================================
   // ── PUBLIC FETCH ──
-  // The backfill needs history over arbitrary windows and must not
-  // reimplement the ESPN quirks solved here.
   // ============================================================
 
   async function fetchGamesBetween(sport, startDate, endDate, options = {}) {
@@ -946,7 +865,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     return raw ? events : parseEvents(sport, events);
   }
 
-  // Flatten ESPN events into the shape the rating core consumes.
   function parseEvents(sport, events) {
     const out = [];
     (events || []).forEach(e => {
@@ -972,7 +890,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     return out.sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
-  // Season type 3 is the postseason; those results carry more weight.
   function importanceOf(e, comp) {
     const type = e.season?.type ?? comp?.season?.type;
     if (type === 3) return 'playoff';
@@ -982,9 +899,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
   // ============================================================
   // ── SEASON CARRY-OVER ──
-  // Last season's final Glicko state, regressed toward the mean with
-  // deviation restored. Without it every rebuild starts the whole
-  // league at 1500 and week 1 carries no information at all.
   // ============================================================
 
   async function loadCarryover(sport) {
@@ -1005,10 +919,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     } catch { return null; }
   }
 
-  // Run once a season has finished, to seed the next one. Offseason
-  // adjustments are supplied in points of team strength — a trade, a
-  // draft haul, a coaching change — and inflate deviation in proportion,
-  // because a team that changed a lot is one we know less about.
   async function saveCarryover(sport, glickoState, options = {}) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     if (!url || !key) return { ok: false, error: 'Supabase not connected' };
@@ -1057,16 +967,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
   // ============================================================
   // ── PERSIST ──
-  // v4.0 emitted wins / losses / draws, which do not exist as columns
-  // on the live power_ratings table. PostgREST rejects the whole batch
-  // with 400 on an unknown column — and because the old code deleted
-  // first and inserted second, a rejected batch left the table empty.
-  // That is why ratings "stopped working" after a rebuild.
-  //
-  // Now: learn the real column set, strip anything the table does not
-  // have, prove the insert works on the first chunk, and only then
-  // clear the previous run's rows. A failed insert can no longer wipe
-  // good data.
   // ============================================================
 
   async function persistRatings(results, emit = () => {}) {
@@ -1083,8 +983,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     const teamRows = Object.values(results.teams);
     const coachRows = Object.values(results.coaching);
 
-    // Nothing rated means something upstream failed. Never replace a
-    // populated table with nothing.
     if (!teamRows.length) {
       report.errors.push('No ratings computed — table left untouched');
       return report;
@@ -1109,7 +1007,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       'Content-Type': 'application/json', Prefer: 'return=minimal',
     };
 
-    // 1. Learn which columns the table actually has.
     const allowed = await discoverColumns(url, key, table);
     let payload = rows;
     if (allowed) {
@@ -1126,16 +1023,10 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       });
     }
 
-    // 2. Prove the insert works before deleting anything.
     const chunkSize = 200;
     const first = payload.slice(0, chunkSize);
     let probe = await postDroppingUnknown(url, table, headers, first, report, emit);
 
-    // A unique constraint is not a schema rejection. Reaching 23505
-    // proves the payload is valid and only the previous run is in the
-    // way — coaching_ratings has a unique index on (team_id, sport),
-    // so inserting before clearing always collided. Clearing first is
-    // safe in this one case precisely because the insert got that far.
     if (!probe.ok && probe.status === 409) {
       emit(`${table}: unique constraint — clearing previous run and retrying`);
       try {
@@ -1153,7 +1044,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       return 0;
     }
 
-    // Whatever shape got accepted is the shape the rest must use.
     const accepted = new Set(Object.keys(probe.payload[0] || {}));
     payload = payload.map(r => {
       const o = {};
@@ -1163,7 +1053,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
 
     let written = first.length;
 
-    // 3. The insert works, so the rest can follow.
     for (let i = chunkSize; i < payload.length; i += chunkSize) {
       const slice = payload.slice(i, i + chunkSize);
       let res = await post(url, table, headers, slice);
@@ -1175,8 +1064,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       else report.errors.push(`${table}: chunk ${i} HTTP ${res.status} ${String(res.body).slice(0, 140)}`);
     }
 
-    // 4. Only now remove the previous run. Anything not stamped with
-    //    this run's timestamp is stale.
     try {
       await fetch(`${url}/rest/v1/${table}?updated_at=neq.${encodeURIComponent(runStamp)}`, {
         method: 'DELETE',
@@ -1190,15 +1077,9 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     return written;
   }
 
-  // Reading a row only works when the table has one. An empty table
-  // could not be learned from, so the full payload went out, got a 400
-  // on an unknown column, and nothing was ever written — the table
-  // stayed empty forever. PostgREST publishes the schema at the API
-  // root, which works whether or not any rows exist.
   async function discoverColumns(url, key, table) {
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-    // 1. OpenAPI definition — authoritative, works on an empty table.
     try {
       const res = await fetch(`${url}/rest/v1/`, { headers });
       if (res.ok) {
@@ -1209,7 +1090,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
       }
     } catch {}
 
-    // 2. Fall back to reading a row, for older PostgREST versions.
     try {
       const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, { headers });
       if (res.ok) {
@@ -1221,9 +1101,6 @@ for (const [sport, path] of Object.entries(ESPN_MAP)) {
     return null;
   }
 
-  // Last resort: let the database name the column it does not have,
-  // drop it, and try again. PostgREST reports one offender per
-  // attempt, so this loops.
   async function postDroppingUnknown(url, table, headers, rows, report, emit) {
     let payload = rows;
     for (let attempt = 0; attempt < 12; attempt++) {
