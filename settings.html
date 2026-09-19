@@ -108,8 +108,6 @@
     .field-input:focus { outline: none; border-color: var(--gold); }
     .field-input::placeholder { color: var(--text-dim); }
     .field-input.sm { font-family: 'Barlow', sans-serif; font-size: 15px; letter-spacing: 0; }
-    /* Keys and URLs are case-sensitive. Monospace, lowercase-capable,
-       no letter-spacing, so what is on screen is what is stored. */
     .field-input.cred { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
                         font-size: 13px; letter-spacing: 0; text-transform: none; }
     textarea.field-input.cred { width: 100%; resize: vertical; line-height: 1.45;
@@ -175,9 +173,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -222,7 +217,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -234,7 +228,6 @@
     }
     .offline-bar.show { transform: translateY(0); }
 
-    /* ── CONNECTIONS ── */
     .conn-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
     .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
     .conn-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
@@ -278,9 +271,9 @@
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
@@ -303,9 +296,6 @@
       <button class="save-btn" onclick="saveAll()">SAVE</button>
     </div>
 
-    <!-- DECISION ENGINE -->
-
-    <!-- CONNECTIONS -->
     <div class="section">
       <div class="sec-title">CONNE<em>CTIONS</em></div>
 
@@ -394,7 +384,6 @@
       </div>
     </div>
 
-    <!-- ACTIVE PORTFOLIO -->
     <div class="section">
       <div class="sec-title">ACTIVE <em>PORTFOLIO</em></div>
       <div class="sec-sub">Real money or simulation mode</div>
@@ -412,7 +401,6 @@
       </div>
     </div>
 
-    <!-- REAL BANKROLL -->
     <div class="section">
       <div class="sec-title">REAL <em>BANKROLL</em></div>
       <div class="field">
@@ -434,7 +422,6 @@
       </div>
     </div>
 
-    <!-- REAL CAPS -->
     <div class="section">
       <div class="sec-title">REAL LOSS <em>CAPS</em></div>
       <div class="field">
@@ -455,7 +442,6 @@
       </div>
     </div>
 
-    <!-- SIMULATION BANKROLL -->
     <div class="section">
       <div class="sec-title">SIMULATION <span class="sim-badge">SIM</span></div>
       <div class="field">
@@ -482,7 +468,6 @@
       </div>
     </div>
 
-    <!-- PICK FILTERS -->
     <div class="section">
       <div class="sec-title">PICK <em>FILTERS</em></div>
 
@@ -507,13 +492,11 @@
       </div>
     </div>
 
-    <!-- SPORTS TRACKING -->
     <div class="section">
       <div class="sec-title">SPORTS <em>TRACKING</em></div>
       <div class="sport-grid" id="sportGrid"></div>
     </div>
 
-    <!-- NOTIFICATIONS -->
     <div class="section">
       <div class="sec-title">NOTIFI<em>CATIONS</em></div>
 
@@ -573,7 +556,6 @@
       </div>
     </div>
 
-    <!-- THEME -->
     <div class="section">
       <div class="sec-title">THEME</div>
       <div class="theme-grid" id="themeGrid">
@@ -604,7 +586,6 @@
       </div>
     </div>
 
-    <!-- DANGER ZONE -->
     <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
@@ -632,8 +613,14 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
 
-    // ── CONNECTIONS ──
     const CONN_FIELDS = [
       { input: 'supabaseUrl', store: 'edge_supabase_url' },
       { input: 'supabaseKey', store: 'edge_supabase_key' },
@@ -642,10 +629,17 @@
       { input: 'proxyUrl',    store: 'edge_proxy_url' },
     ];
 
+    // Reveal hides/reveals a credential field. Inputs and textareas
+    // differ — textareas have no .type, so that approach silently
+    // did nothing on the Supabase key.
     function toggleReveal(id) {
       const el = document.getElementById(id);
       if (!el) return;
-      el.type = el.type === 'password' ? 'text' : 'password';
+      if (el.tagName === 'TEXTAREA') {
+        el.style.webkitTextSecurity = el.style.webkitTextSecurity === 'disc' ? 'none' : 'disc';
+      } else {
+        el.type = el.type === 'password' ? 'text' : 'password';
+      }
     }
 
     function loadConnections() {
@@ -657,9 +651,6 @@
       inspectKey();
     }
 
-    // A Supabase key is a JWT. Decode it and show the role and project
-    // ref so a key from the wrong project is caught here, not three
-    // screens later as a generic 401.
     function inspectKey() {
       const el = document.getElementById('supabaseKey');
       const out = document.getElementById('keyCheck');
@@ -699,20 +690,24 @@
                           (exp ? `, expires ${exp.toISOString().slice(0, 10)}` : '');
         out.className = 'cred-check ok';
         return true;
-      } catch {
+      } catch (e) {
+        logEdgeError('settings.inspectKey', e);
         out.textContent = 'Could not decode this key. It may be truncated or altered.';
         out.className = 'cred-check err';
         return false;
       }
     }
 
+    // Save only writes. An empty field is treated as "leave what's
+    // there alone", because a blank input is far more often a rendering
+    // glitch than a deliberate instruction to delete the key.
+    // Clearing is a separate, explicit action.
     function saveConnections() {
       CONN_FIELDS.forEach(({ input, store }) => {
         const el = document.getElementById(input);
         if (!el) return;
         const val = el.value.trim().replace(/\/+$/, '');
         if (val) localStorage.setItem(store, val);
-        else localStorage.removeItem(store);
       });
       refreshConnectionDots();
       inspectKey();
@@ -774,7 +769,7 @@
           });
           if (res.ok) setConn('Supabase', 'ok');
           else setConn('Supabase', 'err', 'HTTP ' + res.status);
-        } catch { setConn('Supabase', 'err', 'Unreachable'); }
+        } catch (e) { setConn('Supabase', 'err', 'Unreachable'); logEdgeError('settings.test.supabase', e); }
         return;
       }
 
@@ -790,7 +785,7 @@
           } else {
             setConn('Odds', 'err', res.status === 401 ? 'Invalid key' : 'HTTP ' + res.status);
           }
-        } catch { setConn('Odds', 'err', 'Unreachable'); }
+        } catch (e) { setConn('Odds', 'err', 'Unreachable'); logEdgeError('settings.test.odds', e); }
         return;
       }
 
@@ -799,7 +794,7 @@
         try {
           const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
           setConn('Espn', res.ok ? 'ok' : 'err', res.ok ? 'Reachable' : 'HTTP ' + res.status);
-        } catch { setConn('Espn', 'err', 'Unreachable'); }
+        } catch (e) { setConn('Espn', 'err', 'Unreachable'); logEdgeError('settings.test.espn', e); }
         return;
       }
 
@@ -827,12 +822,11 @@
           });
           if (res.ok) setConn('Claude', 'ok', proxy ? 'Connected via proxy' : 'Connected');
           else setConn('Claude', 'err', res.status === 401 ? 'Invalid key' : 'HTTP ' + res.status);
-        } catch { setConn('Claude', 'err', 'Blocked or unreachable'); }
+        } catch (e) { setConn('Claude', 'err', 'Blocked or unreachable'); logEdgeError('settings.test.claude', e); }
         return;
       }
     }
 
-    // ── SPORTS ──
     const SPORTS = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
 
     function buildSportToggles() {
@@ -850,7 +844,6 @@
       }).join('');
     }
 
-    // ── DECISION MODE ──
     function setDecisionMode(mode) {
       localStorage.setItem('edge_decision_mode', mode);
       document.getElementById('dcMath').classList.toggle('active', mode === 'math_only');
@@ -860,7 +853,6 @@
                 mode === 'ai_assisted' ? 'blue' : '');
     }
 
-    // ── PORTFOLIO ──
     function setPortfolio(p) {
       localStorage.setItem('edge_active_portfolio', p);
       document.getElementById('pfReal').classList.toggle('active', p === 'real');
@@ -868,7 +860,6 @@
       markSaved();
     }
 
-    // ── UNIT TYPE ──
     let unitType = localStorage.getItem('edge_unit_type') || 'flat';
 
     function setUnitType(type) {
@@ -881,12 +872,10 @@
       markUnsaved();
     }
 
-    // ── SLIDERS ──
     function updateSlider(inputId, displayId, displayVal) {
       document.getElementById(displayId).textContent = displayVal;
     }
 
-    // ── THEME ──
     function setTheme(theme, el) {
       document.querySelectorAll('.theme-card').forEach(c => c.classList.remove('active'));
       el.classList.add('active');
@@ -894,7 +883,6 @@
       markUnsaved();
     }
 
-    // ── SAVE STATUS ──
     function markUnsaved() {
       const el = document.getElementById('saveStatus');
       el.textContent = 'Unsaved changes';
@@ -907,7 +895,11 @@
       el.className = 'save-status saved';
     }
 
-    // ── SAVE ALL ──
+    // Save reads every input and writes what it finds. Empty numeric
+    // fields are still written as empty because the field is small
+    // enough that an empty value is a deliberate clear; the connection
+    // fields behave differently because an empty credential field is
+    // almost always a rendering artifact.
     function saveAll() {
       const set = (k, v) => { if (v !== '' && v !== null && v !== undefined) localStorage.setItem(k, v); };
 
@@ -921,30 +913,29 @@
       set('edge_min_conf',       document.getElementById('minConf').value);
       set('edge_auto_threshold', document.getElementById('autoThreshold').value);
 
-      // Simulation
       set('edge_sim_bankroll',   document.getElementById('simBankroll').value);
       set('edge_sim_unit_size',  document.getElementById('simUnitSize').value);
       set('edge_sim_daily_cap',  document.getElementById('simDailyCap').value);
       const sg = document.getElementById('simAutoGrade');
       if (sg) localStorage.setItem('edge_sim_auto_grade', sg.checked);
 
-      // Sports
       SPORTS.forEach(s => {
         const el = document.getElementById('sport_' + s);
         if (el) localStorage.setItem('edge_sport_' + s, el.checked);
       });
 
-      // Notifications
       ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
         const el = document.getElementById(id);
         if (el) localStorage.setItem('edge_' + id, el.checked);
       });
 
+      // Same rule as saveConnections — write when populated, leave
+      // the existing key alone when empty.
       CONN_FIELDS.forEach(({ input, store }) => {
-  const el = document.getElementById(input);
-  if (!el) return;
-  const val = el.value.trim().replace(/\/+$/, '');
-  if (val) localStorage.setItem(store, val);
+        const el = document.getElementById(input);
+        if (!el) return;
+        const v = el.value.trim().replace(/\/+$/, '');
+        if (v) localStorage.setItem(store, v);
       });
       refreshConnectionDots();
 
@@ -953,13 +944,18 @@
       showToast('Settings saved');
     }
 
-    // ── SUPABASE SYNC ──
+    // The settings table has a single row with id = 1. A PATCH with
+    // ?id=eq.1 does nothing if the row was never seeded, so this uses
+    // POST with merge-duplicates, which inserts on first save and
+    // updates thereafter. The SQL to create the table ships alongside
+    // this file — see the settings schema note in Admin.
     async function syncToSupabase() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) return;
 
       const payload = {
+        id: 1,
         bankroll:       localStorage.getItem('edge_bankroll'),
         unit_type:      localStorage.getItem('edge_unit_type'),
         unit_size:      localStorage.getItem('edge_unit_size'),
@@ -976,19 +972,18 @@
 
       try {
         await fetch(`${url}/rest/v1/settings`, {
-  method: 'POST',
-  headers: {
-    apikey: key,
-    Authorization: `Bearer ${key}`,
-    'Content-Type': 'application/json',
-    Prefer: 'resolution=merge-duplicates,return=minimal',
-  },
-  body: JSON.stringify({ id: 1, ...payload }),
-});
-      } catch {}
+          method: 'POST',
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates,return=minimal',
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) { logEdgeError('settings.sync', e); }
     }
 
-    // ── LOAD ──
     function loadAll() {
       const get = (k, d) => localStorage.getItem(k) || d;
 
@@ -1009,7 +1004,6 @@
 
       setUnitType(get('edge_unit_type', 'flat'));
 
-      // Simulation
       const simBankroll = document.getElementById('simBankroll');
       const simUnitSize = document.getElementById('simUnitSize');
       const simDailyCap = document.getElementById('simDailyCap');
@@ -1019,30 +1013,25 @@
       if (simDailyCap)   simDailyCap.value = get('edge_sim_daily_cap', '500');
       if (simAutoGrade)  simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') === 'true';
 
-      // Notifications
       ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.checked = localStorage.getItem('edge_' + id) === 'true';
       });
 
-      // Theme
       const theme = get('edge_theme', 'dark-gold');
       document.querySelectorAll('.theme-card').forEach(c => {
         c.classList.toggle('active', c.dataset.theme === theme);
       });
 
-      // Decision mode
       const dm = get('edge_decision_mode', 'math_only');
       document.getElementById('dcMath').classList.toggle('active', dm === 'math_only');
       document.getElementById('dcAi').classList.toggle('active', dm === 'ai_assisted');
 
-      // Portfolio
       const pf = get('edge_active_portfolio', 'real');
       document.getElementById('pfReal').classList.toggle('active', pf === 'real');
       document.getElementById('pfSim').classList.toggle('active', pf === 'sim');
     }
 
-    // ── TOAST ──
     function showToast(msg, color) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -1050,11 +1039,11 @@
       setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2200);
     }
 
-    // ── DANGER ZONE ──
     function resetCaps() {
       localStorage.setItem('edge_daily_used', '0');
       localStorage.setItem('edge_weekly_used', '0');
       localStorage.setItem('edge_bets_used', '0');
+      localStorage.setItem('edge_sim_bets_used', '0');
       showToast('Cap usage reset');
     }
 
@@ -1075,7 +1064,7 @@
       const keys = [
         'edge_bankroll','edge_unit_type','edge_unit_size','edge_daily_cap','edge_weekly_cap',
         'edge_max_bets','edge_max_unit_size','edge_min_conf','edge_auto_threshold',
-        'edge_theme','edge_daily_used','edge_weekly_used','edge_bets_used',
+        'edge_theme','edge_daily_used','edge_weekly_used','edge_bets_used','edge_sim_bets_used',
         'edge_sim_bankroll','edge_sim_unit_size','edge_sim_daily_cap','edge_sim_auto_grade',
         'edge_decision_mode','edge_active_portfolio','edge_betting_mode',
       ];
@@ -1084,7 +1073,6 @@
       showToast('Settings reset');
     }
 
-    // ── INIT ──
     buildSportToggles();
     loadAll();
     loadConnections();
@@ -1093,7 +1081,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
