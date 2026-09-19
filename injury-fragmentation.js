@@ -1,11 +1,15 @@
 // ============================================================
-// EDGE — INJURY FRAGMENTATION v1.0
+// EDGE — INJURY FRAGMENTATION v1.1
 // Reads ESPN injuries for today's slate, looks up each injured
 // player in the roster table, subtracts their offensive and
 // defensive contribution from the team's power rating.
 //
-// Replaces the flat positional VORP guess in context-builder.js
-// with exact per-player deductions sourced from the roster table.
+// v1.1 — team filter threaded through the cache, so the fetch
+// walks only teams on the slate instead of every team in the
+// sport. v1 called fetchEspnInjuries() with no filter, hammered
+// ESPN with ~260 requests per NCAAF window, got rate-limited,
+// and cached an empty result. The injury family then voted
+// neutral on every game and nothing ever surfaced the cause.
 // ============================================================
 
 const EDGE_INJURY = (() => {
@@ -23,12 +27,9 @@ const EDGE_INJURY = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // Cache TTL — injuries refresh slowly.
   const CACHE_KEY = 'edge_injury_cache_v2';
-  const CACHE_TTL_MS = 30 * 60 * 1000; // 30 min
+  const CACHE_TTL_MS = 30 * 60 * 1000;
 
-  // A player marked with one of these statuses reduces team power by
-  // the fraction listed, multiplied by their exact contribution.
   const STATUS_MULTIPLIER = {
     'out': 1.0,
     'out for season': 1.0,
@@ -52,8 +53,6 @@ const EDGE_INJURY = (() => {
 
   // ============================================================
   // ── MAIN ──
-  // Fragments an entire slate in one pass. Returns a map keyed
-  // by game_id, each entry with home and away adjustments.
   // ============================================================
 
   async function fragment(games) {
@@ -64,28 +63,26 @@ const EDGE_INJURY = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return out;
 
-    // Fetch ESPN injuries once per sport, cache in localStorage.
     const sports = Array.from(new Set(
-  games.map(g => g._sport || g.sport).filter(s => s && ESPN_MAP[s])
-));
+      games.map(g => g._sport || g.sport).filter(s => s && ESPN_MAP[s])
+    ));
 
-// Collect teams per sport so the fetch only walks teams actually on the slate.
-const teamsForInjuries = {};
-games.forEach(g => {
-  const sport = g._sport || g.sport;
-  if (!ESPN_MAP[sport]) return;
-  if (!teamsForInjuries[sport]) teamsForInjuries[sport] = new Set();
-  teamsForInjuries[sport].add(g.home_team || g.home);
-  teamsForInjuries[sport].add(g.away_team || g.away);
-});
+    // Collect the teams actually on the slate, per sport. Without
+    // this the injury fetch walked every team in the league.
+    const teamsForInjuries = {};
+    games.forEach(g => {
+      const sport = g._sport || g.sport;
+      if (!ESPN_MAP[sport]) return;
+      if (!teamsForInjuries[sport]) teamsForInjuries[sport] = new Set();
+      teamsForInjuries[sport].add(g.home_team || g.home);
+      teamsForInjuries[sport].add(g.away_team || g.away);
+    });
 
-const injuriesBySport = {};
-for (const sport of sports) {
-  injuriesBySport[sport] = await getCachedInjuries(sport, teamsForInjuries[sport]);
-}
+    const injuriesBySport = {};
+    for (const sport of sports) {
+      injuriesBySport[sport] = await getCachedInjuries(sport, teamsForInjuries[sport]);
+    }
 
-    // Collect every team on today's slate so we can pull their rosters
-    // in a single round trip per sport instead of per team.
     const teamsBySport = {};
     games.forEach(g => {
       const sport = g._sport || g.sport;
@@ -95,13 +92,11 @@ for (const sport of sports) {
       teamsBySport[sport].add(g.away_team || g.away);
     });
 
-    // Load players for those teams in one query per sport.
     const rosterBySport = {};
     for (const sport of Object.keys(teamsBySport)) {
       rosterBySport[sport] = await loadRosterForTeams(sport, Array.from(teamsBySport[sport]));
     }
 
-    // Build the fragmentation for each game.
     for (const g of games) {
       const sport = g._sport || g.sport;
       const home = g.home_team || g.home;
@@ -142,10 +137,6 @@ for (const sport of sports) {
     return out;
   }
 
-  // ============================================================
-  // ── SINGLE GAME LOOKUP ──
-  // ============================================================
-
   async function getInjuriesForGame(sport, homeTeam, awayTeam, gameId) {
     const result = await fragment([{
       id: gameId || `${homeTeam}_${awayTeam}`,
@@ -177,10 +168,6 @@ for (const sport of sports) {
     };
   }
 
-  // ============================================================
-  // ── ROSTER LOADING (batch per sport) ──
-  // ============================================================
-
   async function loadRosterForTeams(sport, teamNames) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -203,12 +190,6 @@ for (const sport of sports) {
       return byTeam;
     } catch { return {}; }
   }
-
-  // ============================================================
-  // ── MATCH INJURED PLAYERS TO ROSTER ENTRIES ──
-  // ESPN injury feeds use display names. Roster uses the same.
-  // Fallback to last-name match when full names differ slightly.
-  // ============================================================
 
   function matchInjuriesToRoster(injuries, roster) {
     if (!injuries.length || !roster.length) return [];
@@ -289,8 +270,6 @@ for (const sport of sports) {
     }
 
     const fresh = await fetchEspnInjuries(sport, teamFilter);
-    // An empty result means the fetch failed, not that nobody is hurt.
-    // Caching it hid the outage behind a valid-looking TTL.
     if (fresh && Object.keys(fresh).length) {
       cache[sport] = { fetchedAt: Date.now(), byTeam: fresh };
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
@@ -298,18 +277,11 @@ for (const sport of sports) {
     return fresh;
   }
 
-  // ESPN has no league-wide injuries endpoint on site.api — that URL
-  // 404s, which is why byTeam came back {} for every sport and the
-  // injury family reported "No injury data" on every game.
-  // Injuries live per team on the core API. Fetch only the teams that
-  // are actually playing, resolve the $ref list, and cache the result.
   async function fetchEspnInjuries(sport, teamFilter = null) {
     const path = ESPN_MAP[sport];
     if (!path) return {};
     const [espnSport, espnLeague] = path.split('/');
 
-    // Some leagues do expose a league-wide feed on the web host.
-    // Try it first — one call beats thirty.
     const leagueWide = [
       `https://site.web.api.espn.com/apis/site/v2/sports/${path}/injuries`,
       `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries`,
@@ -324,7 +296,6 @@ for (const sport of sports) {
       } catch {}
     }
 
-    // Per-team on the core API.
     const teams = await fetchTeamList(path);
     if (!teams.length) return {};
 
@@ -356,7 +327,6 @@ for (const sport of sports) {
     } catch { return []; }
   }
 
-  // The core API returns a list of $ref links, one per injury.
   async function fetchTeamInjuries(espnSport, espnLeague, teamId) {
     const base = `https://sports.core.api.espn.com/v2/sports/${espnSport}/leagues/${espnLeague}/teams/${teamId}/injuries?limit=100`;
     let items = [];
@@ -383,7 +353,6 @@ for (const sport of sports) {
         let name = inj.athlete?.displayName || null;
         let position = inj.athlete?.position?.abbreviation || null;
 
-        // athlete is usually a $ref too.
         if (!name && inj.athlete?.$ref) {
           const aUrl = refUrl(inj.athlete.$ref);
           if (aUrl) {
@@ -404,8 +373,6 @@ for (const sport of sports) {
     return out;
   }
 
-  // Core API responses point at espn.pvt, which is not publicly
-  // resolvable. Swapping the host makes the link usable.
   function refUrl(ref) {
     if (!ref) return null;
     return String(ref).replace('.pvt', '.com').replace(/^http:/, 'https:');
@@ -433,10 +400,6 @@ for (const sport of sports) {
       Array.isArray(data.athletes) ? data.athletes : [];
 
     list.forEach(entry => {
-      // In ESPN's league-wide payload each list item IS a team, so the
-      // name sits on the item. Reading entry.team.displayName returned
-      // undefined on every row, which is why byTeam came back empty for
-      // every sport and the injury family always reported no data.
       const teamName =
         entry.displayName ||
         entry.team?.displayName ||
@@ -482,10 +445,6 @@ for (const sport of sports) {
       localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
     } catch {}
   }
-
-  // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
