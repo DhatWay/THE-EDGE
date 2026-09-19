@@ -1,20 +1,29 @@
 // ============================================================
-// EDGE — ORCHESTRATOR v2.5
+// EDGE — ORCHESTRATOR v2.6
 // Passes ATS + H2H trend data through to algorithms so the
 // trend family can vote on real form and matchup history.
+// v2.6 — logEdgeError, logger threading, sim/real bet counters split
 // ============================================================
 
 const EDGE_ORCHESTRATOR = (() => {
 
   const MODES = {
-    DETERMINISTIC: 'math_only',   // governor decides, Claude never runs
-    AI_ASSISTED:   'ai_assisted', // Claude can veto or trim the governor
-    AI_LEAD:       'ai_lead',     // Claude selects; governor becomes the shadow
+    DETERMINISTIC: 'math_only',
+    AI_ASSISTED:   'ai_assisted',
+    AI_LEAD:       'ai_lead',
   };
   const DEFAULT_MODE = MODES.DETERMINISTIC;
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
   const MAX_PARALLEL_GAMES = 6;
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
 
   async function run(options = {}) {
     const {
@@ -44,12 +53,8 @@ const EDGE_ORCHESTRATOR = (() => {
     };
 
     try {
-      // Family weights are learned from graded results. If this never
-      // runs, every cycle uses the same static weights no matter how
-      // the families have actually performed.
-      // Measured constants, if a backfill has produced any.
       if (typeof EDGE_POWER.loadCalibrationOnce === 'function') {
-        try { await EDGE_POWER.loadCalibrationOnce(); } catch {}
+        try { await EDGE_POWER.loadCalibrationOnce(); } catch (e) { logEdgeError('orchestrator.calibration', e); }
       }
 
       if (window.EDGE_LEARNING && typeof EDGE_LEARNING.runIfDue === 'function') {
@@ -75,7 +80,7 @@ const EDGE_ORCHESTRATOR = (() => {
       summary.stages.active_sports = Array.from(activeSports);
 
       log('Stage 2/7 · Power ratings');
-      const powerIndex = await loadPowerIndex(activeSports);
+      const powerIndex = await loadPowerIndex(activeSports, log);
       summary.stages.teams_rated = Object.keys(powerIndex.teams).length;
 
       log('Stage 3/7 · Building context');
@@ -83,12 +88,9 @@ const EDGE_ORCHESTRATOR = (() => {
       if (window.EDGE_CONTEXT) {
         builtContext = await EDGE_CONTEXT.buildContext(gameList);
 
-        // Historical trends for the slate. These reach both the trend
-        // family and the selector; without this the trends table gets
-        // built and then never read by the pipeline.
         if (window.EDGE_TRENDS && typeof EDGE_TRENDS.trendsForSlate === 'function') {
           try { builtContext.trendsByGame = await EDGE_TRENDS.trendsForSlate(gameList); }
-          catch { builtContext.trendsByGame = {}; }
+          catch (e) { builtContext.trendsByGame = {}; logEdgeError('orchestrator.trendsSlate', e); }
         }
         summary.stages.context_loaded = {
           line_history: Object.keys(builtContext.lineHistoryByGame || {}).length,
@@ -129,10 +131,6 @@ const EDGE_ORCHESTRATOR = (() => {
       const governorResults = runGovernor(algoResults);
       summary.stages.governor_runs = governorResults.length;
 
-      // ── Stage 6 · ADJUDICATE ──
-      // What gets bet and on which side is settled here, before any
-      // money math. Physics is the money manager, not a second opinion,
-      // so it must not run until the verdict is final.
       log('Stage 6/7 · Adjudication (' + mode + ')');
 
       let claudeResult = { ok: true, selections: [] };
@@ -155,10 +153,6 @@ const EDGE_ORCHESTRATOR = (() => {
       const adjudicated = adjudicate(governorResults, claudeResult, mode);
       summary.stages.adjudicated = adjudicated.filter(a => a.final.decision !== 'PASS').length;
 
-      // ── Stage 7 · PHYSICS ──
-      // Runs on the settled verdict. When Claude leads, physics still
-      // sizes the governor's verdict in parallel so the two paths can
-      // be graded against each other later.
       log('Stage 7/7 · Physics sizing');
       const finalResults = runPhysicsOn(adjudicated, 'final');
       const shadowResults = runPhysicsOn(adjudicated, 'shadow');
@@ -244,7 +238,7 @@ const EDGE_ORCHESTRATOR = (() => {
             reasons: p.reasons || [],
           })),
         }));
-      } catch {}
+      } catch (e) { logEdgeError('orchestrator.lastRunCache', e); }
 
       log(`Done · ${picks.length} picks · ${summary.duration_ms}ms`);
       return summary;
@@ -258,8 +252,6 @@ const EDGE_ORCHESTRATOR = (() => {
     }
   }
 
-  // League scoring baselines turn attack and defence rates into points.
-  // Derived from the rated teams themselves, so they move with the league.
   function buildLeagueBaselines(teams) {
     const bySport = {};
     (Array.isArray(teams) ? teams : Object.values(teams || {})).forEach(t => {
@@ -277,7 +269,7 @@ const EDGE_ORCHESTRATOR = (() => {
     return out;
   }
 
-  async function loadPowerIndex(activeSports = null) {
+  async function loadPowerIndex(activeSports = null, log = () => {}) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
 
@@ -308,10 +300,10 @@ const EDGE_ORCHESTRATOR = (() => {
             return index;
           }
         }
-      } catch {}
+      } catch (e) { logEdgeError('orchestrator.powerIndexRead', e); }
     }
 
-    const fresh = await EDGE_POWER.computeAllTeamRatings();
+    const fresh = await EDGE_POWER.computeAllTeamRatings({ onProgress: log });
     return {
       teams: fresh.teams,
       coaching: fresh.coaching,
@@ -319,14 +311,10 @@ const EDGE_ORCHESTRATOR = (() => {
     };
   }
 
-  async function buildPriors(games, powerIndex, context = null)
-  {
+  async function buildPriors(games, powerIndex, context = null, log = () => {}) {
     const priors = [];
     const skipped = { live: 0, no_rating: 0, no_spread: 0 };
 
-    // Odds API, ESPN and power_ratings spell the same club differently.
-    // Build one resolver index per sport instead of relying on an exact
-    // string match, which was dropping 13 of 103 games silently.
     const resolvers = {};
     const resolverFor = (sport) => {
       if (!resolvers[sport]) {
@@ -349,8 +337,6 @@ const EDGE_ORCHESTRATOR = (() => {
     for (const game of games) {
       const sport = game._sport || game.sport;
 
-      // A game that has kicked off is not a betting opportunity, and the
-      // odds feed serves in-play prices for it.
       if (game.completed === true || game.gradable === false || game.is_live === true) {
         skipped.live++;
         continue;
@@ -385,15 +371,8 @@ const EDGE_ORCHESTRATOR = (() => {
         const prior = await EDGE_POWER.computeGamePrior(game, {
           homeStats: homePower,
           awayStats: awayPower,
-          // The possession model scales attack against defence
-          // relative to the league.
           league: powerIndex.league?.[sport] || null,
           market: {
-            // The opening number decides whether the market and
-            // line-dynamics families can vote at all, and whether the
-            // governor caps confidence at 78 for "no line movement".
-            // The cached board rarely carries it, so fall back to the
-            // earliest line_history row for this game.
             open_spread: game.open_spread
                       ?? game.opening_spread
                       ?? context?.lineHistoryByGame?.[game.id]?.open_spread
@@ -414,7 +393,7 @@ const EDGE_ORCHESTRATOR = (() => {
         });
         prior._raw_game = game;
         priors.push(prior);
-      } catch (e) {}
+      } catch (e) { logEdgeError('orchestrator.priorBuild', e); }
     }
 
     if (skipped.live || skipped.no_rating || skipped.no_spread) {
@@ -437,6 +416,7 @@ const EDGE_ORCHESTRATOR = (() => {
           const families = await EDGE_ALGOS.runAll(prior, gameContext);
           results.push({ prior, families });
         } catch (e) {
+          logEdgeError('orchestrator.algoRun', e);
           results.push({ prior, families: [], error: e.message });
         }
         done++;
@@ -496,7 +476,6 @@ const EDGE_ORCHESTRATOR = (() => {
       ctx.timezoneShift = sharedContext.travelByGame[prior.game_id].timezones ?? null;
     }
 
-    // ATS + H2H trends
     if (sharedContext.atsByTeam) {
       ctx.homeAts = sharedContext.atsByTeam[`${prior.sport}:${prior.home_team}`] ?? null;
       ctx.awayAts = sharedContext.atsByTeam[`${prior.sport}:${prior.away_team}`] ?? null;
@@ -526,14 +505,6 @@ const EDGE_ORCHESTRATOR = (() => {
       });
   }
 
-  // ============================================================
-  // ── ADJUDICATION ──
-  // One place where the verdict is settled. Physics never sees a
-  // pick until this has run, because physics is the money manager,
-  // not a second opinion.
-  // ============================================================
-
-  // Everything the selector needs about one game, in one object.
   function buildSelectorCandidates(priors, algoResults, governorResults, sharedContext) {
     const famByGame = {};
     algoResults.forEach(r => { famByGame[r.prior.game_id] = r.families; });
@@ -541,8 +512,6 @@ const EDGE_ORCHESTRATOR = (() => {
     const now = Date.now();
     return governorResults
       .filter(g => {
-        // The slate is this week's board. A cache can hold games that
-        // have already kicked off; those are not selectable.
         const t = new Date(g.prior?.commence_time || 0).getTime();
         return isFinite(t) && t > now;
       })
@@ -556,9 +525,6 @@ const EDGE_ORCHESTRATOR = (() => {
       }));
   }
 
-  // Produces, per game, the verdict that will be bet and the verdict
-  // that will be shadowed, so the two paths can be graded against
-  // each other once results come in.
   function adjudicate(governorResults, claudeResult, mode) {
     const picked = {};
     (claudeResult?.selections || []).forEach(s => { picked[String(s.game_id)] = s; });
@@ -575,19 +541,14 @@ const EDGE_ORCHESTRATOR = (() => {
       let final, shadow, path;
 
       if (mode === MODES.AI_LEAD) {
-        // Claude decides. A game it did not pick is a pass, however
-        // much the governor liked it.
         path = 'claude';
         final = sel ? mergeVerdict(gov, sel) : passVerdict(gov, 'Not selected');
         shadow = gov;
       } else if (mode === MODES.AI_ASSISTED) {
-        // The governor decides; Claude can veto or trim.
         path = 'governor+claude';
         if (gov.decision === 'PASS') final = gov;
         else if (!sel) final = passVerdict(gov, 'Claude declined this game');
         else if (sel.side !== gov.direction) final = passVerdict(gov, 'Claude disagreed on side');
-        // Take the lower of the two — agreement must not manufacture
-        // confidence that neither side had alone.
         else final = { ...gov, confidence: Math.min(gov.confidence, sel.confidence) };
         shadow = gov;
       } else {
@@ -633,7 +594,7 @@ const EDGE_ORCHESTRATOR = (() => {
         p.game_id = a.prior.game_id;
         p.sport = a.prior.sport;
         out.push(p);
-      } catch {}
+      } catch (e) { logEdgeError('orchestrator.physics.' + which, e); }
     });
     return out;
   }
@@ -660,7 +621,7 @@ const EDGE_ORCHESTRATOR = (() => {
         const rows = await checkRes.json();
         rows.forEach(r => existingGameIds.add(r.game_id));
       }
-    } catch {}
+    } catch (e) { logEdgeError('orchestrator.persistCheck', e); }
 
     const freshPicks = picks.filter(p => !existingGameIds.has(p.game_id));
     if (!freshPicks.length) {
@@ -737,8 +698,8 @@ const EDGE_ORCHESTRATOR = (() => {
     }
 
     const maxBets = parseInt(localStorage.getItem('edge_max_bets') || '0');
-const counterKey = isSim ? 'edge_sim_bets_used' : 'edge_bets_used';
-let betsUsed = parseInt(localStorage.getItem(counterKey) || '0');
+    const counterKey = isSim ? 'edge_sim_bets_used' : 'edge_bets_used';
+    let betsUsed = parseInt(localStorage.getItem(counterKey) || '0');
 
     const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
     const unitSizeKey = isSim ? 'edge_sim_unit_size' : 'edge_unit_size';
@@ -795,7 +756,7 @@ let betsUsed = parseInt(localStorage.getItem(counterKey) || '0');
         });
       });
       localStorage.setItem('edge_session_bet_log', JSON.stringify(log.slice(0, 100)));
-    } catch {}
+    } catch (e) { logEdgeError('orchestrator.sessionLog', e); }
 
     const sbUrl = SUPABASE_URL();
     const sbKey = SUPABASE_KEY();
@@ -817,7 +778,7 @@ let betsUsed = parseInt(localStorage.getItem(counterKey) || '0');
           Prefer: 'return=minimal',
         },
         body: JSON.stringify(rows),
-      }).catch(() => {});
+      }).catch(e => logEdgeError('orchestrator.betLogWrite', e));
     }
 
     return placed;
