@@ -20,6 +20,7 @@
   <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
   <script src="trends-engine.js"></script>
+  <script src="prop-trends-engine.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
@@ -29,7 +30,6 @@
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
-  <script src="prop-trends-engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -217,7 +217,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Refresh Injuries. Takes 10-30 minutes on the first run.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Build Prop Trends → Refresh Injuries. Takes 10-30 minutes on the first run.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -314,6 +314,19 @@
           <button class="pipeline-btn secondary" id="runBoxScoreBtn" onclick="runBoxScoreFetch()">▲ Fetch NFL Box Scores</button>
         </div>
         <div class="pipeline-log" id="boxScoreLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Build Prop Trends</div>
+        </div>
+        <div class="pipeline-desc">
+          Mines player_game_stats for per-player streaks against specific opponents — "Josh Allen has thrown for 300+ yards in 10 straight vs NYJ". Writes the prop_trends table. Reads only from the local database; no external fetches. Seconds to run. Requires the box score fetch to be complete for the sport.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runPropTrendsBtn" onclick="runPropTrendsBuild()">▲ Build Prop Trends</button>
+        </div>
+        <div class="pipeline-log" id="propTrendsLog">Idle.</div>
       </div>
 
       <div class="pipeline-panel">
@@ -489,6 +502,7 @@
         <button class="raw-tab" data-tab="h2h" onclick="setRawTab('h2h',this)">Matchup ATS</button>
         <button class="raw-tab" data-tab="trends" onclick="setRawTab('trends',this)">Trends</button>
         <button class="raw-tab" data-tab="pgs" onclick="setRawTab('pgs',this)">Player Stats</button>
+        <button class="raw-tab" data-tab="proptrends" onclick="setRawTab('proptrends',this)">Prop Trends</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -568,25 +582,28 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/7 · Power Ratings');
+      log('Stage 1/8 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/7 · Build Rosters');
+      log('Stage 2/8 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/7 · Enrich Rosters');
+      log('Stage 3/8 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/7 · Build ATS & H2H');
+      log('Stage 4/8 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/7 · Build Trends');
+      log('Stage 5/8 · Build Trends');
       try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/7 · Pull Player Stats');
+      log('Stage 6/8 · Pull Player Stats');
       try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 7/7 · Refresh Injuries');
+      log('Stage 7/8 · Build Prop Trends');
+      try { await runPropTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 8/8 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
@@ -796,6 +813,30 @@
         const games = result.totals.games || 0;
         logEl.textContent += `\n✓ ${games} games · ${rows} player rows`;
         showToast(`✓ ${rows} player rows written`, '');
+      }
+      return result;
+    }
+
+    async function runPropTrendsBuild(silent = false) {
+      const btn = document.getElementById('runPropTrendsBtn');
+      const logEl = document.getElementById('propTrendsLog');
+      if (!window.EDGE_PROP_TRENDS) { showToast('Prop trends engine not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Mining prop trends…\n'; }
+
+      const result = await window.EDGE_PROP_TRENDS.buildAll({
+        sports: ['NFL'],
+        onProgress: (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      if (!silent) {
+        btn.disabled = false;
+        const rows = result.totals.rows || 0;
+        const qual = result.totals.qualified || 0;
+        logEl.textContent += `\n✓ ${rows} prop trends · ${qual} qualifying`;
+        showToast(`✓ ${qual} qualifying prop trends`, '');
       }
       return result;
     }
@@ -1024,6 +1065,12 @@
         if (currentRawTab === 'pgs') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
           const res = await fetch(`${url}/rest/v1/player_game_stats?select=*&limit=30&order=game_date.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
+          return;
+        }
+        if (currentRawTab === 'proptrends') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/prop_trends?select=*&limit=30&order=current_streak.desc,hit_rate.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
           out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
