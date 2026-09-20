@@ -88,6 +88,34 @@
     .run-btn.ghost { background: var(--bg4); color: var(--text-mid); border: 1px solid var(--border); box-shadow: var(--lift); }
     .run-btn.ghost:hover { border-color: var(--gold); color: var(--gold); }
 
+    /* PROP CARDS */
+    .prop-card { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--gold); padding: 0; margin-bottom: 10px; border-radius: 2px; box-shadow: var(--lift); overflow: hidden; }
+    .prop-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 14px; }
+    .prop-left { flex: 1; min-width: 0; }
+    .prop-player { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text); line-height: 1.2; }
+    .prop-headline { font-size: 13px; color: var(--text-mid); font-weight: 400; margin-top: 4px; line-height: 1.4; }
+    .prop-headline b { color: var(--gold); font-weight: 600; }
+    .prop-streak-box { text-align: center; flex-shrink: 0; padding-left: 10px; border-left: 1px solid var(--border); }
+    .prop-streak-num { font-family: 'Bebas Neue', sans-serif; font-size: 34px; line-height: 1; color: var(--green); letter-spacing: 1px; }
+    .prop-streak-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
+
+    .prop-stats { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); }
+    .prop-stat { padding: 10px 6px; text-align: center; border-right: 1px solid var(--border); }
+    .prop-stat:last-child { border-right: none; }
+    .prop-stat-v { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .prop-stat-l { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+
+    .prop-toggle { display: block; width: 100%; background: var(--bg4); border: none; border-top: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px; cursor: pointer; transition: all 0.2s; }
+    .prop-toggle:hover { color: var(--gold); }
+    .prop-games { display: none; border-top: 1px solid var(--border); background: var(--bg3); padding: 8px 14px 12px; }
+    .prop-games.open { display: block; }
+    .prop-game-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(201,168,76,0.06); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; }
+    .prop-game-row:last-child { border-bottom: none; }
+    .prop-game-date { color: var(--text-dim); font-size: 11px; width: 66px; flex-shrink: 0; letter-spacing: 0.5px; }
+    .prop-game-opp { color: var(--text-mid); flex: 1; font-weight: 600; letter-spacing: 0.5px; }
+    .prop-game-val { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; color: var(--green); }
+    .prop-game-val.miss { color: var(--red); }
+
     /* TREND ROWS */
     .trend-row-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; margin-bottom: 9px; border-radius: 2px; box-shadow: var(--lift); transition: all 0.22s ease; }
     .trend-row-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
@@ -158,14 +186,13 @@
     .offline-bar.show { transform: translateY(0); }
 
     @media (prefers-reduced-motion: reduce) {
-      .trend-row-card, .parlay-card, .run-btn { transition: none; }
+      .trend-row-card, .parlay-card, .run-btn, .prop-card { transition: none; }
       .trend-row-card:hover, .parlay-card:hover, .run-btn:hover:not(:disabled) { transform: none; }
     }
     @media (min-width: 640px) {
       .controls { grid-template-columns: repeat(4, 1fr); }
     }
 
-    /* ── SERIES HISTORY ── */
     .h2h-block { padding: 10px 16px 12px; border-bottom: 1px solid rgba(201,168,76,0.07); background: rgba(201,168,76,0.025); }
     .h2h-head { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--gold-dim); margin-bottom: 6px; }
     .h2h-item { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--text-mid); font-weight: 300; line-height: 1.45; margin-bottom: 3px; }
@@ -287,6 +314,27 @@
 
     <div class="section">
       <div class="sec-head">
+        <div class="sec-title">PLAYER <em>PROP TRENDS</em></div>
+        <div class="sec-count" id="propCount">—</div>
+      </div>
+      <p class="note" style="margin-top:-8px;margin-bottom:12px;">
+        Per-player streaks against today's opponents. Every row is a specific stat line a player
+        has cleared in a run of meetings. Read the trend, then place on your book.
+      </p>
+      <div id="propList">
+        <div class="empty-state">
+          <div class="empty-icon">◈</div>
+          <div class="empty-title">NO PROP TRENDS</div>
+          <div class="empty-sub">
+            Finish the box score fetch in Admin, then run Build Prop Trends.
+            This section will populate with player streaks against today's opponents.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sec-head">
         <div class="sec-title">TODAY'S <em>PARLAYS</em></div>
         <div class="sec-count" id="parlayCount">—</div>
       </div>
@@ -308,7 +356,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
@@ -328,7 +375,6 @@
   </script>
 
   <script>
-    // ── NAV ──
     const ham = document.getElementById('ham');
     const drawer = document.getElementById('drawer');
     const overlay = document.getElementById('overlay');
@@ -339,10 +385,18 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     let trendScores = [];
     let parlays = [];
+    let propTrends = [];
 
-    // ── LOAD TODAY'S PICKS ──
     async function loadTodaysPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -359,7 +413,7 @@
             const rows = await res.json();
             if (rows.length) return rows;
           }
-        } catch {}
+        } catch (e) { logEdgeError('parlayPage.loadTodaysPicks', e); }
       }
 
       try {
@@ -368,7 +422,191 @@
       } catch { return []; }
     }
 
-    // ── BUILD ──
+    // ============================================================
+    // ── PROP TRENDS ──
+    // ============================================================
+
+    async function loadPropTrends() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      const list = document.getElementById('propList');
+      const countEl = document.getElementById('propCount');
+
+      if (!url || !key) { countEl.textContent = 'No Supabase'; return; }
+
+      let games = [];
+      try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
+
+      if (!games.length) {
+        countEl.textContent = 'No games loaded';
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">◈</div>
+            <div class="empty-title">NO GAMES LOADED</div>
+            <div class="empty-sub">Refresh Matchups first to establish today's slate.</div>
+          </div>`;
+        return;
+      }
+
+      // Build a set of team|opponent pairs on today's slate
+      const pairs = new Set();
+      const sports = new Set();
+      games.forEach(g => {
+        const sport = g._sport || g.sport;
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        if (!sport || !home || !away) return;
+        sports.add(sport);
+        pairs.add(`${sport}|${home}|${away}`);
+        pairs.add(`${sport}|${away}|${home}`);
+      });
+
+      if (!pairs.size) { countEl.textContent = 'No matchups'; return; }
+
+      const sportList = Array.from(sports).map(s => `"${s}"`).join(',');
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/prop_trends?sport=in.(${sportList})&qualified=is.true&order=current_streak.desc,hit_rate.desc&limit=500`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) {
+          countEl.textContent = 'Query failed';
+          list.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">◈</div>
+              <div class="empty-title">QUERY FAILED</div>
+              <div class="empty-sub">prop_trends table not found or empty. Run Build Prop Trends in Admin.</div>
+            </div>`;
+          return;
+        }
+        const rows = await res.json();
+        propTrends = rows.filter(r => pairs.has(`${r.sport}|${r.team_name}|${r.opponent}`));
+      } catch (e) {
+        logEdgeError('parlayPage.loadPropTrends', e);
+        countEl.textContent = 'Error';
+        return;
+      }
+
+      renderPropTrends();
+    }
+
+    function renderPropTrends() {
+      const list = document.getElementById('propList');
+      const countEl = document.getElementById('propCount');
+
+      if (!propTrends.length) {
+        countEl.textContent = '0 trends';
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">◈</div>
+            <div class="empty-title">NO PROP TRENDS TODAY</div>
+            <div class="empty-sub">
+              Either no qualifying streaks exist against today's opponents,
+              or the prop-trend engine hasn't been run yet in Admin.
+            </div>
+          </div>`;
+        return;
+      }
+
+      countEl.textContent = `${propTrends.length} trend${propTrends.length === 1 ? '' : 's'}`;
+
+      list.innerHTML = propTrends.map((t, i) => buildPropCard(t, i)).join('');
+    }
+
+    function buildPropCard(t, idx) {
+      const streak = t.current_streak || 0;
+      const record = `${t.hit_count}-${t.games_vs_opponent - t.hit_count}`;
+      const statLabel = statName(t.stat_name);
+      const recent = Array.isArray(t.recent_games) ? t.recent_games : [];
+
+      const gamesRows = recent.map(g => {
+        const hit = g.hit === true || (g.value != null && Number(g.value) >= Number(t.threshold));
+        return `
+          <div class="prop-game-row">
+            <span class="prop-game-date">${g.date || '—'}</span>
+            <span class="prop-game-opp">vs ${escapeHtml(t.opponent)}</span>
+            <span class="prop-game-val ${hit ? '' : 'miss'}">${g.value != null ? g.value : '—'} ${statLabel}</span>
+          </div>`;
+      }).join('');
+
+      return `
+        <div class="prop-card">
+          <div class="prop-top">
+            <div class="prop-left">
+              <div class="prop-player">${escapeHtml(t.player_name)}</div>
+              <div class="prop-headline">
+                <b>${t.threshold}+ ${statLabel}</b> vs ${escapeHtml(t.opponent)}
+                ${streak >= 3 ? `— <b>${streak} straight</b>` : ''}
+              </div>
+            </div>
+            <div class="prop-streak-box">
+              <div class="prop-streak-num">${streak}</div>
+              <div class="prop-streak-lbl">Streak</div>
+            </div>
+          </div>
+
+          <div class="prop-stats">
+            <div class="prop-stat">
+              <div class="prop-stat-v">${record}</div>
+              <div class="prop-stat-l">Record</div>
+            </div>
+            <div class="prop-stat">
+              <div class="prop-stat-v">${Math.round((t.hit_rate || 0) * 100)}%</div>
+              <div class="prop-stat-l">Hit rate</div>
+            </div>
+            <div class="prop-stat">
+              <div class="prop-stat-v">${t.games_vs_opponent}</div>
+              <div class="prop-stat-l">Meetings</div>
+            </div>
+          </div>
+
+          ${recent.length ? `
+            <button class="prop-toggle" onclick="togglePropGames(${idx})">Show last ${recent.length} games</button>
+            <div class="prop-games" id="prop-games-${idx}">${gamesRows}</div>
+          ` : ''}
+        </div>`;
+    }
+
+    function togglePropGames(idx) {
+      const el = document.getElementById('prop-games-' + idx);
+      if (!el) return;
+      el.classList.toggle('open');
+    }
+
+    function statName(raw) {
+      const map = {
+        passing_yards: 'pass yds',
+        passing_tds: 'pass TD',
+        rushing_yards: 'rush yds',
+        rushing_tds: 'rush TD',
+        receptions: 'rec',
+        receiving_yards: 'rec yds',
+        receiving_tds: 'rec TD',
+        points: 'pts',
+        rebounds: 'reb',
+        assists: 'ast',
+        three_made: '3PM',
+        hits: 'hits',
+        home_runs: 'HR',
+        rbis: 'RBI',
+        runs: 'runs',
+        strikeouts: 'K',
+        goals: 'goals',
+        saves: 'saves',
+      };
+      return map[raw] || raw;
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    // ============================================================
+    // ── TEAM TREND SCOREBOARD ──
+    // ============================================================
+
     async function buildAll() {
       const btn = document.getElementById('buildBtn');
       btn.disabled = true;
@@ -399,6 +637,7 @@
 
         renderParlays();
       } catch (e) {
+        logEdgeError('parlayPage.buildAll', e);
         showToast('Build failed: ' + e.message, true);
       } finally {
         btn.disabled = false;
@@ -406,7 +645,6 @@
       }
     }
 
-    // ── RENDER TRENDS ──
     function renderTrends() {
       const el = document.getElementById('trendList');
       const active = trendScores.filter(t => t.qualified).length;
@@ -439,7 +677,6 @@
       }).join('');
     }
 
-    // ── RENDER PARLAYS ──
     function renderParlays(reason) {
       const el = document.getElementById('parlayList');
       document.getElementById('parlayCount').textContent =
@@ -455,7 +692,7 @@
           sub = 'Run the pipeline on <a href="picks.html">today&rsquo;s picks</a> first, then build here.';
         } else if (!activeTrends) {
           title = 'NO ACTIVE TRENDS';
-          sub = `Every trend needs ${EDGE_PARLAY.TREND_MIN_SAMPLE} graded picks and a ${(EDGE_PARLAY.TREND_MIN_HIT_RATE * 100).toFixed(0)}% hit rate before it can be stacked. Keep grading results and they will open up.`;
+          sub = `Every trend needs ${EDGE_PARLAY.TREND_MIN_SAMPLE} graded picks and a ${(EDGE_PARLAY.TREND_MIN_HIT_RATE * 100).toFixed(0)}% hit rate before it can be stacked.`;
         }
 
         el.innerHTML = `
@@ -512,10 +749,6 @@
       }).join('');
     }
 
-
-    // ── SERIES HISTORY ──
-    // Every trend that actually happened in the historical meetings
-    // between the two teams on each leg.
     function renderSeriesHistory(p) {
       const withHistory = p.legs.filter(l => (l.h2h_meetings || 0) > 0);
       if (!withHistory.length) {
@@ -550,7 +783,6 @@
       return (p.trend_id || 'x') + '_' + p.legs.map(l => l.game_id).sort().join('-');
     }
 
-    // ── LOG A PARLAY ──
     async function logParlay(i) {
       const p = parlays[i];
       if (!p || p.units <= 0) return;
@@ -595,7 +827,7 @@
               game_id: p.legs.map(l => l.game_id).join(','),
             }),
           });
-        } catch {}
+        } catch (e) { logEdgeError('parlayPage.logParlay', e); }
       }
 
       renderParlays();
@@ -615,7 +847,6 @@
       showToast('Parlay undone');
     }
 
-    // ── COPY ──
     function slipText(p) {
       const odds = p.american_odds > 0 ? '+' + p.american_odds : String(p.american_odds);
       const legs = p.legs.map((l, n) =>
@@ -660,7 +891,6 @@
       document.body.removeChild(ta);
     }
 
-    // ── TOAST ──
     function showToast(msg, isError) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -668,8 +898,8 @@
       setTimeout(() => t.className = 'toast', 2400);
     }
 
-    // ── INIT ──
     buildAll();
+    loadPropTrends();
   </script>
 </body>
 </html>
