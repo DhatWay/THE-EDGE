@@ -24,11 +24,11 @@
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
-  <script src="box-score-fetcher.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -140,44 +140,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    :root {
-      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
-      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
-      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
-    }
-    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
-    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
-      box-shadow: var(--lift);
-      border-radius: 2px;
-      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
-      will-change: transform;
-    }
-    .pick-card, .clv-card, .game-card { box-shadow: var(--lift-gold); }
-    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-      box-shadow: var(--lift-high);
-      transform: translateY(-2px);
-    }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card { transition: none; }
-      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover { transform: none; }
-    }
-
     .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
     .offline-bar.show { transform: translateY(0); }
   </style>
@@ -254,7 +216,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Refresh Injuries. Takes 10-30 minutes on the first run. Use this before a fresh pipeline run.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Refresh Injuries. Takes 10-30 minutes on the first run.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -319,7 +281,7 @@
           <div class="pipeline-title">Build ATS &amp; H2H</div>
         </div>
         <div class="pipeline-desc">
-          Builds team ATS form and head-to-head spread history from several seasons of results. Feeds the trend family and the analysis page. First run is slow; subsequent runs are near-instant because closing lines are cached.
+          Builds team ATS form and head-to-head spread history from several seasons of results. Feeds the trend family and the analysis page.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runAtsBtn" onclick="runAtsBuild()">▲ Build ATS &amp; H2H</button>
@@ -332,12 +294,25 @@
           <div class="pipeline-title">Build Trends</div>
         </div>
         <div class="pipeline-desc">
-          Mines historical results for repeatable situations: off a bye, after a loss, in revenge spots, home favourites, QB-anchored streaks. Writes the trends table that feeds the trend family and the Trend Bets page. Run after Build ATS — it uses the cached closing lines to grade ATS records.
+          Mines historical results for repeatable situations. Writes the trends table that feeds the trend family and the Trend Bets page.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runTrendsBtn" onclick="runTrendsBuild()">▲ Build Trends</button>
         </div>
         <div class="pipeline-log" id="trendsLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Pull Player Stats</div>
+        </div>
+        <div class="pipeline-desc">
+          Walks every completed game in historical_odds, pulls the ESPN box score for each, writes one row per player per game to player_game_stats. This is the data behind player-prop trends. First run for NFL is 10-15 minutes. Resumable — already-fetched games are skipped.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runBoxScoreBtn" onclick="runBoxScoreFetch()">▲ Fetch NFL Box Scores</button>
+        </div>
+        <div class="pipeline-log" id="boxScoreLog">Idle.</div>
       </div>
 
       <div class="pipeline-panel">
@@ -512,6 +487,7 @@
         <button class="raw-tab" data-tab="ats" onclick="setRawTab('ats',this)">Team ATS</button>
         <button class="raw-tab" data-tab="h2h" onclick="setRawTab('h2h',this)">Matchup ATS</button>
         <button class="raw-tab" data-tab="trends" onclick="setRawTab('trends',this)">Trends</button>
+        <button class="raw-tab" data-tab="pgs" onclick="setRawTab('pgs',this)">Player Stats</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -535,7 +511,6 @@
   </main>
 
   <script>
-    // ── NAV ──
     const ham = document.getElementById('ham');
     const drawer = document.getElementById('drawer');
     const overlay = document.getElementById('overlay');
@@ -554,7 +529,6 @@
       } catch {}
     }
 
-    // ── TOAST ──
     function showToast(msg, type = '') {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -562,7 +536,6 @@
       setTimeout(() => t.className = 'toast', 2500);
     }
 
-    // ── PIPELINE MODE ──
     function updatePipelineMode() {
       const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
       const el = document.getElementById('pipelineMode');
@@ -583,7 +556,6 @@
       showToast('Decision mode: ' + (next === 'ai_assisted' ? 'AI-Assisted' : 'Deterministic'), next === 'ai_assisted' ? 'blue' : '');
     }
 
-    // ── FULL REFRESH ──
     async function runFullRefresh() {
       const btn = document.getElementById('runFullRefreshBtn');
       const logEl = document.getElementById('fullRefreshLog');
@@ -595,22 +567,25 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/6 · Power Ratings');
+      log('Stage 1/7 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/6 · Build Rosters');
+      log('Stage 2/7 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/6 · Enrich Rosters');
+      log('Stage 3/7 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/6 · Build ATS & H2H');
+      log('Stage 4/7 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/6 · Build Trends');
+      log('Stage 5/7 · Build Trends');
       try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/6 · Refresh Injuries');
+      log('Stage 6/7 · Pull Player Stats');
+      try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 7/7 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
@@ -618,22 +593,15 @@
       showToast('✓ Full refresh complete', '');
     }
 
-    // ── RUN FULL PIPELINE ──
     async function runPipeline() {
       const btn = document.getElementById('runPipelineBtn');
       const logEl = document.getElementById('pipelineLog');
       const statusEl = document.getElementById('pipelineStatus');
 
-      if (!window.EDGE_ORCHESTRATOR) {
-        showToast('Orchestrator not loaded', 'error');
-        return;
-      }
+      if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'error'); return; }
 
       const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
-      if (!games.length) {
-        showToast('No games loaded — refresh Matchups first', 'error');
-        return;
-      }
+      if (!games.length) { showToast('No games loaded — refresh Matchups first', 'error'); return; }
 
       btn.disabled = true;
       logEl.textContent = 'Starting…\n';
@@ -664,15 +632,11 @@
       }
     }
 
-    // ── RUN LEARNING ──
     async function runLearning() {
       const btn = document.getElementById('runLearningBtn');
       const logEl = document.getElementById('learningLog');
 
-      if (!window.EDGE_LEARNING) {
-        showToast('Learning module not loaded', 'error');
-        return;
-      }
+      if (!window.EDGE_LEARNING) { showToast('Learning module not loaded', 'error'); return; }
 
       btn.disabled = true;
       logEl.textContent = 'Analyzing…\n';
@@ -699,7 +663,6 @@
       showToast(`Learning: ${result.families_updated} families updated`, 'blue');
     }
 
-    // ── RUN POWER RATINGS ──
     async function runPowerRatings(silent = false) {
       const btn = document.getElementById('runPowerBtn');
       const logEl = document.getElementById('powerLog');
@@ -728,7 +691,6 @@
       return result;
     }
 
-    // ── BUILD ROSTERS ──
     async function runRosterBuild(silent = false) {
       const btn = document.getElementById('runRosterBtn');
       const logEl = document.getElementById('rosterLog');
@@ -750,7 +712,6 @@
       return result;
     }
 
-    // ── ENRICH ROSTERS ──
     async function runRosterEnrich(silent = false) {
       const btn = document.getElementById('runEnrichBtn');
       const logEl = document.getElementById('enrichLog');
@@ -772,7 +733,6 @@
       return result;
     }
 
-    // ── BUILD ATS ──
     async function runAtsBuild(silent = false) {
       const btn = document.getElementById('runAtsBtn');
       const logEl = document.getElementById('atsLog');
@@ -794,7 +754,6 @@
       return result;
     }
 
-    // ── BUILD TRENDS ──
     async function runTrendsBuild(silent = false) {
       const btn = document.getElementById('runTrendsBtn');
       const logEl = document.getElementById('trendsLog');
@@ -816,7 +775,30 @@
       return result;
     }
 
-    // ── REFRESH INJURIES ──
+    async function runBoxScoreFetch(silent = false) {
+      const btn = document.getElementById('runBoxScoreBtn');
+      const logEl = document.getElementById('boxScoreLog');
+      if (!window.EDGE_BOXSCORE) { showToast('Box score fetcher not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Pulling NFL box scores…\n'; }
+
+      const result = await window.EDGE_BOXSCORE.buildAll({
+        sports: ['NFL'],
+        onProgress: (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      if (!silent) {
+        btn.disabled = false;
+        const rows = result.totals.rows || 0;
+        const games = result.totals.games || 0;
+        logEl.textContent += `\n✓ ${games} games · ${rows} player rows`;
+        showToast(`✓ ${rows} player rows written`, '');
+      }
+      return result;
+    }
+
     async function refreshInjuries() {
       const btn = document.getElementById('runInjuryBtn');
       const logEl = document.getElementById('injuryLog');
@@ -829,7 +811,6 @@
       showToast('Injury cache cleared', '');
     }
 
-    // ── SAVE KEY ──
     function saveKey(storageKey, inputId, dotId, statusId) {
       const val = document.getElementById(inputId).value.trim();
       if (!val) { showToast('Enter a value first', 'error'); return; }
@@ -859,12 +840,9 @@
       if (apiKey) localStorage.setItem('edge_sportsbook_api_key', apiKey);
 
       const saved = document.getElementById('savedSportsbookKey');
-      saved.textContent = bookKey
-        ? `✓ Pricing against ${label}`
-        : 'Using consensus across all books';
+      saved.textContent = bookKey ? `✓ Pricing against ${label}` : 'Using consensus across all books';
       saved.className = 'key-saved set';
-      updateDot('dotSportsbook', 'statusSportsbook', bookKey ? 'ok' : 'warn',
-                bookKey ? label : 'Consensus');
+      updateDot('dotSportsbook', 'statusSportsbook', bookKey ? 'ok' : 'warn', bookKey ? label : 'Consensus');
       showToast(bookKey ? `Lines now from ${label}` : 'Using consensus lines');
 
       localStorage.removeItem('edge_todays_games');
@@ -879,13 +857,10 @@
       const label = BOOK_LABELS[bookKey] || 'Consensus';
       const saved = document.getElementById('savedSportsbookKey');
       if (saved) {
-        saved.textContent = bookKey
-          ? `✓ Pricing against ${label}`
-          : 'Using consensus across all books';
+        saved.textContent = bookKey ? `✓ Pricing against ${label}` : 'Using consensus across all books';
         saved.className = 'key-saved set';
       }
-      updateDot('dotSportsbook', 'statusSportsbook', bookKey ? 'ok' : 'warn',
-                bookKey ? label : 'Consensus');
+      updateDot('dotSportsbook', 'statusSportsbook', bookKey ? 'ok' : 'warn', bookKey ? label : 'Consensus');
     }
 
     function updateDot(dotId, statusId, cls, text) {
@@ -895,7 +870,6 @@
       document.getElementById(statusId).className = 'conn-status ' + cls;
     }
 
-    // ── TESTS ──
     async function testSupabase() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -904,13 +878,8 @@
         const res = await fetch(`${url}/rest/v1/settings?select=id&limit=1`, {
           headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
-        if (res.ok) {
-          updateDot('dotSupabase','statusSupabase','ok','Connected');
-          showToast('Supabase connected ✓');
-        } else {
-          updateDot('dotSupabase','statusSupabase','err','Error ' + res.status);
-          showToast('Supabase error ' + res.status, 'error');
-        }
+        if (res.ok) { updateDot('dotSupabase','statusSupabase','ok','Connected'); showToast('Supabase connected ✓'); }
+        else { updateDot('dotSupabase','statusSupabase','err','Error ' + res.status); showToast('Supabase error ' + res.status, 'error'); }
       } catch (e) { logEdgeError('admin.testSupabase', e); showToast('Connection failed', 'error'); }
     }
 
@@ -919,26 +888,16 @@
       if (!key) { showToast('Save API key first', 'error'); return; }
       try {
         const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
-        if (res.ok) {
-          updateDot('dotOdds','statusOdds','ok','Connected');
-          showToast('Odds API connected ✓');
-        } else {
-          updateDot('dotOdds','statusOdds','err','Invalid key');
-          showToast('Invalid Odds API key', 'error');
-        }
+        if (res.ok) { updateDot('dotOdds','statusOdds','ok','Connected'); showToast('Odds API connected ✓'); }
+        else { updateDot('dotOdds','statusOdds','err','Invalid key'); showToast('Invalid Odds API key', 'error'); }
       } catch (e) { logEdgeError('admin.testOdds', e); showToast('Connection failed', 'error'); }
     }
 
     async function testESPN() {
       try {
         const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
-        if (res.ok) {
-          updateDot('dotESPN','statusESPN','ok','Connected');
-          showToast('ESPN reachable ✓');
-        } else {
-          updateDot('dotESPN','statusESPN','err','Unreachable');
-          showToast('ESPN error', 'error');
-        }
+        if (res.ok) { updateDot('dotESPN','statusESPN','ok','Connected'); showToast('ESPN reachable ✓'); }
+        else { updateDot('dotESPN','statusESPN','err','Unreachable'); showToast('ESPN error', 'error'); }
       } catch (e) { logEdgeError('admin.testESPN', e); showToast('ESPN unreachable', 'error'); }
     }
 
@@ -949,28 +908,16 @@
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
-            'Content-Type':'application/json',
-            'x-api-key':key,
-            'anthropic-version':'2023-06-01',
-            'anthropic-dangerous-direct-browser-access':'true'
+            'Content-Type':'application/json', 'x-api-key':key,
+            'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'
           },
-          body: JSON.stringify({
-            model: 'claude-opus-4-20250514',
-            max_tokens: 10,
-            messages: [{ role: 'user', content: 'ping' }]
-          })
+          body: JSON.stringify({ model: 'claude-opus-4-20250514', max_tokens: 10, messages: [{ role: 'user', content: 'ping' }] })
         });
-        if (res.ok) {
-          updateDot('dotClaude','statusClaude','ok','Connected');
-          showToast('Claude connected ✓');
-        } else {
-          updateDot('dotClaude','statusClaude','err','Invalid key');
-          showToast('Invalid Claude API key', 'error');
-        }
+        if (res.ok) { updateDot('dotClaude','statusClaude','ok','Connected'); showToast('Claude connected ✓'); }
+        else { updateDot('dotClaude','statusClaude','err','Invalid key'); showToast('Invalid Claude API key', 'error'); }
       } catch (e) { logEdgeError('admin.testClaude', e); showToast('Claude API error', 'error'); }
     }
 
-    // ── RESULT ENTRY ──
     async function submitResult() {
       const matchup = document.getElementById('resultMatchup').value.trim();
       const pick    = document.getElementById('resultPick').value.trim();
@@ -979,16 +926,9 @@
       const date    = document.getElementById('resultDate').value;
       const type    = document.getElementById('resultType').value;
 
-      if (!matchup || !pick || !outcome || !date) {
-        showToast('Fill in all fields', 'error');
-        return;
-      }
+      if (!matchup || !pick || !outcome || !date) { showToast('Fill in all fields', 'error'); return; }
 
-      const record = {
-        matchup, pick_label: pick, pick_type: type,
-        result: outcome, pnl, date,
-        created_at: new Date().toISOString(),
-      };
+      const record = { matchup, pick_label: pick, pick_type: type, result: outcome, pnl, date, created_at: new Date().toISOString() };
 
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -997,10 +937,7 @@
         try {
           await fetch(`${url}/rest/v1/picks`, {
             method: 'POST',
-            headers: {
-              apikey: key, Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json', Prefer: 'return=minimal',
-            },
+            headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
             body: JSON.stringify(record),
           });
           showToast('Result saved');
@@ -1015,7 +952,6 @@
       setTimeout(() => { window.location.href = 'index.html'; }, 1200);
     }
 
-    // ── RAW DATA ──
     let currentRawTab = 'storage';
 
     function setRawTab(tab, el) {
@@ -1042,90 +978,64 @@
           out.textContent = JSON.stringify(data, null, 2);
           return;
         }
-
         if (currentRawTab === 'shadow') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/shadow_picks?select=*&limit=20&order=created_at.desc`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/shadow_picks?select=*&limit=20&order=created_at.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'weights') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/algorithm_weights?select=*&order=sport,family`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/algorithm_weights?select=*&order=sport,family`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'power') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/power_ratings?select=*&limit=30&order=overall.desc`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/power_ratings?select=*&limit=30&order=overall.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'players') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/players?select=*&limit=30&order=rating.desc`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/players?select=*&limit=30&order=rating.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'ats') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/team_ats?select=*&limit=30&order=season_cover_pct.desc`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/team_ats?select=*&limit=30&order=season_cover_pct.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'h2h') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/matchup_ats?select=*&limit=30&order=meetings.desc`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/matchup_ats?select=*&limit=30&order=meetings.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'trends') {
           if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
-          const res = await fetch(`${url}/rest/v1/trends?select=*&limit=30&order=hit_rate.desc`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          const res = await fetch(`${url}/rest/v1/trends?select=*&limit=30&order=hit_rate.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
+        if (currentRawTab === 'pgs') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/player_game_stats?select=*&limit=30&order=game_date.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
+          return;
+        }
         if (currentRawTab === 'odds') {
           const oddsKey = localStorage.getItem('edge_odds_api_key');
           if (!oddsKey) { out.textContent = 'No Odds API key'; return; }
           const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${oddsKey}`);
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
-
         if (currentRawTab === 'espn') {
           const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
-          const data = await res.json();
-          out.textContent = JSON.stringify(data, null, 2);
+          out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
       } catch (e) {
@@ -1134,7 +1044,6 @@
       }
     }
 
-    // ── DANGER ZONE ──
     function clearAllKeys() {
       ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key',
        'edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name'].forEach(k => localStorage.removeItem(k));
@@ -1151,8 +1060,7 @@
       if (!confirm('Delete ALL shadow picks? This cannot be undone.')) return;
       try {
         await fetch(`${url}/rest/v1/shadow_picks?id=gt.0`, {
-          method: 'DELETE',
-          headers: { apikey: key, Authorization: `Bearer ${key}` }
+          method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
         showToast('Shadow picks cleared');
       } catch (e) { logEdgeError('admin.clearShadowPicks', e); showToast('Error clearing', 'error'); }
@@ -1173,7 +1081,6 @@
       showToast('Local storage wiped (keys kept)');
     }
 
-    // ── SAVED INDICATORS ──
     function loadSavedIndicators() {
       const indicators = [
         { key: 'edge_supabase_url',       elId: 'savedSupabaseUrl',   label: 'URL saved', inputId: 'supabaseUrl' },
@@ -1211,7 +1118,6 @@
       });
     }
 
-    // ── INIT ──
     function init() {
       document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
       loadSavedIndicators();
