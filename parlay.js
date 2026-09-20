@@ -1,8 +1,12 @@
 // ============================================================
-// EDGE — TREND BET / PARLAY ENGINE v1.0
+// EDGE — TREND BET / PARLAY ENGINE v1.1
 // Mines graded shadow_picks for repeatable trends, then builds
 // correlation-safe parlays out of today's qualifying picks.
 // Deterministic. No Claude. Pure math.
+//
+// v1.1 — logEdgeError. Previously a failed Supabase read returned
+// an empty array and the page said "no trends" — indistinguishable
+// from "the query succeeded and found nothing".
 // ============================================================
 
 const EDGE_PARLAY = (() => {
@@ -10,33 +14,29 @@ const EDGE_PARLAY = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  // ── TUNING ──
-  const TREND_WINDOW_DAYS   = 120;  // history considered when scoring a trend
-  const TREND_MIN_SAMPLE    = 15;   // graded picks needed before a trend is usable
-  const TREND_MIN_HIT_RATE  = 0.54; // below this a trend is not worth stacking
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
+
+  const TREND_WINDOW_DAYS   = 120;
+  const TREND_MIN_SAMPLE    = 15;
+  const TREND_MIN_HIT_RATE  = 0.54;
   const MAX_LEGS            = 4;
   const MIN_LEGS            = 2;
   const DEFAULT_LEG_ODDS    = -110;
 
-  // ── TREND LEG SHRINKAGE ──
-  // Declared with the other constants: a const used by an exported
-  // function must exist before the return statement runs, or the
-  // module throws on first call.
-  const TREND_PRIOR_N = 10;      // strength of the pull toward the market
-  const TREND_MAX_PROB = 0.82;   // ceiling on any single trend leg
+  const TREND_PRIOR_N = 10;
+  const TREND_MAX_PROB = 0.82;
   const TREND_MIN_SAMPLE_LEG = 5;
 
-  // Parlays compound model error, so each leg is shaded toward the market
-  // before multiplying. Without this the product of nine optimistic legs
-  // produces a fantasy probability.
   const LEG_SHRINK = 0.35;
 
-  // Same-game legs are never combined. Same-sport, same-slate legs carry a
-  // mild positive correlation that inflates naive parlay probability.
   const SAME_SPORT_CORRELATION = 0.04;
 
-  // ── TREND DEFINITIONS ──
-  // Each is a pure predicate over a stored pick row.
   const TRENDS = [
     {
       id: 'home_favorite_high_conf',
@@ -104,13 +104,8 @@ const EDGE_PARLAY = (() => {
     },
   ];
 
-  // ── HEAD-TO-HEAD TRENDS ──
-  // These are evaluated against matchup_ats — the actual meeting
-  // history between the two teams on the ticket, not a league-wide
-  // pattern. A pairing has to clear MIN_H2H_MEETINGS before any of
-  // them count.
   const MIN_H2H_MEETINGS = 4;
-  const H2H_EDGE = 0.65;   // cover rate that makes a series trend real
+  const H2H_EDGE = 0.65;
 
   const H2H_TRENDS = [
     {
@@ -252,19 +247,14 @@ const EDGE_PARLAY = (() => {
         { headers: { apikey: key, Authorization: `Bearer ${key}` } }
       );
       return res.ok ? await res.json() : [];
-    } catch { return []; }
+    } catch (e) {
+      logEdgeError('parlay.loadGradedPicks', e);
+      return [];
+    }
   }
 
   // ============================================================
-  // ── TREND BET CONSTRUCTION ──
-  // Today's picks, filtered to a qualifying trend, assembled
-  // into a correlation-safe parlay.
-  // ============================================================
-
-  // ============================================================
   // ── HEAD-TO-HEAD ──
-  // Every trend that actually occurred in the historical meetings
-  // between these two teams, with the meeting log behind it.
   // ============================================================
 
   async function matchupTrends(sport, homeTeam, awayTeam) {
@@ -308,8 +298,6 @@ const EDGE_PARLAY = (() => {
     };
   }
 
-  // Attach series history to a list of picks in one pass, so a page
-  // can render every ticket's H2H without N round trips of its own.
   async function attachMatchupTrends(picks) {
     const unique = new Map();
     picks.forEach(p => {
@@ -322,7 +310,10 @@ const EDGE_PARLAY = (() => {
 
     const entries = Array.from(unique.values());
     const results = await Promise.all(
-      entries.map(e => matchupTrends(e.sport, e.home, e.away).catch(() => null))
+      entries.map(e => matchupTrends(e.sport, e.home, e.away).catch(e2 => {
+        logEdgeError('parlay.attachMatchupTrends', e2);
+        return null;
+      }))
     );
 
     entries.forEach((entry, i) => {
@@ -345,27 +336,14 @@ const EDGE_PARLAY = (() => {
 
   // ============================================================
   // ── TREND LEGS ──
-  // A trend is not a new market — it is a reason to take one that
-  // already exists. SU resolves to the moneyline, ATS to the spread,
-  // OU to the total. A trend leg can therefore go on a ticket for a
-  // game the pipeline passed on entirely.
-  //
-  // The probability is where this gets dangerous. A 6-0 trend is not
-  // a 100% leg. Every record is shrunk toward the market's own
-  // implied probability, weighted by sample size, before it is
-  // allowed to multiply into a parlay.
   // ============================================================
 
-  // Shrink a raw hit rate toward the market price. With n=6 the record
-  // barely moves the market number; by n=40 it dominates it.
   function shrinkToMarket(hitRate, sample, marketProb) {
     const n = Math.max(0, sample || 0);
     const blended = (hitRate * n + marketProb * TREND_PRIOR_N) / (n + TREND_PRIOR_N);
     return clamp(blended, 0.05, TREND_MAX_PROB);
   }
 
-  // Build bettable legs from the trends that apply to a slate,
-  // independent of whether the pipeline produced a pick for that game.
   async function buildTrendLegs(games, options = {}) {
     const { minSample = TREND_MIN_SAMPLE_LEG, minHitRate = 0.65, minStreak = 4 } = options;
     if (!window.EDGE_TRENDS) return [];
@@ -376,7 +354,8 @@ const EDGE_PARLAY = (() => {
       if (!isFinite(start) || start <= Date.now()) continue;
 
       let t;
-      try { t = await window.EDGE_TRENDS.trendsForGame(game); } catch { continue; }
+      try { t = await window.EDGE_TRENDS.trendsForGame(game); }
+      catch (e) { logEdgeError('parlay.buildTrendLegs.trendsForGame', e); continue; }
 
       [['home', t.home], ['away', t.away]].forEach(([side, block]) => {
         if (!block) return;
@@ -426,7 +405,6 @@ const EDGE_PARLAY = (() => {
       });
     }
 
-    // One leg per game, strongest edge first.
     legs.sort((a, b) => b.edge - a.edge);
     const seen = new Set();
     return legs.filter(l => {
@@ -436,8 +414,6 @@ const EDGE_PARLAY = (() => {
     });
   }
 
-  // Add chosen trend legs to an existing ticket, refusing any that
-  // would duplicate a game already on it.
   function addLegsToTicket(parlay, extraLegs) {
     const used = new Set((parlay?.legs || []).map(l => l.game_id));
     const additions = (extraLegs || []).filter(l => !used.has(l.game_id));
@@ -450,13 +426,6 @@ const EDGE_PARLAY = (() => {
     rebuilt.trend = parlay?.trend || null;
     return rebuilt;
   }
-
-  // ============================================================
-  // ── REAL TRENDS ──
-  // Historical situational, streak, rivalry and QB-anchored trends
-  // from the trends table. These are facts about the teams playing,
-  // not patterns mined from your own pick history.
-  // ============================================================
 
   async function historicalTrendsFor(picks) {
     if (!window.EDGE_TRENDS) return {};
@@ -471,13 +440,11 @@ const EDGE_PARLAY = (() => {
           commence_time: p.commence_time,
         });
         byGame[p.game_id] = t;
-      } catch {}
+      } catch (e) { logEdgeError('parlay.historicalTrendsFor', e); }
     }));
     return byGame;
   }
 
-  // A trend backs a pick when it belongs to the side the model likes
-  // and points the same direction.
   function supportingTrends(pick, gameTrends) {
     if (!gameTrends) return [];
     const side = pick.direction === 'home' ? gameTrends.home : gameTrends.away;
@@ -501,13 +468,11 @@ const EDGE_PARLAY = (() => {
     const active = scores.filter(t => t.qualified);
     const out = [];
 
-    // Load the meeting history for every game on today's board once,
-    // up front. Legs then carry the series trends that produced them.
     const playable = todaysPicks.filter(p =>
       p.decision && p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED');
-    try { await attachMatchupTrends(playable); } catch {}
+    try { await attachMatchupTrends(playable); }
+    catch (e) { logEdgeError('parlay.buildTrendBets.attachMatchup', e); }
 
-    // Historical trends for every game on the board, loaded once.
     const histByGame = await historicalTrendsFor(playable);
     playable.forEach(p => {
       p.historical_trends = supportingTrends(p, histByGame[p.game_id]);
@@ -529,8 +494,6 @@ const EDGE_PARLAY = (() => {
       out.push(parlay);
     }
 
-    // A ticket where every leg is carried by a documented historical
-    // trend — a streak, a situational record, or a rivalry edge.
     const trendBacked = playable
       .filter(p => num(p.confidence) >= minLegConfidence)
       .filter(p => (p.historical_trends || []).length > 0);
@@ -557,9 +520,6 @@ const EDGE_PARLAY = (() => {
       }
     }
 
-    // A ticket built purely from series history: every leg is a game
-    // where the two teams' own meeting record points the same way the
-    // model does. This is the head-to-head trend bet.
     const h2hBacked = playable
       .filter(p => num(p.confidence) >= minLegConfidence)
       .filter(p => {
@@ -575,8 +535,6 @@ const EDGE_PARLAY = (() => {
           trendId: 'h2h_series_backed',
           trendLabel: 'Series history backs every leg',
         });
-        // No league-wide sample behind this one — its evidence is the
-        // meeting log on each leg, which is reported per leg.
         parlay.trend = {
           id: 'h2h_series_backed',
           label: 'Series history backs every leg',
@@ -590,8 +548,6 @@ const EDGE_PARLAY = (() => {
       }
     }
 
-    // Several trends often select the same legs. Keep one copy of each
-    // distinct leg set, credited to the trend with the better record.
     const byLegs = new Map();
     for (const p of out) {
       const key = p.legs.map(l => l.game_id).sort().join('|');
@@ -611,7 +567,6 @@ const EDGE_PARLAY = (() => {
     return deduped;
   }
 
-  // One leg per game, then highest confidence first.
   function selectUncorrelatedLegs(picks, maxLegs) {
     const seenGames = new Set();
     const sorted = [...picks].sort((a, b) => num(b.confidence) - num(a.confidence));
@@ -637,7 +592,6 @@ const EDGE_PARLAY = (() => {
       const modelProb = legProbability(p);
       const marketProb = americanToImplied(odds);
       const mt = p.matchup_trends || null;
-      // Series trends that point the same way the model does.
       const agreeing = (mt?.trends || []).filter(t =>
         t.side === 'any' || t.side === p.direction);
 
@@ -684,7 +638,6 @@ const EDGE_PARLAY = (() => {
     const kellyRaw = payoutMultiple > 0
       ? (payoutMultiple * modelProb - (1 - modelProb)) / payoutMultiple
       : 0;
-    // Parlays get a harsher Kelly fraction than straight bets.
     const kellyFractional = Math.max(kellyRaw * 0.10, 0);
 
     const bankroll = getBankroll();
@@ -715,8 +668,6 @@ const EDGE_PARLAY = (() => {
     return legs.reduce((acc, l) => acc * (l.decimal || americanToDecimal(l.odds || DEFAULT_LEG_ODDS)), 1);
   }
 
-  // Naive independence overstates a parlay. Legs are shaded toward the
-  // market first, then a same-sport correlation haircut is applied.
   function parlayProbability(legs) {
     if (!legs.length) return 0;
 
@@ -747,7 +698,6 @@ const EDGE_PARLAY = (() => {
   }
 
   function legOdds(p) {
-    // A spread pick is priced at standard juice unless the row carries a price.
     if (p.direction === 'home' && num(p.market_home_ml)) return num(p.market_home_ml);
     if (p.direction === 'away' && num(p.market_away_ml)) return num(p.market_away_ml);
     return DEFAULT_LEG_ODDS;
