@@ -61,7 +61,6 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px,11vw,68px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* MODE SPLIT BAR */
     .mode-split { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); background: var(--bg2); }
     .mode-cell { padding: 14px 12px; text-align: center; cursor: pointer; transition: all 0.2s; border-bottom: 3px solid transparent; }
     .mode-cell:first-child { border-right: 1px solid var(--border); }
@@ -73,7 +72,6 @@
     .mode-cell.active.ai .mode-rec   { color: var(--blue); }
     .mode-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 3px; }
 
-    /* RECORD GRID */
     .record-grid { display: grid; grid-template-columns: repeat(2,1fr); border-bottom: 1px solid var(--border); }
     .rec-cell { padding: 16px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
     .rec-cell:nth-child(even) { border-right: none; }
@@ -86,7 +84,6 @@
     .rec-val.muted { color: var(--text-dim); font-size: 26px; }
     .rec-sub { font-size: 11px; color: var(--text-dim); margin-top: 3px; font-weight: 300; }
 
-    /* MONTH BREAKDOWN */
     .month-section { padding: 16px 20px; border-bottom: 1px solid var(--border); }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text); margin-bottom: 12px; }
     .sec-title em { color: var(--gold); font-style: normal; }
@@ -101,13 +98,11 @@
     .month-roi.neg { color: var(--red); }
     .month-roi.neu { color: var(--text-dim); }
 
-    /* FILTERS */
     .filter-bar { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
     .filter-bar::-webkit-scrollbar { display: none; }
     .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
 
-    /* DATE RANGE */
     .date-row { display: flex; gap: 8px; padding: 10px 20px; border-bottom: 1px solid var(--border); align-items: center; background: var(--bg2); flex-wrap: wrap; }
     .date-input { flex: 1; min-width: 120px; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; padding: 8px 10px; }
     .date-input:focus { outline: none; border-color: var(--gold); }
@@ -115,7 +110,6 @@
     .date-apply { background: none; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 8px 14px; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
     .date-apply:hover { background: var(--gold-glow); border-color: var(--gold); }
 
-    /* TABLE */
     .table-section { padding: 16px 20px; }
     .table-head-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
     .table-count { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
@@ -148,7 +142,6 @@
     .pnl.neg { color: var(--red); }
     .pnl.neu { color: var(--text-dim); }
 
-    /* EMPTY */
     .empty-state { padding: 48px 20px; text-align: center; }
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
@@ -160,9 +153,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -207,7 +197,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -247,9 +236,9 @@
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
@@ -264,7 +253,6 @@
       <div class="page-title">PICK <em>HISTORY</em></div>
     </div>
 
-    <!-- MODE SPLIT -->
     <div class="mode-split">
       <div class="mode-cell math active" id="modeMath" onclick="setModeFilter('math_only')">
         <div class="mode-lbl">Deterministic</div>
@@ -278,7 +266,6 @@
       </div>
     </div>
 
-    <!-- RECORD SUMMARY -->
     <div class="record-grid">
       <div class="rec-cell">
         <div class="rec-lbl">Record</div>
@@ -302,7 +289,6 @@
       </div>
     </div>
 
-    <!-- MONTH BREAKDOWN -->
     <div class="month-section">
       <div class="sec-title">MONTH <em>BREAKDOWN</em></div>
       <div class="month-list" id="monthList">
@@ -312,7 +298,6 @@
       </div>
     </div>
 
-    <!-- FILTERS -->
     <div class="filter-bar">
       <button class="fchip active" data-filter="all">All</button>
       <button class="fchip" data-filter="W">Wins</button>
@@ -329,7 +314,6 @@
       <button class="fchip" data-filter="NHL">NHL</button>
     </div>
 
-    <!-- DATE RANGE -->
     <div class="date-row">
       <input type="date" class="date-input" id="dateFrom" />
       <span class="date-sep">to</span>
@@ -337,7 +321,6 @@
       <button class="date-apply" onclick="renderTable()">Apply</button>
     </div>
 
-    <!-- TABLE -->
     <div class="table-section">
       <div class="table-head-row">
         <div class="sec-title" style="font-size:20px;">ALL <em>PICKS</em></div>
@@ -377,7 +360,6 @@
   </main>
 
   <script>
-    // ── NAV ──
     const ham = document.getElementById('ham');
     const drawer = document.getElementById('drawer');
     const overlay = document.getElementById('overlay');
@@ -388,14 +370,20 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── STATE ──
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     let currentFilter = 'all';
     let currentMode = 'math_only';
     let sortKey = 'created_at';
     let sortDir = -1;
     let allPicks = [];
 
-    // ── FILTERS ──
     document.querySelectorAll('.fchip').forEach(chip => {
       chip.addEventListener('click', () => {
         document.querySelectorAll('.fchip').forEach(c => c.classList.remove('active'));
@@ -421,7 +409,6 @@
       renderTable();
     }
 
-    // ── LOAD FROM SUPABASE ──
     async function loadPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -438,9 +425,10 @@
         const res = await fetch(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=2000`, {
           headers: { apikey: key, Authorization: `Bearer ${key}` }
         });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         allPicks = await res.json();
-      } catch {
+      } catch (e) {
+        logEdgeError('history.loadPicks', e);
         allPicks = [];
       }
 
@@ -449,12 +437,10 @@
       renderTable();
     }
 
-    // ── FILTER BY MODE ──
     function picksForMode() {
       return allPicks.filter(p => p.decision_mode === currentMode);
     }
 
-    // ── SUMMARY ──
     function renderSummary() {
       const picks = picksForMode();
       const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
@@ -478,7 +464,6 @@
         ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%'
         : '—';
 
-      // Mode split cards
       const mathPicks = allPicks.filter(p => p.decision_mode === 'math_only');
       const aiPicks   = allPicks.filter(p => p.decision_mode === 'ai_assisted');
 
@@ -503,7 +488,6 @@
         : 'No data';
     }
 
-    // ── MONTH BREAKDOWN ──
     function renderMonths() {
       const container = document.getElementById('monthList');
       const picks = picksForMode();
@@ -546,7 +530,6 @@
       }).join('');
     }
 
-    // ── TABLE ──
     function renderTable() {
       const body = document.getElementById('historyBody');
       const dateFrom = document.getElementById('dateFrom').value;
@@ -554,11 +537,9 @@
 
       let picks = [...picksForMode()];
 
-      // Date filter
       if (dateFrom) picks = picks.filter(p => p.created_at && p.created_at.slice(0, 10) >= dateFrom);
       if (dateTo) picks = picks.filter(p => p.created_at && p.created_at.slice(0, 10) <= dateTo);
 
-      // Category filter
       picks = picks.filter(p => {
         if (currentFilter === 'all') return true;
         if (currentFilter === 'pending') return !p.result;
@@ -567,7 +548,6 @@
         return p.sport === currentFilter;
       });
 
-      // Sort
       picks.sort((a, b) => {
         const av = a[sortKey] ?? '';
         const bv = b[sortKey] ?? '';
@@ -614,13 +594,11 @@
       }).join('');
     }
 
-    // ── INIT ──
     loadPicks();
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
