@@ -62,7 +62,6 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(38px,10vw,64px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* MODE SPLIT */
     .mode-split { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); background: var(--bg2); }
     .mode-cell { padding: 14px 12px; text-align: center; cursor: pointer; transition: all 0.2s; border-bottom: 3px solid transparent; }
     .mode-cell:first-child { border-right: 1px solid var(--border); }
@@ -74,12 +73,10 @@
     .mode-cell.active.ai .mode-rec   { color: var(--blue); }
     .mode-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 3px; }
 
-    /* SECTION */
     .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
     .sec-title em { color: var(--gold); font-style: normal; }
 
-    /* KEY STATS */
     .key-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .key-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; transition: border-color 0.2s; }
     .key-card:hover { border-color: var(--border-bright); }
@@ -92,14 +89,12 @@
     .key-val.muted { color: var(--text-dim); font-size: 28px; }
     .key-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; font-weight: 300; }
 
-    /* CHART */
     .chart-box { background: var(--surface); border: 1px solid var(--border); padding: 16px; }
     .chart-area { width: 100%; height: 140px; position: relative; overflow: hidden; }
     .chart-area svg { width: 100%; height: 100%; }
     .chart-labels { display: flex; justify-content: space-between; margin-top: 6px; }
     .chart-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
 
-    /* ROI BY SPORT */
     .sport-roi-list { display: flex; flex-direction: column; gap: 8px; }
     .sport-roi-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; }
     .sport-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); width: 56px; flex-shrink: 0; }
@@ -113,7 +108,6 @@
     .sport-roi-val.neg { color: var(--red); }
     .sport-roi-val.neu { color: var(--text-dim); }
 
-    /* ALGO PERFORMANCE */
     .algo-perf-list { display: flex; flex-direction: column; gap: 6px; }
     .algo-perf-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 11px 14px; }
     .algo-rank-num { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: var(--text-dim); width: 22px; flex-shrink: 0; text-align: center; }
@@ -126,7 +120,6 @@
     .algo-perf-roi.neu { color: var(--text-dim); }
     .algo-perf-weight { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; width: 40px; text-align: right; }
 
-    /* STREAK */
     .streak-list { display: flex; flex-direction: column; gap: 6px; }
     .streak-row { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 11px 14px; }
     .streak-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-mid); flex: 1; }
@@ -135,12 +128,10 @@
     .streak-val.loss { color: var(--red); }
     .streak-val.muted { color: var(--text-dim); font-size: 16px; }
 
-    /* CLV */
     .clv-card { background: var(--surface); border: 1px solid var(--border-bright); padding: 18px 16px; }
     .clv-val { font-family: 'Bebas Neue', sans-serif; font-size: 52px; letter-spacing: 2px; color: var(--gold); line-height: 1; margin: 8px 0 4px; }
     .clv-desc { font-size: 13px; color: var(--text-dim); font-weight: 300; line-height: 1.55; }
 
-    /* UNITS */
     .unit-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
     .unit-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 12px; text-align: center; }
     .unit-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; color: var(--text); line-height: 1; }
@@ -155,9 +146,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -202,7 +190,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -242,11 +229,11 @@
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
-    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <a href="performance.html" class="active"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
@@ -260,7 +247,6 @@
       <div class="page-title">PERFORMANCE <em>&amp; ROI</em></div>
     </div>
 
-    <!-- MODE SPLIT -->
     <div class="mode-split">
       <div class="mode-cell math active" id="modeMath" onclick="setModeFilter('math_only')">
         <div class="mode-lbl">Deterministic</div>
@@ -274,7 +260,6 @@
       </div>
     </div>
 
-    <!-- KEY STATS -->
     <div class="section">
       <div class="sec-title">KEY <em>STATS</em></div>
       <div class="key-grid">
@@ -306,7 +291,6 @@
       </div>
     </div>
 
-    <!-- MONTHLY P&L CHART -->
     <div class="section">
       <div class="sec-title">MONTHLY <em>P&amp;L</em></div>
       <div class="chart-box">
@@ -320,7 +304,6 @@
       </div>
     </div>
 
-    <!-- ROI BY SPORT -->
     <div class="section">
       <div class="sec-title">ROI BY <em>SPORT</em></div>
       <div class="sport-roi-list" id="sportROIList">
@@ -328,7 +311,6 @@
       </div>
     </div>
 
-    <!-- ALGO PERFORMANCE -->
     <div class="section">
       <div class="sec-title">FAMILY <em>PERFORMANCE</em></div>
       <div class="algo-perf-list" id="algoPerfList">
@@ -336,7 +318,6 @@
       </div>
     </div>
 
-    <!-- STREAKS -->
     <div class="section">
       <div class="sec-title">STREAK <em>HISTORY</em></div>
       <div class="streak-list">
@@ -355,7 +336,6 @@
       </div>
     </div>
 
-    <!-- CLV -->
     <div class="section">
       <div class="sec-title">CLOSING LINE <em>VALUE</em></div>
       <div class="clv-card">
@@ -368,7 +348,6 @@
       </div>
     </div>
 
-    <!-- UNIT TRACKER -->
     <div class="section">
       <div class="sec-title">UNIT <em>TRACKER</em></div>
       <div class="unit-grid">
@@ -395,7 +374,6 @@
   </main>
 
   <script>
-    // ── NAV ──
     const ham = document.getElementById('ham');
     const drawer = document.getElementById('drawer');
     const overlay = document.getElementById('overlay');
@@ -406,11 +384,17 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── STATE ──
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     let currentMode = 'math_only';
     let allPicks = [];
 
-    // ── MODE FILTER ──
     function setModeFilter(mode) {
       currentMode = mode;
       document.getElementById('modeMath').classList.toggle('active', mode === 'math_only');
@@ -422,7 +406,6 @@
       return allPicks.filter(p => p.decision_mode === currentMode);
     }
 
-    // ── LOAD ──
     async function loadPerformance() {
       const sbUrl = localStorage.getItem('edge_supabase_url');
       const sbKey = localStorage.getItem('edge_supabase_key');
@@ -437,12 +420,11 @@
           headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
         });
         if (res.ok) allPicks = await res.json();
-      } catch {}
+      } catch (e) { logEdgeError('performance.loadPerformance', e); }
 
       renderAll();
     }
 
-    // ── RENDER ALL ──
     function renderAll() {
       renderModeSplit();
       renderKeyStats();
@@ -454,7 +436,6 @@
       renderUnits();
     }
 
-    // ── MODE SPLIT ──
     function renderModeSplit() {
       const mathPicks = allPicks.filter(p => p.decision_mode === 'math_only');
       const aiPicks   = allPicks.filter(p => p.decision_mode === 'ai_assisted');
@@ -480,7 +461,6 @@
         : 'No data';
     }
 
-    // ── KEY STATS ──
     function renderKeyStats() {
       const picks = picksForMode();
       const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
@@ -519,7 +499,6 @@
       el.className = 'key-val ' + (val != null ? cls : 'muted');
     }
 
-    // ── CHART ──
     function renderChart() {
       const picks = picksForMode().filter(p => p.result);
       const months = {};
@@ -544,7 +523,6 @@
         return;
       }
 
-      // Cumulative
       let cum = 0;
       const cums = sorted.map(m => { cum += m.pnl; return cum; });
       const maxAbs = Math.max(...cums.map(Math.abs), 1);
@@ -576,7 +554,6 @@
       labels.innerHTML = sorted.map(m => `<span class="chart-lbl">${m.lbl}</span>`).join('');
     }
 
-    // ── ROI BY SPORT ──
     function renderSportROI() {
       const container = document.getElementById('sportROIList');
       const picks = picksForMode().filter(p => p.result);
@@ -620,7 +597,6 @@
       }).join('');
     }
 
-    // ── FAMILY PERFORMANCE ──
     async function renderAlgoPerf() {
       const container = document.getElementById('algoPerfList');
       const sbUrl = localStorage.getItem('edge_supabase_url');
@@ -635,7 +611,7 @@
         const res = await fetch(`${sbUrl}/rest/v1/algorithm_weights?select=*&order=roi.desc`, {
           headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
         });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const rows = await res.json();
 
         if (!rows.length) {
@@ -643,7 +619,6 @@
           return;
         }
 
-        // Aggregate by family across sports
         const byFamily = {};
         rows.forEach(r => {
           if (!byFamily[r.family]) byFamily[r.family] = { family: r.family, wins: 0, losses: 0, roiSum: 0, roiCount: 0, weightSum: 0, weightCount: 0 };
@@ -687,12 +662,12 @@
               <span class="algo-perf-weight">${a.weight != null ? a.weight.toFixed(1) : '—'}</span>
             </div>`;
         }).join('');
-      } catch {
+      } catch (e) {
+        logEdgeError('performance.renderAlgoPerf', e);
         container.innerHTML = '<div class="empty-note">Error loading family data</div>';
       }
     }
 
-    // ── STREAKS ──
     function renderStreaks() {
       const settled = picksForMode()
         .filter(p => p.result === 'W' || p.result === 'L')
@@ -705,7 +680,6 @@
         return;
       }
 
-      // Current streak
       let cur = 1;
       const curRes = settled[0].result;
       for (let i = 1; i < settled.length; i++) {
@@ -716,7 +690,6 @@
       curEl.textContent = curRes + cur;
       curEl.className = 'streak-val ' + (curRes === 'W' ? 'win' : 'loss');
 
-      // Best win / worst loss
       let bestW = 0, worstL = 0, runW = 0, runL = 0;
       [...settled].reverse().forEach(p => {
         if (p.result === 'W') { runW++; runL = 0; bestW = Math.max(bestW, runW); }
@@ -726,7 +699,6 @@
       document.getElementById('worstLoss').textContent = worstL > 0 ? 'L' + worstL : '—';
     }
 
-    // ── CLV ──
     function renderCLV() {
       const picks = picksForMode().filter(p => typeof p.clv === 'number');
       if (!picks.length) {
@@ -738,7 +710,6 @@
         (avg > 0 ? '+' : '') + avg.toFixed(2);
     }
 
-    // ── UNITS ──
     function renderUnits() {
       const picks = picksForMode();
       const settled = picks.filter(p => p.result && p.pnl != null);
@@ -756,13 +727,11 @@
       document.getElementById('unitTotal').textContent = wagered > 0 ? wagered.toFixed(1) + 'u' : '—';
     }
 
-    // ── INIT ──
     loadPerformance();
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
