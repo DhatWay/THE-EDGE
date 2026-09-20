@@ -326,7 +326,6 @@
       { key: 'soccer_usa_mls',         label: 'MLS' },
     ];
 
-    // ── TIME WINDOW ──
     const TIME_WINDOWS = {
       today:  { label: 'Today',          days: null },
       '48h':  { label: 'Next 48 Hours',  days: 2 },
@@ -448,11 +447,36 @@
       const refreshBtn = document.getElementById('refreshBtn');
 
       if (!apiKey && !proxy) {
+        // No key configured — serve whatever is cached so the page is not blank.
+        const saved = readCacheAny();
+        if (saved) {
+          allGamesRaw = saved.games;
+          applyWindow();
+          await loadContextIndexes();
+          statusEl.textContent = 'No API key · showing last saved board';
+          return;
+        }
         statusEl.textContent = 'Add your Odds API key in Settings';
         renderGames();
         return;
       }
 
+      // Offline: serve any cache, no age limit, and do not attempt the network.
+      if (!navigator.onLine) {
+        const saved = readCacheAny();
+        if (saved) {
+          allGamesRaw = saved.games;
+          applyWindow();
+          await loadContextIndexes();
+          statusEl.textContent = 'Offline · showing last saved board';
+          return;
+        }
+        statusEl.textContent = 'Offline · no saved board';
+        renderGames();
+        return;
+      }
+
+      // Fresh cache: use it without hitting the network.
       if (!force) {
         const cached = readCache();
         if (cached) {
@@ -487,6 +511,17 @@
         }
 
         if (fetched.length === 0) {
+          // Every sport failed. Serve the saved board rather than an empty page.
+          const saved = readCacheAny();
+          if (saved) {
+            allGamesRaw = saved.games;
+            applyWindow();
+            await loadContextIndexes();
+            statusEl.textContent = failedSports > 0
+              ? 'Fetch failed · showing last saved board'
+              : 'No games returned · showing last saved board';
+            return;
+          }
           statusEl.textContent = failedSports > 0
             ? 'Fetch failed — check API key or rate limit'
             : 'No games returned';
@@ -622,6 +657,7 @@
       catch (e) { logEdgeError('matchups.rawCache', e); }
     }
 
+    // Fresh cache: only served if under the TTL.
     function readCache() {
       try {
         const ts = parseInt(localStorage.getItem('edge_todays_games_ts') || '0');
@@ -629,6 +665,20 @@
         const raw = localStorage.getItem('edge_all_games_raw');
         const games = raw ? JSON.parse(raw) : JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
         if (!Array.isArray(games) || !games.length) return null;
+        return { games, ts };
+      } catch { return null; }
+    }
+
+    // Any cache: no TTL. Used when the network is gone so the page still
+    // shows what it had. The board is labelled as stale in the status bar.
+    function readCacheAny() {
+      try {
+        const raw = localStorage.getItem('edge_all_games_raw');
+        const games = raw
+          ? JSON.parse(raw)
+          : JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+        if (!Array.isArray(games) || !games.length) return null;
+        const ts = parseInt(localStorage.getItem('edge_todays_games_ts') || '0') || Date.now();
         return { games, ts };
       } catch { return null; }
     }
@@ -930,12 +980,15 @@
 
     function scheduleRefresh() {
       const hasLive = allGames.some(g => gameStatusLabel(g).cls === 'live');
-      if (hasLive) {
+      if (hasLive && navigator.onLine) {
         setTimeout(() => { fetchMatchups().then(scheduleRefresh); }, 30000);
       }
     }
 
     fetchMatchups().then(scheduleRefresh);
+
+    // Re-check when the network comes back so the board is not left stale.
+    window.addEventListener('online', () => { fetchMatchups({ force: true }); });
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
