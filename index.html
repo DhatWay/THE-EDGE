@@ -60,7 +60,6 @@
 
     main { position: relative; z-index: 1; padding-top: 60px; }
 
-    /* HERO */
     .hero { padding: 44px 20px 28px; border-bottom: 1px solid var(--border); }
     .hero-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
     .hero-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
@@ -76,7 +75,6 @@
     .dot.ai   { background: var(--blue); box-shadow: 0 0 5px var(--blue); animation: blink 1.8s infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-    /* SECTION */
     .section { padding: 24px 20px; border-bottom: 1px solid var(--border); }
     .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 3px; color: var(--text); }
@@ -84,13 +82,11 @@
     .sec-link { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold-dim); text-decoration: none; white-space: nowrap; transition: color 0.2s; }
     .sec-link:hover { color: var(--gold); }
 
-    /* MODE PILL */
     .mode-pill-row { display: flex; gap: 6px; align-items: center; }
     .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
     .mode-pill.det  { border-color: var(--gold-dim); color: var(--gold); }
     .mode-pill.ai   { border-color: var(--blue); color: var(--blue); }
 
-    /* STAT GRID */
     .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .stat-card { background: var(--surface); border: 1px solid var(--border); padding: 18px 16px 16px; position: relative; overflow: hidden; transition: border-color 0.2s; }
     .stat-card:hover { border-color: var(--border-bright); }
@@ -103,7 +99,6 @@
     .stat-val.muted { color: var(--text-dim); font-size: 32px; }
     .stat-hint { font-size: 12px; color: var(--text-dim); margin-top: 4px; font-weight: 300; }
 
-    /* CONSENSUS */
     .cons-block { background: var(--surface); border: 1px solid var(--border); padding: 20px 18px; }
     .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 54px; color: var(--gold); line-height: 1; letter-spacing: 2px; }
     .cons-num span { font-size: 22px; color: var(--text-dim); }
@@ -116,7 +111,6 @@
     .cdot.no  { background: var(--bg4); border: 1px solid #333; }
     .cdot.neu { background: #3A3A3A; }
 
-    /* TOP PICK */
     .pick-card { background: var(--surface); border: 1px solid var(--border-bright); padding: 20px 18px; position: relative; overflow: hidden; }
     .pick-card::after { content: 'TOP PICK'; position: absolute; top: 12px; right: -24px; background: var(--gold); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; padding: 4px 32px; transform: rotate(45deg); }
     .pick-sport { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
@@ -136,14 +130,12 @@
     .pending-icon { font-size: 28px; margin-bottom: 10px; opacity: 0.35; }
     .pending-text { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); }
 
-    /* BANKROLL */
     .bank-card { background: var(--surface); border: 1px solid var(--border); padding: 20px 18px; }
     .bank-amount { font-family: 'Bebas Neue', sans-serif; font-size: 46px; letter-spacing: 2px; color: var(--text); margin: 8px 0 4px; }
     .cap-row { display: flex; justify-content: space-between; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 16px; margin-bottom: 6px; }
     .cap-bar { background: var(--bg4); height: 4px; overflow: hidden; }
     .cap-fill { height: 100%; background: linear-gradient(90deg, #1E8449, var(--green)); width: 0; transition: width 1.4s ease; }
 
-    /* QUICK NAV GRID */
     .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .nav-tile { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); padding: 16px 16px; text-decoration: none; transition: all 0.2s; }
     .nav-tile:hover { border-color: var(--gold); background: var(--gold-glow); }
@@ -152,7 +144,6 @@
     .tile-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-mid); transition: color 0.2s; line-height: 1.2; }
     .tile-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 400; letter-spacing: 0; }
 
-    /* TABLE */
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; min-width: 380px; }
     thead th { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); text-align: left; padding: 8px 12px 10px; border-bottom: 1px solid var(--border); }
@@ -172,9 +163,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 8px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -219,7 +207,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -260,9 +247,9 @@
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
@@ -282,7 +269,6 @@
       </div>
     </div>
 
-    <!-- SEASON RECORD -->
     <div class="section">
       <div class="sec-head">
         <div class="sec-title">SEASON <em>RECORD</em></div>
@@ -318,7 +304,6 @@
       </div>
     </div>
 
-    <!-- ALGORITHM CONSENSUS -->
     <div class="section">
       <div class="sec-head">
         <div class="sec-title">ALGO <em>CONSENSUS</em></div>
@@ -336,7 +321,6 @@
       </div>
     </div>
 
-    <!-- TODAY'S TOP PICK -->
     <div class="section">
       <div class="sec-head">
         <div class="sec-title">LATEST <em>TOP PICK</em></div>
@@ -351,7 +335,6 @@
       </div>
     </div>
 
-    <!-- BANKROLL & CAPS -->
     <div class="section">
       <div class="sec-head">
         <div class="sec-title">BANKROLL <em>&amp; CAPS</em></div>
@@ -377,7 +360,6 @@
       </div>
     </div>
 
-    <!-- ALL PAGES NAV -->
     <div class="section">
       <div class="sec-title" style="margin-bottom:14px;">ALL <em>PAGES</em></div>
       <div class="nav-grid">
@@ -425,14 +407,13 @@
           <div class="tile-ico">⬡</div>
           <div><div class="tile-lbl">Admin</div><div class="tile-sub">Pipeline · learning loop · API keys</div></div>
         </a>
-          <a href="intelligence.html" class="nav-tile">
+        <a href="intelligence.html" class="nav-tile">
           <div class="tile-ico">⬡</div>
           <div><div class="tile-lbl">Intelligence</div><div class="tile-sub">Raw Data</div></div>
         </a>
       </div>
     </div>
 
-    <!-- RECENT PICKS -->
     <div class="section">
       <div class="sec-head">
         <div class="sec-title">RECENT <em>PICKS</em></div>
@@ -473,7 +454,6 @@
   </main>
 
   <script>
-    // ── NAV ──
     const ham = document.getElementById('ham');
     const drawer = document.getElementById('drawer');
     const overlay = document.getElementById('overlay');
@@ -492,7 +472,14 @@
       });
     });
 
-    // ── CONSENSUS DOTS ──
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     const dotWrap = document.getElementById('consDots');
     for (let i = 0; i < 9; i++) {
       const d = document.createElement('div');
@@ -500,7 +487,6 @@
       dotWrap.appendChild(d);
     }
 
-    // ── STATUS ROW ──
     function renderStatusRow() {
       const row = document.getElementById('statusRow');
       const hasSb = !!(localStorage.getItem('edge_supabase_url') && localStorage.getItem('edge_supabase_key'));
@@ -523,7 +509,6 @@
       row.innerHTML = pills.join('');
     }
 
-    // ── LOAD SETTINGS + BANKROLL ──
     function loadBankrollAndCaps() {
       const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
       const dailyCap = parseFloat(localStorage.getItem('edge_daily_cap') || '0');
@@ -541,7 +526,6 @@
       }, 400);
     }
 
-    // ── LOAD DASHBOARD DATA ──
     async function loadDashboard() {
       const sbUrl = localStorage.getItem('edge_supabase_url');
       const sbKey = localStorage.getItem('edge_supabase_key');
@@ -556,19 +540,18 @@
           `${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=500`,
           { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
         );
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const picks = await res.json();
         renderDashboard(picks);
-      } catch {
+      } catch (e) {
+        logEdgeError('index.loadDashboard', e);
         renderEmptyState();
       }
     }
 
-    // ── RENDER DASHBOARD ──
     function renderDashboard(picks) {
       if (!picks.length) { renderEmptyState(); return; }
 
-      // Season record
       const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
       const w = picks.filter(p => p.result === 'W').length;
       const l = picks.filter(p => p.result === 'L').length;
@@ -590,27 +573,22 @@
       setStat('statUnits', netPnl !== 0 ? (netPnl > 0 ? '+' : '') + netPnl.toFixed(1) + 'u' : null,
               netPnl > 0 ? 'green' : netPnl < 0 ? 'red' : 'muted');
 
-      // Streak
       const streakData = computeStreak(picks);
       setStat('statStreak', streakData.label, streakData.cls);
 
-      // Avg conf
       const confs = picks.map(p => p.confidence).filter(c => typeof c === 'number' && c > 0);
       const avgConf = confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : null;
       setStat('statAvgConf', avgConf !== null ? avgConf.toFixed(1) + '%' : null, 'gold');
 
-      // Consensus: latest pick
       const latest = picks[0];
       renderConsensus(latest);
 
-      // Top pick: highest confidence settled/non-settled BET
       const actionable = picks.filter(p =>
         p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED' && p.units > 0
       );
       const topPick = actionable.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
       renderTopPick(topPick);
 
-      // Recent picks table
       renderRecent(picks.slice(0, 8));
     }
 
@@ -635,7 +613,6 @@
       return { label: res + count, cls: res === 'W' ? 'green' : 'red' };
     }
 
-    // ── CONSENSUS ──
     function renderConsensus(pick) {
       if (!pick) return;
       const bd = pick.governor_snapshot?.breakdown || [];
@@ -655,7 +632,6 @@
       }).join('');
     }
 
-    // ── TOP PICK ──
     function renderTopPick(pick) {
       const container = document.getElementById('topPickContainer');
       if (!pick) {
@@ -702,7 +678,6 @@
         </div>`;
     }
 
-    // ── RECENT PICKS ──
     function renderRecent(picks) {
       const body = document.getElementById('recentPicksBody');
       if (!picks.length) {
@@ -730,7 +705,6 @@
       }).join('');
     }
 
-    // ── EMPTY STATE ──
     function renderEmptyState() {
       setStat('statROI', null, 'muted');
       setStat('statRecord', null, 'muted');
@@ -745,7 +719,6 @@
       });
     }
 
-    // ── INIT ──
     renderStatusRow();
     loadBankrollAndCaps();
     loadDashboard();
@@ -753,7 +726,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
