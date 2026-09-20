@@ -1,15 +1,11 @@
 // ============================================================
-// EDGE — BOX SCORE FETCHER v1.0
+// EDGE — BOX SCORE FETCHER v1.1
 //
-// Pulls player stats from ESPN's summary endpoint for every
-// completed game, writes one row per player per game to
-// player_game_stats.
-//
-// NFL first. Other sports follow the same pattern with different
-// stat-category mappings.
-//
-// Run once per sport. Resumable — games already in the table are
-// skipped on the next run. About 1400 requests for 6 NFL seasons.
+// v1.1 — every column initialised to null before the category-
+// specific assignment. v1.0 only set the columns for the
+// player's own category, so a batch containing a passing row
+// and a rushing row had mismatched keys and PostgREST rejected
+// the whole thing with PGRST102 "All object keys must match".
 // ============================================================
 
 const EDGE_BOXSCORE = (() => {
@@ -42,10 +38,6 @@ const EDGE_BOXSCORE = (() => {
     buildSport,
     buildAll,
   };
-
-  // ============================================================
-  // ── MAIN ──
-  // ============================================================
 
   async function buildAll(options = {}) {
     const { sports = ['NFL'], onProgress = null } = options;
@@ -117,10 +109,6 @@ const EDGE_BOXSCORE = (() => {
     return { games_fetched: fetched, rows_written: written };
   }
 
-  // ============================================================
-  // ── GAME LIST ──
-  // ============================================================
-
   async function loadGames(sport, url, key) {
     const out = [];
     const pageSize = 1000;
@@ -165,10 +153,6 @@ const EDGE_BOXSCORE = (() => {
     }
     return out;
   }
-
-  // ============================================================
-  // ── FETCH ONE GAME ──
-  // ============================================================
 
   async function fetchGameStats(sport, game) {
     const path = ESPN_MAP[sport];
@@ -244,8 +228,12 @@ const EDGE_BOXSCORE = (() => {
 
   // ============================================================
   // ── STAT MAPPING ──
-  // ESPN returns stats keyed by name. This maps each sport's
-  // category to the right columns in player_game_stats.
+  //
+  // Every column is initialised to null before the category-specific
+  // assignment. PostgREST rejects a batch if the rows in it don't all
+  // share the same key set — a passing row and a rushing row have
+  // different non-null columns, so without this they'd be rejected
+  // with PGRST102 "All object keys must match".
   // ============================================================
 
   function buildStatRow(ctx) {
@@ -262,6 +250,67 @@ const EDGE_BOXSCORE = (() => {
       season: ctx.season,
       is_home: ctx.isHome,
       starter: ctx.starter,
+
+      // Football
+      pass_attempts: null,
+      pass_completions: null,
+      passing_yards: null,
+      passing_tds: null,
+      interceptions: null,
+      rush_attempts: null,
+      rushing_yards: null,
+      rushing_tds: null,
+      targets: null,
+      receptions: null,
+      receiving_yards: null,
+      receiving_tds: null,
+      fumbles_lost: null,
+
+      // Basketball
+      minutes: null,
+      points: null,
+      rebounds: null,
+      assists: null,
+      steals: null,
+      blocks: null,
+      turnovers: null,
+      fg_made: null,
+      fg_attempted: null,
+      three_made: null,
+      three_attempted: null,
+      ft_made: null,
+      ft_attempted: null,
+
+      // Baseball — batter
+      at_bats: null,
+      hits: null,
+      runs: null,
+      rbis: null,
+      home_runs: null,
+      walks: null,
+      strikeouts: null,
+
+      // Baseball — pitcher
+      innings_pitched: null,
+      earned_runs: null,
+      hits_allowed: null,
+      walks_allowed: null,
+      pitching_strikeouts: null,
+
+      // Hockey / soccer — skater
+      goals: null,
+      shots: null,
+      plus_minus: null,
+      penalty_minutes: null,
+
+      // Hockey goalie / soccer keeper
+      saves: null,
+      goals_against: null,
+      shots_against: null,
+
+      // Soccer
+      shots_on_target: null,
+
       raw: stats,
     };
 
@@ -352,10 +401,6 @@ const EDGE_BOXSCORE = (() => {
     return row;
   }
 
-  // ============================================================
-  // ── WRITE ──
-  // ============================================================
-
   async function writeRows(url, key, rows, log) {
     if (!rows.length) return 0;
     let written = 0;
@@ -386,10 +431,6 @@ const EDGE_BOXSCORE = (() => {
     }
     return written;
   }
-
-  // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
 
   function seasonOf(sport, date) {
     const m = date.getMonth() + 1;
