@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+    }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Barlow', sans-serif;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px; overflow-x: hidden;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0;
+      background: radial-gradient(ellipse 70% 40% at 50% 0%, rgba(201,168,76,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .wrap { width: 100%; max-width: 380px; position: relative; z-index: 1; }
+    .brand { text-align: center; margin-bottom: 32px; }
+    .mark {
+      width: 56px; height: 56px; background: var(--gold); color: #000;
+      font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px;
+      display: inline-flex; align-items: center; justify-content: center;
+      clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%);
+      margin-bottom: 14px;
+    }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 40px; letter-spacing: 8px; color: var(--gold); line-height: 1; }
+    .logo-sub { font-size: 9px; letter-spacing: 3px; color: var(--text-dim); text-transform: uppercase; margin-top: 4px; }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 24px 20px 22px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+      border-radius: 2px;
+    }
+    .title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; margin-bottom: 18px; }
+    .title em { color: var(--gold); font-style: normal; }
+
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block; font-family: 'Barlow Condensed', sans-serif;
+      font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%; background: var(--bg4); border: 1px solid var(--border);
+      color: var(--text); font-family: 'Barlow', sans-serif; font-size: 16px;
+      padding: 12px 14px; border-radius: 2px;
+    }
+    .field input:focus { outline: none; border-color: var(--gold); }
+
+    .submit {
+      width: 100%; background: var(--gold); border: none; color: #000;
+      font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px;
+      padding: 14px; cursor: pointer; border-radius: 2px;
+      transition: opacity 0.2s, transform 0.2s;
+      margin-top: 6px;
+    }
+    .submit:hover:not(:disabled) { opacity: 0.85; }
+    .submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .err {
+      color: var(--red); font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px; letter-spacing: 1px; margin-top: 12px; min-height: 16px;
+      text-align: center;
+    }
+
+    .bootstrap {
+      margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border);
+    }
+    .bootstrap h4 {
+      font-family: 'Barlow Condensed', sans-serif; font-size: 10px;
+      letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+    .bootstrap .row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .bootstrap input {
+      flex: 1; background: var(--bg4); border: 1px solid var(--border);
+      color: var(--text); font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px; padding: 8px 10px; border-radius: 2px;
+    }
+    .bootstrap button {
+      background: none; border: 1px solid var(--gold-dim); color: var(--gold);
+      font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700;
+      letter-spacing: 2px; text-transform: uppercase; padding: 8px 12px;
+      cursor: pointer; border-radius: 2px; white-space: nowrap;
+    }
+    .bootstrap button:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    .foot {
+      text-align: center; margin-top: 24px; font-size: 11px;
+      color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark">ED</div>
+      <div class="logo-text">EDGE</div>
+      <div class="logo-sub">AI Betting Intelligence</div>
+    </div>
+
+    <div class="card">
+      <div class="title">SIGN <em>IN</em></div>
+
+      <form id="loginForm">
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" autocomplete="email" autocapitalize="off" autocorrect="off" spellcheck="false" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="submit" id="submitBtn">Sign In</button>
+        <div class="err" id="loginError"></div>
+      </form>
+
+      <div class="bootstrap" id="bootstrap" style="display:none;">
+        <h4>Set Supabase connection</h4>
+        <div class="row">
+          <input id="bootUrl" placeholder="https://yourproject.supabase.co" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        </div>
+        <div class="row">
+          <input id="bootKey" placeholder="anon public key" autocapitalize="off" autocorrect="off" spellcheck="false" />
+          <button type="button" onclick="saveBootstrap()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      Private use only · One account · © 2026
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+  <script>
+    // If the Supabase URL or anon key are missing, show the
+    // bootstrap form so a fresh device can be set up without
+    // needing to reach Settings (which is behind the gate).
+    (function() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) {
+        document.getElementById('bootstrap').style.display = 'block';
+        if (url) document.getElementById('bootUrl').value = url;
+        if (key) document.getElementById('bootKey').value = key;
+      }
+    })();
+
+    function saveBootstrap() {
+      const url = document.getElementById('bootUrl').value.trim().replace(/\/+$/, '');
+      const key = document.getElementById('bootKey').value.trim();
+      if (!url || !key) { alert('Enter both fields'); return; }
+      localStorage.setItem('edge_supabase_url', url);
+      localStorage.setItem('edge_supabase_key', key);
+      window.location.reload();
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('loginError');
+      const btn = document.getElementById('submitBtn');
+
+      errEl.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+
+      try {
+        await window.EDGE_AUTH.signIn(email, password);
+        const ret = sessionStorage.getItem('edge_return_to') || 'index.html';
+        sessionStorage.removeItem('edge_return_to');
+        window.location.replace(ret);
+      } catch (err) {
+        errEl.textContent = err.message || 'Sign in failed';
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      }
+    });
+  </script>
+</body>
+</html>
