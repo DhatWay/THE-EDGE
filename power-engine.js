@@ -68,6 +68,8 @@ const EDGE_POWER = (() => {
 
   const _calibration = { loaded: false, bySport: {} };
 
+const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
+
   return {
     computeGamePrior,
     computeAllTeamRatings,
@@ -319,7 +321,7 @@ const EDGE_POWER = (() => {
     return fetchDayByDay(base, start, end, group);
   }
 
-  const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
+  function isAllStarSide(name, games, medianGames) {
 
   function isAllStarSide(name, games, medianGames) {
     if (ALL_STAR_NAMES.test(name)) return true;
