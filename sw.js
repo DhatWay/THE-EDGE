@@ -37,6 +37,7 @@ const SHELL_FILES = [
   './learning.js',
   './parlay.js',
   './trends-engine.js',
+  './auth.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
