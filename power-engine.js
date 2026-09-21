@@ -1,13 +1,13 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v4.1
+// EDGE — POWER RATINGS ENGINE v4.2
 // Regular season only · chunked fetch (no silent truncation)
 // Opponent-adjusted SRS · sequential Elo · draws handled
-// v4.1 — ESPN shape fallback resets per run · day-by-day warns
+// v4.2 — WNBA added · duplicated isAllStarSide line removed
 // ============================================================
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260918-1400';
+  const BUILD = 'pe-20260921-1200';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -15,6 +15,7 @@ const EDGE_POWER = (() => {
   const ESPN_MAP = {
     NFL:   'football/nfl',
     NBA:   'basketball/nba',
+    WNBA:  'basketball/wnba',
     MLB:   'baseball/mlb',
     NHL:   'hockey/nhl',
     NCAAF: 'football/college-football',
@@ -25,6 +26,7 @@ const EDGE_POWER = (() => {
   const SEASON_WINDOWS = {
     NFL:   { start: [9, 1],   end: [2, 15]  },
     NBA:   { start: [10, 15], end: [6, 30]  },
+    WNBA:  { start: [5, 1],   end: [10, 15] },
     MLB:   { start: [3, 20],  end: [11, 5]  },
     NHL:   { start: [10, 1],  end: [6, 30]  },
     NCAAF: { start: [8, 15],  end: [1, 15]  },
@@ -34,7 +36,7 @@ const EDGE_POWER = (() => {
 
   const CHUNK_DAYS = {
     NFL: 30, NCAAF: 21, MLS: 30,
-    MLB: 14, NBA: 14, NHL: 14,
+    MLB: 14, NBA: 14, NHL: 14, WNBA: 14,
     NCAAB: 5,
   };
 
@@ -43,6 +45,7 @@ const EDGE_POWER = (() => {
   const SPORT_CONFIG = {
     NFL:   { avgPF: 22,  avgPA: 22,  pyExp: 2.37,  scale: 22,  k: 8,  movCap: 28, eloK: 20, eloHFA: 55  },
     NBA:   { avgPF: 112, avgPA: 112, pyExp: 13.91, scale: 18,  k: 15, movCap: 25, eloK: 20, eloHFA: 100 },
+    WNBA:  { avgPF: 82,  avgPA: 82,  pyExp: 11.0,  scale: 18,  k: 12, movCap: 25, eloK: 20, eloHFA: 100 },
     MLB:   { avgPF: 4.5, avgPA: 4.5, pyExp: 1.83,  scale: 3,   k: 20, movCap: 8,  eloK: 6,  eloHFA: 25  },
     NHL:   { avgPF: 3.0, avgPA: 3.0, pyExp: 2.0,   scale: 2,   k: 15, movCap: 4,  eloK: 8,  eloHFA: 35  },
     NCAAF: { avgPF: 27,  avgPA: 27,  pyExp: 2.37,  scale: 32,  k: 6,  movCap: 35, eloK: 25, eloHFA: 65  },
@@ -55,12 +58,13 @@ const EDGE_POWER = (() => {
   const COACHING_WEIGHTS = {
     NFL:   { halftime: 1.5, close: 0.7, maxAdj: 3.5 },
     NBA:   { halftime: 1.0, close: 0.5, maxAdj: 2.0 },
+    WNBA:  { halftime: 1.0, close: 0.5, maxAdj: 2.0 },
     MLB:   { halftime: 0.0, close: 0.4, maxAdj: 1.5 },
     NHL:   { halftime: 0.5, close: 0.5, maxAdj: 1.5 },
     DEFAULT: { halftime: 0.8, close: 0.5, maxAdj: 2.5 },
   };
 
-  const CLOSE_MARGIN = { NFL: 7, NCAAF: 7, NBA: 5, NCAAB: 5, MLB: 1, NHL: 1, MLS: 1, DEFAULT: 5 };
+  const CLOSE_MARGIN = { NFL: 7, NCAAF: 7, NBA: 5, NCAAB: 5, WNBA: 5, MLB: 1, NHL: 1, MLS: 1, DEFAULT: 5 };
 
   const MAX_LOOKBACK_DAYS = 400;
 
@@ -68,7 +72,7 @@ const EDGE_POWER = (() => {
 
   const _calibration = { loaded: false, bySport: {} };
 
-const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
+  const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
 
   return {
     computeGamePrior,
@@ -128,9 +132,6 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
     const { scopeTeams = null, onProgress = null } = options;
     const emit = (m) => { if (typeof onProgress === 'function') onProgress(m); };
 
-    // Reset the ESPN query-shape memory for each run. Without this a
-    // single range failure in any sport forced every subsequent sport
-    // through the slower day-by-day path for the life of the page.
     _espnShape.chosen = null;
     _espnShape.dayFallback = false;
 
@@ -287,8 +288,6 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
 
   async function fetchGamesInRange(path, start, end) {
     const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
-    const college = /college/.test(path);
-
     const group = collegeGroup(path);
 
     const shapes = [
@@ -320,8 +319,6 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
     _espnShape.dayFallback = true;
     return fetchDayByDay(base, start, end, group);
   }
-
-  function isAllStarSide(name, games, medianGames) {
 
   function isAllStarSide(name, games, medianGames) {
     if (ALL_STAR_NAMES.test(name)) return true;
@@ -695,7 +692,7 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
     const differential = homeOffVsAwayDef - awayOffVsHomeDef;
 
     const conversion = {
-      NFL: 0.06, NBA: 0.08, MLB: 0.02, NHL: 0.015,
+      NFL: 0.06, NBA: 0.08, WNBA: 0.08, MLB: 0.02, NHL: 0.015,
       NCAAF: 0.07, NCAAB: 0.08, MLS: 0.02,
     }[sport] || 0.05;
 
@@ -753,7 +750,7 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
       } else {
         const ratingDelta = homeStats.overall - awayStats.overall;
         const spreadConv = {
-          NFL: -0.28, NBA: -0.28, MLB: -0.08, NHL: -0.05,
+          NFL: -0.28, NBA: -0.28, WNBA: -0.28, MLB: -0.08, NHL: -0.05,
           NCAAF: -0.30, NCAAB: -0.28, MLS: -0.05,
         }[sport] || -0.28;
         modelSpread = round(ratingDelta * spreadConv, 2);
@@ -772,7 +769,7 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
     const rawEdge = marketSpread !== null ? round(marketSpread - totalModelSpread, 2) : 0;
 
     const probShiftPerPoint = {
-      NFL: 0.028, NBA: 0.032, MLB: 0.040, NHL: 0.035,
+      NFL: 0.028, NBA: 0.032, WNBA: 0.032, MLB: 0.040, NHL: 0.035,
       NCAAF: 0.028, NCAAB: 0.032, MLS: 0.040,
     }[sport] || 0.030;
 
@@ -958,7 +955,7 @@ const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Sta
   function seasonLabelFor(sport, date) {
     const m = date.getMonth() + 1, y = date.getFullYear();
     const cross = (start) => (m >= start ? y : y - 1);
-    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') return String(cross(9));
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') return String(cross(9));
     if (sport === 'NFL' || sport === 'NCAAF') return String(cross(3));
     return String(y);
   }
