@@ -218,7 +218,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Build Prop Trends → Refresh Injuries. Takes 10-30 minutes on the first run.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -309,10 +309,10 @@
           <div class="pipeline-title">Pull Player Stats</div>
         </div>
         <div class="pipeline-desc">
-          Walks every completed game in historical_odds, pulls the ESPN box score for each, writes one row per player per game to player_game_stats. This is the data behind player-prop trends. First run for NFL is 10-15 minutes. Resumable — already-fetched games are skipped.
+          Walks every completed game in historical_odds, pulls the ESPN box score for each, writes one row per player per game to player_game_stats. This is the data behind player-prop trends. Resumable — already-fetched games are skipped.
         </div>
         <div class="pipeline-actions single">
-          <button class="pipeline-btn secondary" id="runBoxScoreBtn" onclick="runBoxScoreFetch()">▲ Fetch NFL Box Scores</button>
+          <button class="pipeline-btn secondary" id="runBoxScoreBtn" onclick="runBoxScoreFetch()">▲ Fetch Box Scores</button>
         </div>
         <div class="pipeline-log" id="boxScoreLog">Idle.</div>
       </div>
@@ -322,7 +322,7 @@
           <div class="pipeline-title">Build Prop Trends</div>
         </div>
         <div class="pipeline-desc">
-          Mines player_game_stats for per-player streaks against specific opponents — "Josh Allen has thrown for 300+ yards in 10 straight vs NYJ". Writes the prop_trends table. Reads only from the local database; no external fetches. Seconds to run. Requires the box score fetch to be complete for the sport.
+          Mines player_game_stats for per-player streaks against specific opponents — "Josh Allen has thrown for 300+ yards in 10 straight vs NYJ". Writes the prop_trends table. Reads only from the local database; no external fetches. Seconds to run.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runPropTrendsBtn" onclick="runPropTrendsBuild()">▲ Build Prop Trends</button>
@@ -798,10 +798,10 @@
       const btn = document.getElementById('runBoxScoreBtn');
       const logEl = document.getElementById('boxScoreLog');
       if (!window.EDGE_BOXSCORE) { showToast('Box score fetcher not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Pulling NFL box scores…\n'; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Pulling box scores…\n'; }
 
       const result = await window.EDGE_BOXSCORE.buildAll({
-        sports: ['NFL'],
+        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA],
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -825,7 +825,7 @@
       if (!silent) { btn.disabled = true; logEl.textContent = 'Mining prop trends…\n'; }
 
       const result = await window.EDGE_PROP_TRENDS.buildAll({
-        sports: ['NFL'],
+        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA],
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
