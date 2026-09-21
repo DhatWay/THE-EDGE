@@ -801,7 +801,7 @@
       if (!silent) { btn.disabled = true; logEl.textContent = 'Pulling box scores…\n'; }
 
       const result = await window.EDGE_BOXSCORE.buildAll({
-        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA],
+        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -825,7 +825,7 @@
       if (!silent) { btn.disabled = true; logEl.textContent = 'Mining prop trends…\n'; }
 
       const result = await window.EDGE_PROP_TRENDS.buildAll({
-        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA],
+        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
