@@ -704,8 +704,25 @@
 
       if (!silent) {
         logEl.textContent += `✓ ${teamsCount} teams · ${coachesCount} coaches\n`;
-        if (skipped) logEl.textContent += `Skipped: ${skipped}\n`;
-        showToast(`✓ ${teamsCount} teams rated`, '');
+if (skipped) logEl.textContent += `Skipped: ${skipped}\n`;
+if (result.errors && result.errors.length) {
+  logEl.textContent += '\nERRORS:\n';
+  result.errors.forEach(e => {
+    logEl.textContent += '  ' + (e.sport || '?') + ': ' + (e.error || '?') + '\n';
+  });
+}
+if (result.persist) {
+  logEl.textContent += '\nPERSIST:\n';
+  logEl.textContent += '  teams_written: ' + (result.persist.teams_written || 0) + '\n';
+  logEl.textContent += '  dropped_columns: ' + ((result.persist.dropped_columns || []).join(', ') || 'none') + '\n';
+  if (result.persist.errors && result.persist.errors.length) {
+    result.persist.errors.forEach(e => {
+      logEl.textContent += '  ERR: ' + e + '\n';
+    });
+  }
+}
+logEl.scrollTop = logEl.scrollHeight;
+showToast(`✓ ${teamsCount} teams rated`, '');
       }
       return result;
     }
