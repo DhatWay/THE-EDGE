@@ -26,22 +26,23 @@ const EDGE_ATS = (() => {
   }
 
   const ESPN_MAP = {
-    NFL:   { path: 'football/nfl',                        sport: 'football',   league: 'nfl' },
-    NBA:   { path: 'basketball/nba',                      sport: 'basketball', league: 'nba' },
-    MLB:   { path: 'baseball/mlb',                        sport: 'baseball',   league: 'mlb' },
-    NHL:   { path: 'hockey/nhl',                          sport: 'hockey',     league: 'nhl' },
-    NCAAF: { path: 'football/college-football',           sport: 'football',   league: 'college-football' },
-    NCAAB: { path: 'basketball/mens-college-basketball',  sport: 'basketball', league: 'mens-college-basketball' },
-    MLS:   { path: 'soccer/usa.1',                        sport: 'soccer',     league: 'usa.1' },
-  };
+  NFL:   { path: 'football/nfl',                        sport: 'football',   league: 'nfl' },
+  NBA:   { path: 'basketball/nba',                      sport: 'basketball', league: 'nba' },
+  WNBA:  { path: 'basketball/wnba',                     sport: 'basketball', league: 'wnba' },
+  MLB:   { path: 'baseball/mlb',                        sport: 'baseball',   league: 'mlb' },
+  NHL:   { path: 'hockey/nhl',                          sport: 'hockey',     league: 'nhl' },
+  NCAAF: { path: 'football/college-football',           sport: 'football',   league: 'college-football' },
+  NCAAB: { path: 'basketball/mens-college-basketball',  sport: 'basketball', league: 'mens-college-basketball' },
+  MLS:   { path: 'soccer/usa.1',                        sport: 'soccer',     league: 'usa.1' },
+};
 
   const H2H_SEASONS = 5;
   const HISTORY_DAYS = H2H_SEASONS * 365;
 
   const SPORT_HISTORY_DAYS = {
-    NFL: 1825, NCAAF: 1825, MLS: 1460,
-    NHL: 1095, NBA: 1095, MLB: 1095, NCAAB: 1095,
-  };
+  NFL: 1825, NCAAF: 1825, MLS: 1460,
+  NHL: 1095, NBA: 1095, MLB: 1095, NCAAB: 1095, WNBA: 1095,
+};
 
   const FORM_WINDOW = 10;
   const FETCH_CONCURRENCY = 4;
