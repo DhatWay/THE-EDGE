@@ -20,7 +20,7 @@
 // Also added the missing engines to the precache list.
 // ============================================================
 
-const VERSION = 'edge-v12';
+const VERSION = 'edge-v1';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
