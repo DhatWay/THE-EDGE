@@ -7,72 +7,111 @@
 <style>
   body { background:#080808; color:#F0EAD8; font-family:-apple-system,system-ui,sans-serif; padding:16px; font-size:12px; }
   h1 { font-size:16px; letter-spacing:2px; color:#C9A84C; margin-bottom:12px; }
-  .btn { background:#C9A84C; border:none; color:#000; font-weight:700; letter-spacing:2px; padding:12px; cursor:pointer; width:100%; margin-bottom:14px; }
+  .row { display:flex; gap:8px; margin-bottom:10px; }
+  .row label { flex:1; font-size:10px; letter-spacing:1.2px; color:#7A7060; text-transform:uppercase; }
+  .row input { width:100%; background:#111; border:1px solid rgba(201,168,76,0.2); color:#F0EAD8; padding:8px; font-size:12px; margin-top:4px; }
+  .btn { background:#C9A84C; border:none; color:#000; font-weight:700; letter-spacing:2px; padding:12px; cursor:pointer; width:100%; margin-bottom:10px; }
   .btn:disabled { opacity:0.5; }
+  .btn.secondary { background:none; border:1px solid rgba(201,168,76,0.3); color:#C9A84C; }
+  .btn.ghost { background:none; border:1px solid rgba(201,168,76,0.2); color:#A89878; }
+  .log { font-family:ui-monospace,monospace; font-size:10px; color:#7A7060; margin-bottom:10px; white-space:pre-wrap; }
+  .summary { background:#111; border:1px solid rgba(201,168,76,0.2); padding:12px; margin-bottom:12px; display:grid; grid-template-columns:repeat(4,1fr); gap:8px; text-align:center; }
+  .sv { font-size:22px; font-weight:700; color:#C9A84C; }
+  .sl { font-size:9px; letter-spacing:1.2px; color:#7A7060; text-transform:uppercase; margin-top:2px; }
   table { width:100%; border-collapse:collapse; font-size:11px; }
   th { text-align:left; color:#7A7060; font-size:9px; letter-spacing:1.2px; text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding:6px 4px; }
   td { padding:6px 4px; border-bottom:1px solid rgba(201,168,76,0.06); }
   .win { color:#27AE60; font-weight:700; }
   .loss { color:#E74C3C; font-weight:700; }
   .push { color:#C9A84C; font-weight:700; }
-  .log { font-family:ui-monospace,monospace; font-size:10px; color:#7A7060; margin-bottom:10px; white-space:pre-wrap; }
-  .summary { background:#111; border:1px solid rgba(201,168,76,0.2); padding:12px; margin-bottom:12px; display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center; }
-  .sv { font-size:22px; font-weight:700; color:#C9A84C; }
-  .sl { font-size:9px; letter-spacing:1.2px; color:#7A7060; text-transform:uppercase; margin-top:2px; }
+  .flag { color:#E74C3C; font-size:10px; }
 </style>
-<script src="auth.js"></script>
-<script src="score-backfill.js"></script>
 </head>
 <body>
 <h1>SLATE GRADER</h1>
+
+<div class="row">
+  <label>From date<input type="date" id="from" /></label>
+  <label>To date<input type="date" id="to" /></label>
+</div>
+
 <button class="btn" id="go" onclick="run()">RUN</button>
+<button class="btn secondary" id="copy" onclick="copyCsv()" style="display:none;">COPY CSV</button>
 <div class="log" id="log"></div>
 <div id="out"></div>
+
 <script>
 const SB_URL = () => localStorage.getItem('edge_supabase_url');
 const SB_KEY = () => localStorage.getItem('edge_supabase_key');
 const log = m => document.getElementById('log').textContent += m + '\n';
 const out = h => document.getElementById('out').innerHTML = h;
+let lastGraded = [];
+
+// Default: 30 days back
+(function() {
+  const to = new Date();
+  const from = new Date(to.getTime() - 30*86400000);
+  document.getElementById('from').value = from.toISOString().slice(0,10);
+  document.getElementById('to').value = to.toISOString().slice(0,10);
+})();
 
 async function run() {
   document.getElementById('go').disabled = true;
   document.getElementById('log').textContent = '';
+  document.getElementById('copy').style.display = 'none';
   out('');
 
   const url = SB_URL(), key = SB_KEY();
   if (!url || !key) { out('Supabase not connected'); return; }
 
+  const from = document.getElementById('from').value || '2020-01-01';
+  const to = document.getElementById('to').value || new Date().toISOString().slice(0,10);
+  log(`Range: ${from} → ${to}`);
+
+  // Pull odds across the full range (chunk by year to avoid limits)
   log('Loading games from historical_odds…');
-  const res = await fetch(
-    `${url}/rest/v1/historical_odds?sport=eq.NFL&game_date=gte.${new Date(Date.now()-30*86400000).toISOString()}&select=game_id,home,away,spread,game_date&order=game_date.desc&limit=100`,
-    { headers: { apikey: key, Authorization: 'Bearer ' + key } }
-  );
-  const games = await res.json();
-  log(`Found ${games.length} games`);
+  const fromYear = parseInt(from.slice(0,4), 10);
+  const toYear = parseInt(to.slice(0,4), 10);
+  const games = [];
+  for (let y = fromYear; y <= toYear; y++) {
+    const chunkFrom = `${y}-01-01`;
+    const chunkTo = `${y}-12-31`;
+    const q = `${url}/rest/v1/historical_odds?sport=eq.NFL&game_date=gte.${chunkFrom}&game_date=lte.${chunkTo}&select=game_id,home,away,spread,game_date&order=game_date.desc&limit=1000`;
+    const res = await fetch(q, { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+    if (!res.ok) { log(`  ${y}: HTTP ${res.status}`); continue; }
+    const rows = await res.json();
+    log(`  ${y}: ${rows.length} games`);
+    games.push(...rows);
+  }
+  log(`Total: ${games.length} games`);
 
-  // Determine season for ESPN
-  const season = new Date().getFullYear();
-  log(`Pulling ESPN scoreboard for ${season}…`);
-  const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&limit=1000`);
-  const espn = await r.json();
+  if (!games.length) { out('No games in range.'); return; }
+
+  // ESPN scoreboard per year
   const scores = {};
-  (espn.events || []).forEach(e => {
-    const c = e.competitions?.[0];
-    if (!c || c.status?.type?.completed !== true) return;
-    const h = c.competitors?.find(x => x.homeAway === 'home');
-    const a = c.competitors?.find(x => x.homeAway === 'away');
-    if (!h || !a) return;
-    scores[String(e.id)] = {
-      home: parseInt(h.score||0),
-      away: parseInt(a.score||0),
-      homeName: h.team?.displayName,
-      awayName: a.team?.displayName,
-      date: e.date?.slice(0,10),
-    };
-  });
-  log(`ESPN has ${Object.keys(scores).length} completed games`);
+  for (let y = fromYear; y <= toYear; y++) {
+    log(`ESPN scoreboard ${y}…`);
+    try {
+      const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${y}&limit=1000`);
+      const espn = await r.json();
+      (espn.events || []).forEach(e => {
+        const c = e.competitions?.[0];
+        if (!c || c.status?.type?.completed !== true) return;
+        const h = c.competitors?.find(x => x.homeAway === 'home');
+        const a = c.competitors?.find(x => x.homeAway === 'away');
+        if (!h || !a) return;
+        scores[String(e.id)] = {
+          home: parseInt(h.score||0),
+          away: parseInt(a.score||0),
+          homeName: h.team?.displayName,
+          awayName: a.team?.displayName,
+          date: e.date?.slice(0,10),
+        };
+      });
+    } catch (e) { log(`  ${y} failed: ${e.message}`); }
+  }
+  log(`ESPN: ${Object.keys(scores).length} completed games`);
 
-  // Match by date + team names (game_ids may differ between sources)
   const norm = s => String(s||'').toLowerCase().replace(/[^a-z]/g,'');
   const graded = [];
   games.forEach(g => {
@@ -88,37 +127,58 @@ async function run() {
     if (Math.abs(coverMargin) < 0.01) result = 'PUSH';
     else if (coverMargin > 0) result = 'HOME';
     else result = 'AWAY';
+    const total = match.home + match.away;
     graded.push({
       date: d, away: g.away, home: g.home, spread: g.spread,
       score: `${match.away}-${match.home}`,
-      margin, result
+      margin, result, total,
+      flag: total > 85 ? 'unusual total' : ''
     });
   });
   log(`Graded ${graded.length} of ${games.length}`);
-  if (!graded.length) { out('No games matched. Nothing to show.'); return; }
+  if (!graded.length) { out('No games matched.'); return; }
+  lastGraded = graded;
+  document.getElementById('copy').style.display = 'block';
 
   const homeW = graded.filter(g => g.result === 'HOME').length;
   const awayW = graded.filter(g => g.result === 'AWAY').length;
   const push = graded.filter(g => g.result === 'PUSH').length;
+  const flagged = graded.filter(g => g.flag).length;
 
   const summary = `<div class="summary">
     <div><div class="sv">${graded.length}</div><div class="sl">Games</div></div>
-    <div><div class="sv">${homeW} / ${awayW}</div><div class="sl">Home / Away Covers</div></div>
+    <div><div class="sv">${homeW}</div><div class="sl">Home Covers</div></div>
+    <div><div class="sv">${awayW}</div><div class="sl">Away Covers</div></div>
     <div><div class="sv">${push}</div><div class="sl">Pushes</div></div>
-  </div>`;
+  </div>${flagged ? `<div style="color:#E74C3C;margin-bottom:10px;">⚠ ${flagged} game(s) with implausible total — data flag</div>` : ''}`;
 
   const rows = graded.map(g => {
     const cls = g.result === 'HOME' ? 'win' : g.result === 'AWAY' ? 'loss' : 'push';
-    return `<tr><td>${g.date}</td><td>${g.away}</td><td>${g.home}</td>
+    return `<tr>
+      <td>${g.date}</td><td>${g.away}</td><td>${g.home}</td>
       <td>${g.spread > 0 ? '+'+g.spread : g.spread}</td>
       <td>${g.score}</td><td>${g.margin > 0 ? '+'+g.margin : g.margin}</td>
-      <td class="${cls}">${g.result}</td></tr>`;
+      <td class="${cls}">${g.result}</td>
+      <td class="flag">${g.flag}</td>
+    </tr>`;
   }).join('');
 
   out(summary + `<table>
-    <thead><tr><th>Date</th><th>Away</th><th>Home</th><th>Spread</th><th>Score</th><th>Margin</th><th>Cover</th></tr></thead>
+    <thead><tr><th>Date</th><th>Away</th><th>Home</th><th>Spread</th><th>Score</th><th>Margin</th><th>Cover</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>`);
   document.getElementById('go').disabled = false;
+}
+
+function copyCsv() {
+  if (!lastGraded.length) return;
+  const header = 'date,away,home,spread,score,margin,cover,total';
+  const lines = lastGraded.map(g =>
+    [g.date, g.away, g.home, g.spread, g.score, g.margin, g.result, g.total].join(',')
+  );
+  const csv = header + '\n' + lines.join('\n');
+  navigator.clipboard.writeText(csv)
+    .then(() => { document.getElementById('copy').textContent = 'COPIED'; setTimeout(() => document.getElementById('copy').textContent = 'COPY CSV', 1500); })
+    .catch(() => { prompt('Copy:', csv); });
 }
 </script>
 </body>
