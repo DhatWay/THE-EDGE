@@ -1,21 +1,12 @@
 // ============================================================
-// EDGE — ROSTER ENGINE v1.0
+// EDGE — ROSTER ENGINE v1.1
 // The missing upstream for roster enrichment and injury
 // fragmentation. Pulls every team's roster from ESPN, assigns a
 // position group, flags likely starters, writes baseline ratings
 // to the players table.
 //
-// roster-enrichment.js then overwrites those baselines with
-// production-derived ratings. injury-fragmentation.js reads the
-// same table to work out what an injury actually costs.
-//
-// Flow:
-//   1. GET /teams                       → team ids + names
-//   2. GET /teams/{id}/roster           → athletes per team
-//   3. Map position → position_group
-//   4. Depth-order within group → is_starter
-//   5. Baseline rating from depth + experience
-//   6. Replace the sport's rows in `players`
+// v1.1 — fetchTeams now logs failures instead of swallowing them,
+// and accepts both ESPN response shapes. WNBA added.
 // ============================================================
 
 const EDGE_ROSTER_ENGINE = (() => {
@@ -26,6 +17,7 @@ const EDGE_ROSTER_ENGINE = (() => {
   const ESPN_MAP = {
     NFL:   'football/nfl',
     NBA:   'basketball/nba',
+    WNBA:  'basketball/wnba',
     MLB:   'baseball/mlb',
     NHL:   'hockey/nhl',
     NCAAF: 'football/college-football',
@@ -33,8 +25,6 @@ const EDGE_ROSTER_ENGINE = (() => {
     MLS:   'soccer/usa.1',
   };
 
-  // Position abbreviation → group. Groups match the keys that
-  // roster-enrichment.js and injury-fragmentation.js expect.
   const POSITION_GROUPS = {
     NFL: {
       QB: 'OFFENSE_SKILL', RB: 'OFFENSE_SKILL', FB: 'OFFENSE_SKILL',
@@ -75,9 +65,8 @@ const EDGE_ROSTER_ENGINE = (() => {
   };
   POSITION_GROUPS.NCAAF = POSITION_GROUPS.NFL;
   POSITION_GROUPS.NCAAB = POSITION_GROUPS.NBA;
+  POSITION_GROUPS.WNBA  = POSITION_GROUPS.NBA;
 
-  // How many players at each group are on the field / in the
-  // lineup at once. Used to decide who counts as a starter.
   const STARTER_COUNTS = {
     OFFENSE_SKILL: 6, OFFENSE_LINE: 5,
     DEFENSE_FRONT: 2, DEFENSE_EDGE: 2, DEFENSE_MID: 3, DEFENSE_SECONDARY: 4,
@@ -89,8 +78,6 @@ const EDGE_ROSTER_ENGINE = (() => {
     GOALKEEPER: 1, MIDFIELD: 4,
   };
 
-  // Positional importance — how much one player at this group
-  // moves the needle. Mirrors roster-enrichment's lookup.
   const POSITION_WEIGHTS = {
     OFFENSE_SKILL: 0.55, OFFENSE_LINE: 0.45,
     DEFENSE_FRONT: 0.40, DEFENSE_EDGE: 0.55,
@@ -164,8 +151,11 @@ const EDGE_ROSTER_ENGINE = (() => {
     if (!path) throw new Error(`Unknown sport: ${sport}`);
 
     log('  fetching teams');
-    const teams = await fetchTeams(path);
-    if (!teams.length) return { teams: 0, players_written: 0, note: 'No teams returned' };
+    const teams = await fetchTeams(path, log);
+    if (!teams.length) {
+      log('  no teams returned');
+      return { teams: 0, players_written: 0, note: 'No teams returned' };
+    }
     log(`  ${teams.length} teams`);
 
     const rows = [];
@@ -178,8 +168,6 @@ const EDGE_ROSTER_ENGINE = (() => {
     log(`  ${rows.length} players built`);
     if (!rows.length) return { teams: teams.length, players_written: 0 };
 
-    // Replace this sport's rows only — never wipe the whole table,
-    // and never wipe anything when the fetch came back empty.
     const written = await replaceSportRows(url, key, sport, rows, log);
     log(`  wrote ${written} players`);
 
@@ -188,31 +176,67 @@ const EDGE_ROSTER_ENGINE = (() => {
 
   // ============================================================
   // ── ESPN ──
+  //
+  // Every step logs so a silent failure never hides again. The
+  // previous version swallowed every error, so "0 teams" meant
+  // anything from a 404 to a JSON shape change with no way to
+  // tell which.
   // ============================================================
 
-  async function fetchTeams(path) {
-    try {
-      const res = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/${path}/teams?limit=1000`,
-        { cache: 'no-store' }
-      );
-      if (!res.ok) return [];
-      const data = await res.json();
-      const entries = data?.sports?.[0]?.leagues?.[0]?.teams || [];
-      return entries
-        .map(e => e.team)
+  async function fetchTeams(path, log = () => {}) {
+    const urls = [
+      `https://site.api.espn.com/apis/site/v2/sports/${path}/teams?limit=1000`,
+      `https://site.api.espn.com/apis/site/v2/sports/${path}/teams`,
+    ];
+
+    for (const url of urls) {
+      let res;
+      try {
+        res = await fetch(url, { cache: 'no-store' });
+      } catch (e) {
+        log(`    teams fetch failed: ${e.message}`);
+        continue;
+      }
+      if (!res.ok) {
+        log(`    teams HTTP ${res.status}`);
+        continue;
+      }
+
+      let data;
+      try { data = await res.json(); }
+      catch (e) { log(`    teams JSON failed: ${e.message}`); continue; }
+
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        log(`    teams returned non-object (len ${JSON.stringify(data).length})`);
+        continue;
+      }
+
+      // ESPN wraps teams under sports[0].leagues[0].teams, with
+      // each entry as { team: {...} }. A few endpoints return them
+      // flat, and some return sports[0].teams directly.
+      const raw =
+        data?.sports?.[0]?.leagues?.[0]?.teams ||
+        data?.sports?.[0]?.teams ||
+        [];
+
+      log(`    teams raw: ${raw.length}`);
+
+      const teams = raw
+        .map(e => e && (e.team || e))
         .filter(t => t && t.id)
         .map(t => ({
           id: String(t.id),
-          name: t.displayName,
+          name: t.displayName || t.name || '',
           abbr: t.abbreviation || '',
-        }));
-    } catch { return []; }
+        }))
+        .filter(t => t.name);
+
+      if (teams.length) return teams;
+    }
+
+    return [];
   }
 
-  // ESPN returns two roster shapes:
-  //   grouped  → athletes: [{ position: 'offense', items: [...] }]
-  //   flat     → athletes: [ athlete, athlete, ... ]
   async function fetchRoster(path, teamId) {
     const urls = [
       `https://site.api.espn.com/apis/site/v2/sports/${path}/teams/${teamId}/roster`,
@@ -264,7 +288,6 @@ const EDGE_ROSTER_ENGINE = (() => {
         position_group: group,
         jersey: a.jersey ? String(a.jersey) : null,
         experience: parseInt(a.experience?.years ?? a.experience ?? 0, 10) || 0,
-        // ESPN's depth ordering is the array order within a group.
         status: (a.status?.type || a.status?.name || 'active').toLowerCase(),
       };
     }).filter(p => p.player_id && p.position_group);
@@ -306,9 +329,6 @@ const EDGE_ROSTER_ENGINE = (() => {
     return rows;
   }
 
-  // Baseline before enrichment: starters above backups, a small
-  // taper by depth, a small bump for experience. Enrichment
-  // replaces these with production-derived numbers.
   function baselineRating(isStarter, depth, starterCount, experience) {
     const base = isStarter ? BASE_STARTER : BASE_BACKUP;
     const depthPenalty = isStarter
@@ -332,8 +352,6 @@ const EDGE_ROSTER_ENGINE = (() => {
     if (!table) return null;
     const key = String(posAbbr).toUpperCase().trim();
     if (table[key]) return table[key];
-    // Try the first token: "Left Tackle" → "LEFT" won't match, but
-    // "OT/G" → "OT" will.
     const head = key.split(/[\/\-\s]/)[0];
     return table[head] || null;
   }
@@ -402,6 +420,5 @@ const EDGE_ROSTER_ENGINE = (() => {
 
 if (typeof window !== 'undefined') {
   window.EDGE_ROSTER_ENGINE = EDGE_ROSTER_ENGINE;
-  // admin.html and the diagnostics page look for the short name.
   window.EDGE_ROSTER = EDGE_ROSTER_ENGINE;
 }
