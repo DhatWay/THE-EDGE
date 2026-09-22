@@ -22,14 +22,15 @@ const EDGE_BOXSCORE = (() => {
   }
 
   const ESPN_MAP = {
-    NFL:   'football/nfl',
-    NCAAF: 'football/college-football',
-    NBA:   'basketball/nba',
-    NCAAB: 'basketball/mens-college-basketball',
-    MLB:   'baseball/mlb',
-    NHL:   'hockey/nhl',
-    MLS:   'soccer/usa.1',
-  };
+  NFL:   'football/nfl',
+  NCAAF: 'football/college-football',
+  NBA:   'basketball/nba',
+  WNBA:  'basketball/wnba',
+  NCAAB: 'basketball/mens-college-basketball',
+  MLB:   'baseball/mlb',
+  NHL:   'hockey/nhl',
+  MLS:   'soccer/usa.1',
+};
 
   const FETCH_CONCURRENCY = 6;
   const WRITE_CHUNK = 500;
