@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ESPN Test</title>
+  <style>
+    body { background: #080808; color: #F0EAD8; font-family: -apple-system, system-ui, sans-serif; padding: 24px; line-height: 1.6; }
+    h1 { font-size: 20px; letter-spacing: 2px; color: #C9A84C; margin-bottom: 20px; }
+    .test { background: #111; border: 1px solid rgba(201,168,76,0.2); padding: 16px; margin-bottom: 12px; border-radius: 4px; }
+    .label { font-size: 11px; letter-spacing: 1.5px; color: #7A7060; text-transform: uppercase; margin-bottom: 8px; }
+    .url { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #A89878; word-break: break-all; margin-bottom: 8px; }
+    .result { font-size: 15px; font-weight: 600; }
+    .ok { color: #27AE60; }
+    .fail { color: #E74C3C; }
+    .pending { color: #C9A84C; }
+    .detail { font-size: 12px; color: #7A7060; margin-top: 6px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>ESPN ENDPOINT TEST</h1>
+
+  <div class="test" id="t1">
+    <div class="label">Test 1 · Teams (roster engine URL)</div>
+    <div class="url">/apis/site/v2/sports/football/nfl/teams?limit=1000</div>
+    <div class="result pending">pending…</div>
+  </div>
+
+  <div class="test" id="t2">
+    <div class="label">Test 2 · Teams (no limit param)</div>
+    <div class="url">/apis/site/v2/sports/football/nfl/teams</div>
+    <div class="result pending">pending…</div>
+  </div>
+
+  <div class="test" id="t3">
+    <div class="label">Test 3 · Scoreboard (control)</div>
+    <div class="url">/apis/site/v2/sports/football/nfl/scoreboard</div>
+    <div class="result pending">pending…</div>
+  </div>
+
+  <div class="test" id="t4">
+    <div class="label">Test 4 · Roster for team 12</div>
+    <div class="url">/apis/site/v2/sports/football/nfl/teams/12/roster</div>
+    <div class="result pending">pending…</div>
+  </div>
+
+  <script>
+    async function runTest(id, url, picker) {
+      const el = document.querySelector('#' + id + ' .result');
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) {
+          el.className = 'result fail';
+          el.textContent = 'HTTP ' + res.status + ' ' + res.statusText;
+          return;
+        }
+        let data;
+        try { data = await res.json(); }
+        catch (e) {
+          el.className = 'result fail';
+          el.textContent = 'not JSON: ' + e.message;
+          return;
+        }
+        const picked = picker(data);
+        el.className = 'result ok';
+        el.textContent = '✓ ' + picked;
+      } catch (e) {
+        el.className = 'result fail';
+        el.textContent = '✗ ' + (e.message || String(e));
+        const d = document.createElement('div');
+        d.className = 'detail';
+        d.textContent = 'error.name = ' + (e.name || '?');
+        el.parentNode.appendChild(d);
+      }
+    }
+
+    runTest('t1',
+      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=1000',
+      d => ((d?.sports?.[0]?.leagues?.[0]?.teams || []).length) + ' teams');
+
+    runTest('t2',
+      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams',
+      d => ((d?.sports?.[0]?.leagues?.[0]?.teams || []).length) + ' teams');
+
+    runTest('t3',
+      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+      d => ((d?.events || []).length) + ' events');
+
+    runTest('t4',
+      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/12/roster',
+      d => ((d?.athletes || []).length) + ' athlete entries');
+  </script>
+</body>
+</html>
