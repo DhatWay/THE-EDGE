@@ -26,12 +26,12 @@
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
   <script src="box-score-fetcher.js"></script>
+  <script src="score-backfill.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -184,8 +184,6 @@
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
-    <a href="test-espn.html" class="active"><span class="ico">⬡</span> ESPN</a>
-    <a href="slate.html" class="active"><span class="ico">⬡</span> SPREAD</a>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -221,7 +219,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -260,7 +258,7 @@
           <div class="pipeline-title">Build Rosters</div>
         </div>
         <div class="pipeline-desc">
-          Fetches every team's roster from ESPN, assigns per-player ratings, computes offensive and defensive contribution. Seeds the players table.
+          Reads team list from power_ratings, fetches every roster from ESPN, assigns per-player ratings, computes contributions. Seeds the players table.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runRosterBtn" onclick="runRosterBuild()">▲ Build Rosters</button>
@@ -273,7 +271,7 @@
           <div class="pipeline-title">Enrich Rosters</div>
         </div>
         <div class="pipeline-desc">
-          Pulls real per-player production stats from ESPN and refines ratings from the 50 baseline to a 40-95 scale based on percentile rank within position group. Run after Build Rosters.
+          Pulls real per-player production stats from ESPN and refines ratings from the 50 baseline to a 40-95 scale. Run after Build Rosters.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runEnrichBtn" onclick="runRosterEnrich()">▲ Enrich Rosters</button>
@@ -296,6 +294,19 @@
 
       <div class="pipeline-panel">
         <div class="pipeline-head">
+          <div class="pipeline-title">Backfill Scores</div>
+        </div>
+        <div class="pipeline-desc">
+          Reads historical_odds, pulls ESPN scoreboards per date, matches on date + team name, writes home_score and away_score. Resumable. Run once per sport.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runScoreBtn" onclick="runScoreBackfill()">▲ Backfill Scores</button>
+        </div>
+        <div class="pipeline-log" id="scoreLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
           <div class="pipeline-title">Build Trends</div>
         </div>
         <div class="pipeline-desc">
@@ -312,7 +323,7 @@
           <div class="pipeline-title">Pull Player Stats</div>
         </div>
         <div class="pipeline-desc">
-          Walks every completed game in historical_odds, pulls the ESPN box score for each, writes one row per player per game to player_game_stats. This is the data behind player-prop trends. Resumable — already-fetched games are skipped.
+          Walks every completed game in historical_odds, pulls the ESPN box score for each, writes one row per player per game to player_game_stats. Resumable.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runBoxScoreBtn" onclick="runBoxScoreFetch()">▲ Fetch Box Scores</button>
@@ -325,7 +336,7 @@
           <div class="pipeline-title">Build Prop Trends</div>
         </div>
         <div class="pipeline-desc">
-          Mines player_game_stats for per-player streaks against specific opponents — "Josh Allen has thrown for 300+ yards in 10 straight vs NYJ". Writes the prop_trends table. Reads only from the local database; no external fetches. Seconds to run.
+          Mines player_game_stats for per-player streaks against specific opponents. Writes the prop_trends table. Seconds to run.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runPropTrendsBtn" onclick="runPropTrendsBuild()">▲ Build Prop Trends</button>
@@ -586,28 +597,31 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/8 · Power Ratings');
+      log('Stage 1/9 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/8 · Build Rosters');
+      log('Stage 2/9 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/8 · Enrich Rosters');
+      log('Stage 3/9 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/8 · Build ATS & H2H');
+      log('Stage 4/9 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/8 · Build Trends');
+      log('Stage 5/9 · Backfill Scores');
+      try { await runScoreBackfill(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 6/9 · Build Trends');
       try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/8 · Pull Player Stats');
+      log('Stage 7/9 · Pull Player Stats');
       try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 7/8 · Build Prop Trends');
+      log('Stage 8/9 · Build Prop Trends');
       try { await runPropTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 8/8 · Refresh Injuries');
+      log('Stage 9/9 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
@@ -707,25 +721,15 @@
 
       if (!silent) {
         logEl.textContent += `✓ ${teamsCount} teams · ${coachesCount} coaches\n`;
-if (skipped) logEl.textContent += `Skipped: ${skipped}\n`;
-if (result.errors && result.errors.length) {
-  logEl.textContent += '\nERRORS:\n';
-  result.errors.forEach(e => {
-    logEl.textContent += '  ' + (e.sport || '?') + ': ' + (e.error || '?') + '\n';
-  });
-}
-if (result.persist) {
-  logEl.textContent += '\nPERSIST:\n';
-  logEl.textContent += '  teams_written: ' + (result.persist.teams_written || 0) + '\n';
-  logEl.textContent += '  dropped_columns: ' + ((result.persist.dropped_columns || []).join(', ') || 'none') + '\n';
-  if (result.persist.errors && result.persist.errors.length) {
-    result.persist.errors.forEach(e => {
-      logEl.textContent += '  ERR: ' + e + '\n';
-    });
-  }
-}
-logEl.scrollTop = logEl.scrollHeight;
-showToast(`✓ ${teamsCount} teams rated`, '');
+        if (skipped) logEl.textContent += `Skipped: ${skipped}\n`;
+        if (result.errors && result.errors.length) {
+          logEl.textContent += '\nERRORS:\n';
+          result.errors.forEach(e => {
+            logEl.textContent += '  ' + (e.sport || '?') + ': ' + (e.error || '?') + '\n';
+          });
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+        showToast(`✓ ${teamsCount} teams rated`, '');
       }
       return result;
     }
@@ -789,6 +793,30 @@ showToast(`✓ ${teamsCount} teams rated`, '');
         btn.disabled = false;
         logEl.textContent += `\n✓ ${result.totals.teams} team rows · ${result.totals.matchups} matchup rows`;
         showToast(`✓ ATS: ${result.totals.teams} teams · ${result.totals.matchups} matchups`, '');
+      }
+      return result;
+    }
+
+    async function runScoreBackfill(silent = false) {
+      const btn = document.getElementById('runScoreBtn');
+      const logEl = document.getElementById('scoreLog');
+      if (!window.EDGE_SCORE_BACKFILL) { showToast('Score backfill not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Backfilling scores…\n'; }
+
+      const result = await window.EDGE_SCORE_BACKFILL.buildAll({
+        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+        onProgress: (msg) => {
+          logEl.textContent += msg + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+        },
+      });
+
+      if (!silent) {
+        btn.disabled = false;
+        let total = 0;
+        Object.values(result).forEach(r => { total += (r.updated || 0); });
+        logEl.textContent += `\n✓ ${total} games scored`;
+        showToast(`✓ ${total} games scored`, '');
       }
       return result;
     }
