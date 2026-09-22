@@ -1,12 +1,14 @@
 // ============================================================
-// EDGE — ROSTER ENGINE v1.1
-// The missing upstream for roster enrichment and injury
-// fragmentation. Pulls every team's roster from ESPN, assigns a
-// position group, flags likely starters, writes baseline ratings
-// to the players table.
+// EDGE — ROSTER ENGINE v1.2
 //
-// v1.1 — fetchTeams now logs failures instead of swallowing them,
-// and accepts both ESPN response shapes. WNBA added.
+// v1.2 — fetchTeams reads the team list from power_ratings
+// instead of ESPN's /teams endpoint.
+//
+// ESPN stopped sending CORS headers on site.api.espn.com/.../teams.
+// The scoreboard and per-team roster endpoints still work, but the
+// teams list is blocked in the browser. Rather than fight it, this
+// reads team_id + team_name from power_ratings — every team is
+// already there with its ESPN id.
 // ============================================================
 
 const EDGE_ROSTER_ENGINE = (() => {
@@ -150,22 +152,24 @@ const EDGE_ROSTER_ENGINE = (() => {
     const path = ESPN_MAP[sport];
     if (!path) throw new Error(`Unknown sport: ${sport}`);
 
-    log('  fetching teams');
-    const teams = await fetchTeams(path, log);
+    log('  loading teams from power_ratings');
+    const teams = await fetchTeams(sport, log);
     if (!teams.length) {
-      log('  no teams returned');
-      return { teams: 0, players_written: 0, note: 'No teams returned' };
+      log('  no teams found in power_ratings — run Recompute Ratings first');
+      return { teams: 0, players_written: 0, note: 'No teams' };
     }
     log(`  ${teams.length} teams`);
 
     const rows = [];
+    let rosterMisses = 0;
     await parallelMap(teams, FETCH_CONCURRENCY, async team => {
       const athletes = await fetchRoster(path, team.id);
-      if (!athletes.length) return;
+      if (!athletes.length) { rosterMisses++; return; }
       rows.push(...buildTeamRows(sport, team, athletes));
     });
 
     log(`  ${rows.length} players built`);
+    if (rosterMisses) log(`  ${rosterMisses} teams returned empty rosters`);
     if (!rows.length) return { teams: teams.length, players_written: 0 };
 
     const written = await replaceSportRows(url, key, sport, rows, log);
@@ -175,67 +179,57 @@ const EDGE_ROSTER_ENGINE = (() => {
   }
 
   // ============================================================
-  // ── ESPN ──
+  // ── TEAMS ──
   //
-  // Every step logs so a silent failure never hides again. The
-  // previous version swallowed every error, so "0 teams" meant
-  // anything from a 404 to a JSON shape change with no way to
-  // tell which.
+  // ESPN's /teams endpoint now fails CORS in the browser, so
+  // this reads the team list from power_ratings instead. Every
+  // team there has an ESPN team_id and a display name.
   // ============================================================
 
-  async function fetchTeams(path, log = () => {}) {
-    const urls = [
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/teams?limit=1000`,
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/teams`,
-    ];
-
-    for (const url of urls) {
-      let res;
-      try {
-        res = await fetch(url, { cache: 'no-store' });
-      } catch (e) {
-        log(`    teams fetch failed: ${e.message}`);
-        continue;
-      }
-      if (!res.ok) {
-        log(`    teams HTTP ${res.status}`);
-        continue;
-      }
-
-      let data;
-      try { data = await res.json(); }
-      catch (e) { log(`    teams JSON failed: ${e.message}`); continue; }
-
-      if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        log(`    teams returned non-object (len ${JSON.stringify(data).length})`);
-        continue;
-      }
-
-      // ESPN wraps teams under sports[0].leagues[0].teams, with
-      // each entry as { team: {...} }. A few endpoints return them
-      // flat, and some return sports[0].teams directly.
-      const raw =
-        data?.sports?.[0]?.leagues?.[0]?.teams ||
-        data?.sports?.[0]?.teams ||
-        [];
-
-      log(`    teams raw: ${raw.length}`);
-
-      const teams = raw
-        .map(e => e && (e.team || e))
-        .filter(t => t && t.id)
-        .map(t => ({
-          id: String(t.id),
-          name: t.displayName || t.name || '',
-          abbr: t.abbreviation || '',
-        }))
-        .filter(t => t.name);
-
-      if (teams.length) return teams;
+  async function fetchTeams(sport, log = () => {}) {
+    const url = SUPABASE_URL();
+    const key = SUPABASE_KEY();
+    if (!url || !key) {
+      log('    no Supabase connection');
+      return [];
     }
 
-    return [];
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/power_ratings?sport=eq.${sport}&select=team_id,team_name&order=team_name.asc&limit=500`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      if (!res.ok) {
+        log(`    power_ratings HTTP ${res.status}`);
+        return [];
+      }
+      const rows = await res.json();
+      log(`    ${rows.length} rows in power_ratings`);
+
+      const teams = rows
+        .filter(r => r.team_id && r.team_name && /^\d+$/.test(String(r.team_id)))
+        .map(r => ({
+          id: String(r.team_id),
+          name: r.team_name,
+          abbr: '',
+        }));
+
+      if (teams.length < rows.length) {
+        log(`    ${rows.length - teams.length} rows had a non-numeric team_id`);
+      }
+
+      return teams;
+    } catch (e) {
+      log(`    power_ratings read failed: ${e.message}`);
+      return [];
+    }
   }
+
+  // ============================================================
+  // ── ROSTER ──
+  // The per-team roster endpoint works fine. Only the teams
+  // list was broken.
+  // ============================================================
 
   async function fetchRoster(path, teamId) {
     const urls = [
