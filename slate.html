@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Slate</title>
+<style>
+  body { background:#080808; color:#F0EAD8; font-family:-apple-system,system-ui,sans-serif; padding:16px; font-size:12px; }
+  h1 { font-size:16px; letter-spacing:2px; color:#C9A84C; margin-bottom:12px; }
+  .btn { background:#C9A84C; border:none; color:#000; font-weight:700; letter-spacing:2px; padding:12px; cursor:pointer; width:100%; margin-bottom:14px; }
+  .btn:disabled { opacity:0.5; }
+  table { width:100%; border-collapse:collapse; font-size:11px; }
+  th { text-align:left; color:#7A7060; font-size:9px; letter-spacing:1.2px; text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding:6px 4px; }
+  td { padding:6px 4px; border-bottom:1px solid rgba(201,168,76,0.06); }
+  .win { color:#27AE60; font-weight:700; }
+  .loss { color:#E74C3C; font-weight:700; }
+  .push { color:#C9A84C; font-weight:700; }
+  .log { font-family:ui-monospace,monospace; font-size:10px; color:#7A7060; margin-bottom:10px; white-space:pre-wrap; }
+  .summary { background:#111; border:1px solid rgba(201,168,76,0.2); padding:12px; margin-bottom:12px; display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center; }
+  .sv { font-size:22px; font-weight:700; color:#C9A84C; }
+  .sl { font-size:9px; letter-spacing:1.2px; color:#7A7060; text-transform:uppercase; margin-top:2px; }
+</style>
+
+</head>
+<body>
+<h1>SLATE GRADER</h1>
+<button class="btn" id="go" onclick="run()">RUN</button>
+<div class="log" id="log"></div>
+<div id="out"></div>
+<script>
+const SB_URL = () => localStorage.getItem('edge_supabase_url');
+const SB_KEY = () => localStorage.getItem('edge_supabase_key');
+const log = m => document.getElementById('log').textContent += m + '\n';
+const out = h => document.getElementById('out').innerHTML = h;
+
+async function run() {
+  document.getElementById('go').disabled = true;
+  document.getElementById('log').textContent = '';
+  out('');
+
+  const url = SB_URL(), key = SB_KEY();
+  if (!url || !key) { out('Supabase not connected'); return; }
+
+  log('Loading games from historical_odds…');
+  const res = await fetch(
+    `${url}/rest/v1/historical_odds?sport=eq.NFL&game_date=gte.${new Date(Date.now()-30*86400000).toISOString()}&select=game_id,home,away,spread,game_date&order=game_date.desc&limit=100`,
+    { headers: { apikey: key, Authorization: 'Bearer ' + key } }
+  );
+  const games = await res.json();
+  log(`Found ${games.length} games`);
+
+  // Determine season for ESPN
+  const season = new Date().getFullYear();
+  log(`Pulling ESPN scoreboard for ${season}…`);
+  const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&limit=1000`);
+  const espn = await r.json();
+  const scores = {};
+  (espn.events || []).forEach(e => {
+    const c = e.competitions?.[0];
+    if (!c || c.status?.type?.completed !== true) return;
+    const h = c.competitors?.find(x => x.homeAway === 'home');
+    const a = c.competitors?.find(x => x.homeAway === 'away');
+    if (!h || !a) return;
+    scores[String(e.id)] = {
+      home: parseInt(h.score||0),
+      away: parseInt(a.score||0),
+      homeName: h.team?.displayName,
+      awayName: a.team?.displayName,
+      date: e.date?.slice(0,10),
+    };
+  });
+  log(`ESPN has ${Object.keys(scores).length} completed games`);
+
+  // Match by date + team names (game_ids may differ between sources)
+  const norm = s => String(s||'').toLowerCase().replace(/[^a-z]/g,'');
+  const graded = [];
+  games.forEach(g => {
+    const d = g.game_date?.slice(0,10);
+    const hk = norm(g.home), ak = norm(g.away);
+    const match = Object.values(scores).find(s =>
+      s.date === d && norm(s.homeName) === hk && norm(s.awayName) === ak
+    );
+    if (!match || g.spread == null) return;
+    const margin = match.home - match.away;
+    const coverMargin = margin + g.spread;
+    let result;
+    if (Math.abs(coverMargin) < 0.01) result = 'PUSH';
+    else if (coverMargin > 0) result = 'HOME';
+    else result = 'AWAY';
+    graded.push({
+      date: d, away: g.away, home: g.home, spread: g.spread,
+      score: `${match.away}-${match.home}`,
+      margin, result
+    });
+  });
+  log(`Graded ${graded.length} of ${games.length}`);
+  if (!graded.length) { out('No games matched. Nothing to show.'); return; }
+
+  const homeW = graded.filter(g => g.result === 'HOME').length;
+  const awayW = graded.filter(g => g.result === 'AWAY').length;
+  const push = graded.filter(g => g.result === 'PUSH').length;
+
+  const summary = `<div class="summary">
+    <div><div class="sv">${graded.length}</div><div class="sl">Games</div></div>
+    <div><div class="sv">${homeW} / ${awayW}</div><div class="sl">Home / Away Covers</div></div>
+    <div><div class="sv">${push}</div><div class="sl">Pushes</div></div>
+  </div>`;
+
+  const rows = graded.map(g => {
+    const cls = g.result === 'HOME' ? 'win' : g.result === 'AWAY' ? 'loss' : 'push';
+    return `<tr><td>${g.date}</td><td>${g.away}</td><td>${g.home}</td>
+      <td>${g.spread > 0 ? '+'+g.spread : g.spread}</td>
+      <td>${g.score}</td><td>${g.margin > 0 ? '+'+g.margin : g.margin}</td>
+      <td class="${cls}">${g.result}</td></tr>`;
+  }).join('');
+
+  out(summary + `<table>
+    <thead><tr><th>Date</th><th>Away</th><th>Home</th><th>Spread</th><th>Score</th><th>Margin</th><th>Cover</th></tr></thead>
+    <tbody>${rows}</tbody></table>`);
+  document.getElementById('go').disabled = false;
+}
+</script>
+</body>
+</html>
