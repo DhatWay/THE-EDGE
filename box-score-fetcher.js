@@ -1,11 +1,12 @@
 // ============================================================
-// EDGE — BOX SCORE FETCHER v1.1
+// EDGE — BOX SCORE FETCHER v1.2
 //
-// v1.1 — every column initialised to null before the category-
-// specific assignment. v1.0 only set the columns for the
-// player's own category, so a batch containing a passing row
-// and a rushing row had mismatched keys and PostgREST rejected
-// the whole thing with PGRST102 "All object keys must match".
+// v1.2 — ESPN returns stats as a POSITIONAL array of strings,
+// with the field names in a parallel `keys` array on the
+// category. The previous version expected an array of
+// {name, value} objects, which ESPN does not send — so every
+// row was stored with an empty raw {} and all stat columns
+// null. Fixed by zipping category.keys against entry.stats.
 // ============================================================
 
 const EDGE_BOXSCORE = (() => {
@@ -13,24 +14,16 @@ const EDGE_BOXSCORE = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  function logEdgeError(where, err) {
-    try {
-      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
-      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
-      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
-    } catch {}
-  }
-
   const ESPN_MAP = {
-  NFL:   'football/nfl',
-  NCAAF: 'football/college-football',
-  NBA:   'basketball/nba',
-  WNBA:  'basketball/wnba',
-  NCAAB: 'basketball/mens-college-basketball',
-  MLB:   'baseball/mlb',
-  NHL:   'hockey/nhl',
-  MLS:   'soccer/usa.1',
-};
+    NFL:   'football/nfl',
+    NCAAF: 'football/college-football',
+    NBA:   'basketball/nba',
+    WNBA:  'basketball/wnba',
+    NCAAB: 'basketball/mens-college-basketball',
+    MLB:   'baseball/mlb',
+    NHL:   'hockey/nhl',
+    MLS:   'soccer/usa.1',
+  };
 
   const FETCH_CONCURRENCY = 6;
   const WRITE_CHUNK = 500;
@@ -194,15 +187,24 @@ const EDGE_BOXSCORE = (() => {
 
       (teamBlock.statistics || []).forEach(category => {
         const catName = String(category.name || category.type || '').toLowerCase();
+
+        // ESPN sends stats positionally. `category.keys` names each
+        // position; `entry.stats` is the array of values in the same
+        // order. Zipping them is what produces a usable object.
+        const keys = category.keys || category.names || category.labels || [];
+        if (!Array.isArray(keys) || !keys.length) return;
+
         (category.athletes || []).forEach(entry => {
           const athlete = entry.athlete;
           if (!athlete?.id) return;
 
           const playerName = athlete.displayName || athlete.fullName || 'Unknown';
+
+          const values = entry.stats || [];
           const stats = {};
-          (entry.stats || []).forEach(s => {
-            if (!s.name) return;
-            stats[s.name] = s.value ?? s.displayValue ?? null;
+          keys.forEach((key, i) => {
+            if (!key) return;
+            stats[key] = values[i] ?? null;
           });
 
           const row = buildStatRow({
@@ -229,12 +231,6 @@ const EDGE_BOXSCORE = (() => {
 
   // ============================================================
   // ── STAT MAPPING ──
-  //
-  // Every column is initialised to null before the category-specific
-  // assignment. PostgREST rejects a batch if the rows in it don't all
-  // share the same key set — a passing row and a rushing row have
-  // different non-null columns, so without this they'd be rejected
-  // with PGRST102 "All object keys must match".
   // ============================================================
 
   function buildStatRow(ctx) {
@@ -252,7 +248,6 @@ const EDGE_BOXSCORE = (() => {
       is_home: ctx.isHome,
       starter: ctx.starter,
 
-      // Football
       pass_attempts: null,
       pass_completions: null,
       passing_yards: null,
@@ -267,7 +262,6 @@ const EDGE_BOXSCORE = (() => {
       receiving_tds: null,
       fumbles_lost: null,
 
-      // Basketball
       minutes: null,
       points: null,
       rebounds: null,
@@ -282,7 +276,6 @@ const EDGE_BOXSCORE = (() => {
       ft_made: null,
       ft_attempted: null,
 
-      // Baseball — batter
       at_bats: null,
       hits: null,
       runs: null,
@@ -291,25 +284,21 @@ const EDGE_BOXSCORE = (() => {
       walks: null,
       strikeouts: null,
 
-      // Baseball — pitcher
       innings_pitched: null,
       earned_runs: null,
       hits_allowed: null,
       walks_allowed: null,
       pitching_strikeouts: null,
 
-      // Hockey / soccer — skater
       goals: null,
       shots: null,
       plus_minus: null,
       penalty_minutes: null,
 
-      // Hockey goalie / soccer keeper
       saves: null,
       goals_against: null,
       shots_against: null,
 
-      // Soccer
       shots_on_target: null,
 
       raw: stats,
@@ -342,7 +331,7 @@ const EDGE_BOXSCORE = (() => {
       } else {
         return null;
       }
-    } else if (sport === 'NBA' || sport === 'NCAAB') {
+    } else if (sport === 'NBA' || sport === 'NCAAB' || sport === 'WNBA') {
       row.minutes        = num(stats.minutes);
       row.points         = num(stats.points);
       row.rebounds       = num(stats.rebounds);
@@ -440,7 +429,8 @@ const EDGE_BOXSCORE = (() => {
     switch (sport) {
       case 'NBA':
       case 'NHL':
-      case 'NCAAB': return cross(9);
+      case 'NCAAB':
+      case 'WNBA':  return cross(9);
       case 'NFL':
       case 'NCAAF': return cross(3);
       default:      return y;
@@ -456,6 +446,14 @@ const EDGE_BOXSCORE = (() => {
         await fn(item);
       }
     }));
+  }
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
   }
 
   function mk(onProgress) {
