@@ -1,23 +1,16 @@
 // ============================================================
-// EDGE — ROSTER ENRICHMENT v3.0
+// EDGE — ROSTER ENRICHMENT v3.1
 //
-// Reads the players table for a sport, pulls real production
-// stats from ESPN for each player who has them, z-scores those
-// stats across the league by position group, and replaces the
-// baseline rating with a production-derived one.
+// v3.1 — Reads production from player_game_stats instead of
+// ESPN. The leaders endpoint is CORS-blocked in the browser
+// (same as /teams), and re-fetching data we already own was
+// the wrong shape anyway. player_game_stats has every stat
+// we need, already mapped, already local.
 //
-// v3.0 changes from v2:
-//   · WNBA added
-//   · ESPN leaders endpoint tries three URL shapes, because the
-//     site.api.espn.com surface has been dropping CORS headers
-//     on some endpoints (the /teams one is already gone). Falls
-//     back to core API if site fails.
-//   · Per-sport progress: how many players matched, how many
-//     had stats, how many were enriched
-//   · Never writes an empty batch — a run that fetched nothing
-//     leaves the existing ratings in place
-//   · Works off the existing players table only — no ESPN
-//     calls for roster names
+// Workflow:
+//   1. Fetch Box Scores  → fills player_game_stats
+//   2. Enrich Rosters    → reads player_game_stats, z-scores
+//                          per position group, updates players
 // ============================================================
 
 const EDGE_ROSTER_ENRICH = (() => {
@@ -25,19 +18,51 @@ const EDGE_ROSTER_ENRICH = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  const ESPN_MAP = {
-    NFL:   { site: 'football/nfl',                       core: ['football','nfl'] },
-    NCAAF: { site: 'football/college-football',          core: ['football','college-football'] },
-    NBA:   { site: 'basketball/nba',                     core: ['basketball','nba'] },
-    WNBA:  { site: 'basketball/wnba',                    core: ['basketball','wnba'] },
-    NCAAB: { site: 'basketball/mens-college-basketball', core: ['basketball','mens-college-basketball'] },
-    MLB:   { site: 'baseball/mlb',                       core: ['baseball','mlb'] },
-    NHL:   { site: 'hockey/nhl',                         core: ['hockey','nhl'] },
-    MLS:   { site: 'soccer/usa.1',                       core: ['soccer','usa.1'] },
+  // Which stat columns on player_game_stats to aggregate, per
+  // position group. The column names match the schema exactly.
+  const METRIC_CONFIG = {
+    NFL: [
+      { col: 'passing_yards',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+      { col: 'passing_tds',      weight: 1.0, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+      { col: 'rushing_yards',    weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+      { col: 'rushing_tds',      weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+      { col: 'receiving_yards',  weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+      { col: 'receiving_tds',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+      // Defense — no per-player sacks/tackles stored yet, skip
+    ],
+    NBA: [
+      { col: 'points',    weight: 1.0, groups: [], agg: 'avg' },
+      { col: 'assists',   weight: 0.6, groups: [], agg: 'avg' },
+      { col: 'rebounds',  weight: 0.5, groups: [], agg: 'avg' },
+      { col: 'steals',    weight: 0.4, groups: [], agg: 'avg' },
+      { col: 'blocks',    weight: 0.4, groups: [], agg: 'avg' },
+      { col: 'three_made',weight: 0.5, groups: [], agg: 'avg' },
+    ],
+    MLB: [
+      { col: 'hits',              weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'avg' },
+      { col: 'home_runs',         weight: 0.9, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'sum' },
+      { col: 'rbis',              weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'sum' },
+      { col: 'earned_runs',       weight: 1.0, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], agg: 'avg', inverted: true },
+      { col: 'pitching_strikeouts', weight: 0.8, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], agg: 'avg' },
+    ],
+    NHL: [
+      { col: 'goals',      weight: 0.9, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
+      { col: 'assists',    weight: 0.8, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
+      { col: 'shots',      weight: 0.5, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
+      { col: 'saves',      weight: 1.0, groups: ['GOALIE'], agg: 'avg' },
+      { col: 'goals_against', weight: 1.0, groups: ['GOALIE'], agg: 'avg', inverted: true },
+    ],
+    MLS: [
+      { col: 'goals',           weight: 1.0, groups: ['FORWARD','MIDFIELD','DEFENSE'], agg: 'sum' },
+      { col: 'assists',         weight: 0.7, groups: ['FORWARD','MIDFIELD','DEFENSE'], agg: 'sum' },
+      { col: 'shots_on_target', weight: 0.4, groups: ['FORWARD','MIDFIELD'], agg: 'sum' },
+      { col: 'saves',           weight: 1.0, groups: ['GOALKEEPER'], agg: 'sum' },
+    ],
   };
+  METRIC_CONFIG.NCAAF = METRIC_CONFIG.NFL;
+  METRIC_CONFIG.NCAAB = METRIC_CONFIG.NBA;
+  METRIC_CONFIG.WNBA  = METRIC_CONFIG.NBA;
 
-  // What each position group's contribution is worth. Same table
-  // roster-engine uses so contributions scale the same way.
   const POSITION_WEIGHTS = {
     OFFENSE_SKILL: 0.55, OFFENSE_LINE: 0.45,
     DEFENSE_FRONT: 0.40, DEFENSE_EDGE: 0.55,
@@ -60,70 +85,11 @@ const EDGE_ROSTER_ENRICH = (() => {
     'GOALIE', 'GOALKEEPER', 'DEFENSE', 'PITCHER',
   ]);
 
-  // Each metric: the key ESPN sends, the weight in the blend,
-  // which position groups it applies to, and whether higher is
-  // worse (ERA, WHIP, goals allowed).
-  const METRIC_CONFIG = {
-    NFL: [
-      { name: 'passingYards',        weight: 0.8, groups: ['OFFENSE_SKILL'] },
-      { name: 'passingTouchdowns',   weight: 1.0, groups: ['OFFENSE_SKILL'] },
-      { name: 'rushingYards',        weight: 0.7, groups: ['OFFENSE_SKILL'] },
-      { name: 'rushingTouchdowns',   weight: 0.8, groups: ['OFFENSE_SKILL'] },
-      { name: 'receivingYards',      weight: 0.7, groups: ['OFFENSE_SKILL'] },
-      { name: 'receivingTouchdowns', weight: 0.8, groups: ['OFFENSE_SKILL'] },
-      { name: 'sacks',               weight: 1.0, groups: ['DEFENSE_EDGE','DEFENSE_FRONT'] },
-      { name: 'totalTackles',        weight: 0.6, groups: ['DEFENSE_MID','DEFENSE_FRONT','DEFENSE_SECONDARY'] },
-      { name: 'interceptions',       weight: 0.9, groups: ['DEFENSE_SECONDARY','DEFENSE_MID'] },
-      { name: 'passesDefended',      weight: 0.6, groups: ['DEFENSE_SECONDARY'] },
-    ],
-    NBA: [
-      { name: 'pointsPerGame',   weight: 1.0, groups: [] },
-      { name: 'assistsPerGame',  weight: 0.6, groups: [] },
-      { name: 'reboundsPerGame', weight: 0.5, groups: [] },
-      { name: 'stealsPerGame',   weight: 0.4, groups: [] },
-      { name: 'blocksPerGame',   weight: 0.4, groups: [] },
-      { name: 'fieldGoalPct',    weight: 0.5, groups: [] },
-    ],
-    MLB: [
-      { name: 'battingAverage',     weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'] },
-      { name: 'homeRuns',           weight: 0.9, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'] },
-      { name: 'RBIs',               weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'] },
-      { name: 'onBasePlusSlugging', weight: 0.9, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'] },
-      { name: 'ERA',                weight: 1.0, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], inverted: true },
-      { name: 'WHIP',               weight: 0.8, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], inverted: true },
-      { name: 'strikeouts',         weight: 0.8, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'] },
-      { name: 'wins',               weight: 0.4, groups: ['PITCHER_START','PITCHER'] },
-      { name: 'saves',              weight: 0.7, groups: ['PITCHER_RELIEF'] },
-    ],
-    NHL: [
-      { name: 'goals',               weight: 0.9, groups: ['FORWARD','DEFENSE'] },
-      { name: 'assists',             weight: 0.8, groups: ['FORWARD','DEFENSE'] },
-      { name: 'points',              weight: 1.0, groups: ['FORWARD','DEFENSE'] },
-      { name: 'plusMinus',           weight: 0.5, groups: ['FORWARD','DEFENSE'] },
-      { name: 'goalsAgainstAverage', weight: 1.0, groups: ['GOALIE'], inverted: true },
-      { name: 'savePct',             weight: 1.0, groups: ['GOALIE'] },
-      { name: 'wins',                weight: 0.5, groups: ['GOALIE'] },
-    ],
-    MLS: [
-      { name: 'goals',         weight: 1.0, groups: ['FORWARD','MIDFIELD','DEFENSE'] },
-      { name: 'assists',       weight: 0.7, groups: ['FORWARD','MIDFIELD','DEFENSE'] },
-      { name: 'shotsOnTarget', weight: 0.4, groups: ['FORWARD','MIDFIELD'] },
-      { name: 'saves',         weight: 1.0, groups: ['GOALKEEPER'] },
-      { name: 'goalsAgainst',  weight: 0.8, groups: ['GOALKEEPER'], inverted: true },
-    ],
-  };
-  METRIC_CONFIG.NCAAF = METRIC_CONFIG.NFL;
-  METRIC_CONFIG.NCAAB = METRIC_CONFIG.NBA;
-  METRIC_CONFIG.WNBA  = METRIC_CONFIG.NBA;
-
-  // The z-score scale. A z of 0 becomes 62. Each standard
-  // deviation moves the rating 11 points. Fixed scale so a 70
-  // means the same thing across runs and sports.
   const CENTER = 62;
   const SPREAD = 11;
   const RATING_MIN = 42;
   const RATING_MAX = 95;
-
+  const MIN_GAMES = 4;
   const WRITE_CONCURRENCY = 8;
 
   return {
@@ -137,7 +103,7 @@ const EDGE_ROSTER_ENRICH = (() => {
   // ============================================================
 
   async function enrichAll(options = {}) {
-    const { sports = Object.keys(ESPN_MAP), onProgress = null } = options;
+    const { sports = Object.keys(METRIC_CONFIG), onProgress = null } = options;
     const log = mk(onProgress);
     const summary = { sports: {}, totals: { enriched: 0, unmatched: 0, no_stats: 0 } };
 
@@ -166,57 +132,46 @@ const EDGE_ROSTER_ENRICH = (() => {
     const metrics = METRIC_CONFIG[sport];
     if (!metrics) throw new Error(`No metric config for ${sport}`);
 
-    // ── 1. Roster from the DB ──
+    // ── 1. Roster ──
     log('  loading roster rows');
     const players = await loadPlayers(url, key, sport);
     log(`  ${players.length} players in table`);
     if (!players.length) {
-      return {
-        enriched: 0, unmatched: 0, no_stats: 0,
-        note: 'players table empty for this sport — run Build Rosters first',
-      };
+      return { enriched: 0, unmatched: 0, no_stats: 0,
+        note: 'players table empty for this sport — run Build Rosters first' };
     }
 
-    // ── 2. Production from ESPN ──
-    log('  fetching production stats');
-    const statsById = await fetchProduction(sport, metrics, log);
-    const statCount = Object.keys(statsById).length;
-    log(`  ${statCount} players with stats`);
+    // ── 2. Aggregate player_game_stats ──
+    log('  loading production from player_game_stats');
+    const agg = await loadAggregates(url, key, sport, metrics);
+    const statCount = Object.keys(agg).length;
+    log(`  ${statCount} players with game stats`);
     if (!statCount) {
-      return {
-        enriched: 0,
-        unmatched: players.length,
-        no_stats: players.length,
-        note: 'ESPN returned no production data — existing ratings untouched',
-      };
+      return { enriched: 0, unmatched: players.length, no_stats: players.length,
+        note: 'player_game_stats empty for this sport — run Fetch Box Scores first' };
     }
 
     // ── 3. Normalise ──
-    const norms = buildNormalisers(metrics, statsById);
+    const norms = buildNormalisers(metrics, agg);
 
     // ── 4. Score ──
     const updates = [];
-    let matched = 0;
-    let noStats = 0;
+    let matched = 0, noStats = 0;
 
     players.forEach(p => {
-      const stats = statsById[String(p.player_id)];
-      if (!stats) { noStats++; return; }
+      const stats = agg[String(p.player_id)];
+      if (!stats || stats.games < MIN_GAMES) { noStats++; return; }
 
       const z = weightedZ(stats, metrics, p.position_group, norms);
       if (z === null) { noStats++; return; }
 
       matched++;
       const starterBonus = p.is_starter ? 1.5 : 0;
-      const rating = clamp(
-        round(CENTER + z * SPREAD + starterBonus, 1),
-        RATING_MIN, RATING_MAX
-      );
-
+      const rating = clamp(round(CENTER + z * SPREAD + starterBonus, 1),
+                           RATING_MIN, RATING_MAX);
       const { off, def } = contributionFor(p.position_group, rating);
       updates.push({
-        id: p.id,
-        rating,
+        id: p.id, rating,
         offensive_contribution: off,
         defensive_contribution: def,
       });
@@ -224,10 +179,8 @@ const EDGE_ROSTER_ENRICH = (() => {
 
     log(`  ${updates.length} players to enrich`);
     if (!updates.length) {
-      return {
-        enriched: 0, unmatched: players.length - noStats, no_stats: noStats,
-        note: 'no id overlap between roster and stats',
-      };
+      return { enriched: 0, unmatched: players.length - noStats, no_stats: noStats,
+        note: 'no id overlap between players and player_game_stats' };
     }
 
     // ── 5. Write ──
@@ -272,7 +225,7 @@ const EDGE_ROSTER_ENRICH = (() => {
       try {
         const res = await fetch(
           `${url}/rest/v1/players?sport=eq.${sport}` +
-          `&select=id,player_id,name,position,position_group,rating,is_starter,team_name` +
+          `&select=id,player_id,name,position,position_group,rating,is_starter` +
           `&order=id.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
@@ -286,100 +239,79 @@ const EDGE_ROSTER_ENRICH = (() => {
   }
 
   // ============================================================
-  // ── PRODUCTION FETCH ──
-  //
-  // ESPN's site.api.espn.com surface has been dropping CORS
-  // headers on a few endpoints. The leaders endpoint may be one
-  // of them. Try three shapes in order; if all fail, fall back
-  // to the core API which serves the same data.
+  // ── AGGREGATE player_game_stats ──
+  // Sum or average each metric per player, per game. Returns
+  // { player_id: { games, sum_col: X, avg_col: Y, ... } }
   // ============================================================
 
-  async function fetchProduction(sport, metrics, log) {
-    const cfg = ESPN_MAP[sport];
-    if (!cfg) return {};
+  async function loadAggregates(url, key, sport, metrics) {
+    const cols = new Set(['player_id']);
+    metrics.forEach(m => cols.add(m.col));
+    const colList = Array.from(cols).join(',');
 
-    const year = new Date().getFullYear();
-    const wanted = new Set(metrics.map(m => m.name.toLowerCase()));
-    const merged = {};
-
-    const siteUrls = [
-      `https://site.api.espn.com/apis/site/v3/sports/${cfg.site}/leaders?season=${year}&seasontype=2&limit=500`,
-      `https://site.api.espn.com/apis/site/v3/sports/${cfg.site}/leaders?limit=500`,
-      `https://site.api.espn.com/apis/site/v2/sports/${cfg.site}/leaders?season=${year}`,
-      `https://site.api.espn.com/apis/site/v2/sports/${cfg.site}/leaders`,
-    ];
-
-    for (const url of siteUrls) {
+    const rows = [];
+    const pageSize = 1000;
+    for (let offset = 0; offset < 500000; offset += pageSize) {
       try {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) continue;
-        const data = await res.json();
-        absorbLeaders(data, wanted, merged);
-        if (Object.keys(merged).length >= 200) break;
-      } catch {}
+        const res = await fetch(
+          `${url}/rest/v1/player_game_stats?sport=eq.${sport}` +
+          `&select=${colList}&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) break;
+        const batch = await res.json();
+        rows.push(...batch);
+        if (batch.length < pageSize) break;
+      } catch { break; }
     }
 
-    if (Object.keys(merged).length) return merged;
+    const sums = {};
+    const counts = {};
 
-    // Core API fallback
-    try {
-      const [espnSport, espnLeague] = cfg.core;
-      const coreUrl = `https://sports.core.api.espn.com/v3/sports/${espnSport}/${espnLeague}/leaders?season=${year}`;
-      const res = await fetch(coreUrl, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        absorbLeaders(data, wanted, merged);
-      }
-    } catch {}
+    rows.forEach(r => {
+      const pid = String(r.player_id);
+      if (!pid) return;
+      if (!sums[pid]) { sums[pid] = { games: 0 }; counts[pid] = { games: 0 }; }
 
-    return merged;
-  }
-
-  // Walk any JSON shape ESPN returns and pick up {athlete, value}
-  // pairs under a name we care about.
-  function absorbLeaders(data, wanted, out) {
-    if (!data || typeof data !== 'object') return;
-
-    const buckets = [];
-    const visit = node => {
-      if (!node || typeof node !== 'object') return;
-      if (Array.isArray(node)) { node.forEach(visit); return; }
-
-      if (Array.isArray(node.categories)) {
-        node.categories.forEach(c => buckets.push(c));
-      }
-      if (Array.isArray(node.leaders) && (node.name || node.abbreviation)) {
-        buckets.push(node);
-      }
-      if (Array.isArray(node.items)) {
-        node.items.forEach(it => {
-          if (it && (it.name || it.abbreviation)) buckets.push(it);
-        });
-      }
-      Object.keys(node).forEach(k => {
-        if (k === 'categories' || k === 'items' || k === 'leaders') return;
-        if (typeof node[k] === 'object') visit(node[k]);
+      // Count games where at least one metric was non-null. That
+      // avoids dividing by exhibition or DNPs.
+      let had = false;
+      metrics.forEach(m => {
+        const v = r[m.col];
+        if (v == null) return;
+        const n = Number(v);
+        if (!isFinite(n)) return;
+        had = true;
+        if (m.agg === 'sum') {
+          sums[pid][m.col] = (sums[pid][m.col] || 0) + n;
+        } else {
+          sums[pid][m.col] = (sums[pid][m.col] || 0) + n;
+          counts[pid][m.col] = (counts[pid][m.col] || 0) + 1;
+        }
       });
-    };
-    visit(data);
-
-    buckets.forEach(cat => {
-      const name = String(cat.name || cat.abbreviation || cat.displayName || '').toLowerCase();
-      if (!wanted.has(name)) return;
-
-      const entries = Array.isArray(cat.leaders) ? cat.leaders : [];
-      entries.forEach(entry => {
-        const athlete = entry.athlete || entry.player;
-        const id = athlete?.id ?? entry.athleteId;
-        if (!id) return;
-        const raw = entry.value ?? entry.displayValue ?? entry.statValue;
-        const value = parseFloat(raw);
-        if (!isFinite(value)) return;
-        const k = String(id);
-        if (!out[k]) out[k] = {};
-        if (out[k][name] === undefined) out[k][name] = value;
-      });
+      if (had) {
+        sums[pid].games++;
+        counts[pid].games++;
+      }
     });
+
+    // Convert avg metrics
+    const out = {};
+    Object.keys(sums).forEach(pid => {
+      const s = sums[pid];
+      const c = counts[pid];
+      const rec = { games: s.games };
+      metrics.forEach(m => {
+        if (s[m.col] == null) return;
+        if (m.agg === 'avg' && c[m.col] > 0) {
+          rec[m.col] = s[m.col] / c[m.col];
+        } else {
+          rec[m.col] = s[m.col];
+        }
+      });
+      out[pid] = rec;
+    });
+    return out;
   }
 
   // ============================================================
@@ -388,7 +320,7 @@ const EDGE_ROSTER_ENRICH = (() => {
 
   function buildNormalisers(metrics, statsById) {
     const buckets = {};
-    metrics.forEach(m => { buckets[m.name.toLowerCase()] = []; });
+    metrics.forEach(m => { buckets[m.col] = []; });
 
     Object.values(statsById).forEach(stats => {
       Object.entries(stats).forEach(([k, v]) => {
@@ -398,7 +330,7 @@ const EDGE_ROSTER_ENRICH = (() => {
 
     const norms = {};
     Object.entries(buckets).forEach(([k, values]) => {
-      if (values.length < 3) { norms[k] = null; return; }
+      if (values.length < 5) { norms[k] = null; return; }
       const mean = values.reduce((a, b) => a + b, 0) / values.length;
       const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
       const sd = Math.sqrt(variance);
@@ -411,13 +343,12 @@ const EDGE_ROSTER_ENRICH = (() => {
     let sum = 0, weightSum = 0, found = 0;
 
     metrics.forEach(m => {
-      const key = m.name.toLowerCase();
       if (Array.isArray(m.groups) && m.groups.length) {
         if (!playerGroup || !m.groups.includes(playerGroup)) return;
       }
-      const norm = norms[key];
+      const norm = norms[m.col];
       if (!norm) return;
-      const raw = stats[key];
+      const raw = stats[m.col];
       if (raw == null || !isFinite(raw)) return;
 
       let z = (raw - norm.mean) / norm.sd;
