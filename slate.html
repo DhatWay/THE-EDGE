@@ -1,185 +1,704 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Slate</title>
+<title>EDGE — Slate Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<meta name="theme-color" content="#C9A84C" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<script src="rating-core.js"></script>
+<script src="power-engine.js"></script>
+<script src="team-aliases.js"></script>
+<script src="algorithms.js"></script>
+<script src="situations-engine.js"></script>
+<script src="governor.js"></script>
+<script src="physics.js"></script>
+<script src="auth.js"></script>
 <style>
-  body { background:#080808; color:#F0EAD8; font-family:-apple-system,system-ui,sans-serif; padding:16px; font-size:12px; }
-  h1 { font-size:16px; letter-spacing:2px; color:#C9A84C; margin-bottom:12px; }
-  .row { display:flex; gap:8px; margin-bottom:10px; }
-  .row label { flex:1; font-size:10px; letter-spacing:1.2px; color:#7A7060; text-transform:uppercase; }
-  .row input { width:100%; background:#111; border:1px solid rgba(201,168,76,0.2); color:#F0EAD8; padding:8px; font-size:12px; margin-top:4px; }
-  .btn { background:#C9A84C; border:none; color:#000; font-weight:700; letter-spacing:2px; padding:12px; cursor:pointer; width:100%; margin-bottom:10px; }
-  .btn:disabled { opacity:0.5; }
-  .btn.secondary { background:none; border:1px solid rgba(201,168,76,0.3); color:#C9A84C; }
-  .btn.ghost { background:none; border:1px solid rgba(201,168,76,0.2); color:#A89878; }
-  .log { font-family:ui-monospace,monospace; font-size:10px; color:#7A7060; margin-bottom:10px; white-space:pre-wrap; }
-  .summary { background:#111; border:1px solid rgba(201,168,76,0.2); padding:12px; margin-bottom:12px; display:grid; grid-template-columns:repeat(4,1fr); gap:8px; text-align:center; }
-  .sv { font-size:22px; font-weight:700; color:#C9A84C; }
-  .sl { font-size:9px; letter-spacing:1.2px; color:#7A7060; text-transform:uppercase; margin-top:2px; }
-  table { width:100%; border-collapse:collapse; font-size:11px; }
-  th { text-align:left; color:#7A7060; font-size:9px; letter-spacing:1.2px; text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding:6px 4px; }
-  td { padding:6px 4px; border-bottom:1px solid rgba(201,168,76,0.06); }
-  .win { color:#27AE60; font-weight:700; }
-  .loss { color:#E74C3C; font-weight:700; }
-  .push { color:#C9A84C; font-weight:700; }
-  .flag { color:#E74C3C; font-size:10px; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --gold: #C9A84C; --gold-dim: #8A6E2F;
+    --bg: #080808; --bg2: #0F0F0F; --bg4: #1C1C1C; --surface: #111111;
+    --border: rgba(201,168,76,0.12); --border-bright: rgba(201,168,76,0.32);
+    --text: #F0EAD8; --text-dim: #7A7060; --text-mid: #A89878;
+    --green: #27AE60; --red: #E74C3C; --blue: #4A90D9;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; padding: 20px 16px 80px; font-size: 13px; line-height: 1.5; }
+  nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 54px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  .logo { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .logo-mark { width: 30px; height: 30px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+  .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 4px; color: var(--gold); line-height: 1; }
+  .logo-sub { font-size: 7px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; }
+  main { padding-top: 70px; max-width: 900px; margin: 0 auto; }
+
+  h1 { font-family: 'Bebas Neue', sans-serif; font-size: 34px; letter-spacing: 4px; color: var(--text); margin-bottom: 4px; }
+  h1 em { color: var(--gold); font-style: normal; }
+  .sub { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 20px; }
+
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 14px; margin-bottom: 16px; }
+  .ctrl { display: flex; flex-direction: column; gap: 5px; }
+  .ctrl label { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-dim); }
+  .ctrl select, .ctrl input { background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 13px; padding: 8px 10px; }
+  .ctrl select:focus, .ctrl input:focus { outline: none; border-color: var(--gold); }
+
+  .run-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .btn { flex: 1; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 3px; padding: 12px; cursor: pointer; transition: opacity 0.2s; }
+  .btn:hover:not(:disabled) { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.secondary { background: none; border: 1px solid var(--border-bright); color: var(--gold); }
+
+  .log { background: var(--bg4); border: 1px solid var(--border); padding: 12px 14px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: var(--text-mid); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; margin-bottom: 16px; }
+
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); margin-bottom: 20px; }
+  .sum-cell { background: var(--surface); padding: 14px 8px; text-align: center; }
+  .sum-v { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 1px; line-height: 1; }
+  .sum-v.gold { color: var(--gold); }
+  .sum-v.green { color: var(--green); }
+  .sum-v.red { color: var(--red); }
+  .sum-v.muted { color: var(--text-dim); }
+  .sum-l { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
+
+  .section { margin-bottom: 20px; }
+  .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; color: var(--text); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .sec-title em { color: var(--gold); font-style: normal; }
+
+  .row { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr; gap: 8px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 4px; align-items: center; font-size: 12px; }
+  .row.head { background: var(--bg4); font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); padding: 6px 10px; margin-bottom: 6px; }
+  .row .name { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; color: var(--text); }
+  .row .num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; text-align: right; }
+  .row .num.pos { color: var(--green); }
+  .row .num.neg { color: var(--red); }
+  .row .num.neu { color: var(--text-dim); }
+
+  .game-row { display: grid; grid-template-columns: 60px 1fr 60px 70px 50px 50px; gap: 6px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 3px; align-items: center; font-size: 11px; }
+  .game-row.head { background: var(--bg4); font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); padding: 5px 8px; margin-bottom: 5px; }
+  .game-row .date { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 10px; }
+  .game-row .matchup { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .game-row .num { font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 1px; }
+  .game-row .res-w { color: var(--green); font-weight: 700; }
+  .game-row .res-l { color: var(--red); font-weight: 700; }
+  .game-row .res-p { color: var(--gold); font-weight: 700; }
+  .game-row .side { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mid); }
+
+  .filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-btn { background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; }
+  .filter-btn.active { border-color: var(--gold); color: var(--gold); }
+
+  .empty { text-align: center; padding: 40px 20px; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; }
+
+  .pill { display: inline-block; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; margin-right: 4px; }
+  .pill.gold { border-color: var(--gold); color: var(--gold); }
+  .pill.green { border-color: var(--green); color: var(--green); }
+  .pill.red { border-color: var(--red); color: var(--red); }
 </style>
 </head>
 <body>
-<h1>SLATE GRADER</h1>
 
-<div class="row">
-  <label>From date<input type="date" id="from" /></label>
-  <label>To date<input type="date" id="to" /></label>
-</div>
+<nav>
+  <a href="index.html" class="logo">
+    <div class="logo-mark">ED</div>
+    <div>
+      <div class="logo-text">EDGE</div>
+      <div class="logo-sub">Slate Test</div>
+    </div>
+  </a>
+</nav>
 
-<button class="btn" id="go" onclick="run()">RUN</button>
-<button class="btn secondary" id="copy" onclick="copyCsv()" style="display:none;">COPY CSV</button>
-<div class="log" id="log"></div>
-<div id="out"></div>
+<main>
+  <h1>SLATE <em>TEST</em></h1>
+  <div class="sub">Walk-forward pipeline replay · Grade every pick against closing spread</div>
+
+  <div class="controls">
+    <div class="ctrl">
+      <label>Sport</label>
+      <select id="sport">
+        <option value="NFL" selected>NFL</option>
+        <option value="NCAAF">NCAAF</option>
+        <option value="NBA">NBA</option>
+        <option value="NCAAB">NCAAB</option>
+        <option value="MLB">MLB</option>
+        <option value="NHL">NHL</option>
+        <option value="WNBA">WNBA</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>Games cap</label>
+      <select id="cap">
+        <option value="200">200</option>
+        <option value="500" selected>500</option>
+        <option value="1000">1000</option>
+        <option value="2000">2000</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>From</label>
+      <input type="date" id="from" />
+    </div>
+    <div class="ctrl">
+      <label>To</label>
+      <input type="date" id="to" />
+    </div>
+  </div>
+
+  <div class="run-row">
+    <button class="btn" id="runBtn" onclick="run()">▶ Run Test</button>
+    <button class="btn secondary" onclick="clearResults()">Clear</button>
+  </div>
+
+  <div class="log" id="log">Ready.</div>
+
+  <div id="output"></div>
+</main>
 
 <script>
+// ── Config ──
 const SB_URL = () => localStorage.getItem('edge_supabase_url');
 const SB_KEY = () => localStorage.getItem('edge_supabase_key');
-const log = m => document.getElementById('log').textContent += m + '\n';
-const out = h => document.getElementById('out').innerHTML = h;
-let lastGraded = [];
+const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
+const clearLog = () => { document.getElementById('log').textContent = ''; };
+const out = h => { document.getElementById('output').innerHTML = h; };
 
-// Default: 30 days back
+// ── Default date range: last 60 days ──
 (function() {
   const to = new Date();
-  const from = new Date(to.getTime() - 30*86400000);
-  document.getElementById('from').value = from.toISOString().slice(0,10);
-  document.getElementById('to').value = to.toISOString().slice(0,10);
+  const from = new Date(to.getTime() - 60 * 86400000);
+  document.getElementById('from').value = from.toISOString().slice(0, 10);
+  document.getElementById('to').value = to.toISOString().slice(0, 10);
 })();
 
-async function run() {
-  document.getElementById('go').disabled = true;
-  document.getElementById('log').textContent = '';
-  document.getElementById('copy').style.display = 'none';
-  out('');
+// ── State ──
+let gameResults = [];   // per-game graded
+let familyStats = {};   // per-family: { wins, losses, pushes, games }
+let situationStats = {};// per-situation: { wins, losses, pushes, games }
+let confStats = {};     // per-bucket: { wins, losses, pushes }
 
-  const url = SB_URL(), key = SB_KEY();
-  if (!url || !key) { out('Supabase not connected'); return; }
-
-  const from = document.getElementById('from').value || '2020-01-01';
-  const to = document.getElementById('to').value || new Date().toISOString().slice(0,10);
-  log(`Range: ${from} → ${to}`);
-
-  // Pull odds across the full range (chunk by year to avoid limits)
-  log('Loading games from historical_odds…');
-  const fromYear = parseInt(from.slice(0,4), 10);
-  const toYear = parseInt(to.slice(0,4), 10);
-  const games = [];
-  for (let y = fromYear; y <= toYear; y++) {
-    const chunkFrom = `${y}-01-01`;
-    const chunkTo = `${y}-12-31`;
-    const q = `${url}/rest/v1/historical_odds?sport=eq.NFL&game_date=gte.${chunkFrom}&game_date=lte.${chunkTo}&select=game_id,home,away,spread,game_date&order=game_date.desc&limit=1000`;
-    const res = await fetch(q, { headers: { apikey: key, Authorization: 'Bearer ' + key } });
-    if (!res.ok) { log(`  ${y}: HTTP ${res.status}`); continue; }
-    const rows = await res.json();
-    log(`  ${y}: ${rows.length} games`);
-    games.push(...rows);
-  }
-  log(`Total: ${games.length} games`);
-
-  if (!games.length) { out('No games in range.'); return; }
-
-  // ESPN scoreboard per year
-  const scores = {};
-  for (let y = fromYear; y <= toYear; y++) {
-    log(`ESPN scoreboard ${y}…`);
-    try {
-      const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${y}&limit=1000`);
-      const espn = await r.json();
-      (espn.events || []).forEach(e => {
-        const c = e.competitions?.[0];
-        if (!c || c.status?.type?.completed !== true) return;
-        const h = c.competitors?.find(x => x.homeAway === 'home');
-        const a = c.competitors?.find(x => x.homeAway === 'away');
-        if (!h || !a) return;
-        scores[String(e.id)] = {
-          home: parseInt(h.score||0),
-          away: parseInt(a.score||0),
-          homeName: h.team?.displayName,
-          awayName: a.team?.displayName,
-          date: e.date?.slice(0,10),
-        };
-      });
-    } catch (e) { log(`  ${y} failed: ${e.message}`); }
-  }
-  log(`ESPN: ${Object.keys(scores).length} completed games`);
-
-  const norm = s => String(s||'').toLowerCase().replace(/[^a-z]/g,'');
-  const graded = [];
-  games.forEach(g => {
-    const d = g.game_date?.slice(0,10);
-    const hk = norm(g.home), ak = norm(g.away);
-    const match = Object.values(scores).find(s =>
-      s.date === d && norm(s.homeName) === hk && norm(s.awayName) === ak
-    );
-    if (!match || g.spread == null) return;
-    const margin = match.home - match.away;
-    const coverMargin = margin + g.spread;
-    let result;
-    if (Math.abs(coverMargin) < 0.01) result = 'PUSH';
-    else if (coverMargin > 0) result = 'HOME';
-    else result = 'AWAY';
-    const total = match.home + match.away;
-    graded.push({
-      date: d, away: g.away, home: g.home, spread: g.spread,
-      score: `${match.away}-${match.home}`,
-      margin, result, total,
-      flag: total > 85 ? 'unusual total' : ''
-    });
-  });
-  log(`Graded ${graded.length} of ${games.length}`);
-  if (!graded.length) { out('No games matched.'); return; }
-  lastGraded = graded;
-  document.getElementById('copy').style.display = 'block';
-
-  const homeW = graded.filter(g => g.result === 'HOME').length;
-  const awayW = graded.filter(g => g.result === 'AWAY').length;
-  const push = graded.filter(g => g.result === 'PUSH').length;
-  const flagged = graded.filter(g => g.flag).length;
-
-  const summary = `<div class="summary">
-    <div><div class="sv">${graded.length}</div><div class="sl">Games</div></div>
-    <div><div class="sv">${homeW}</div><div class="sl">Home Covers</div></div>
-    <div><div class="sv">${awayW}</div><div class="sl">Away Covers</div></div>
-    <div><div class="sv">${push}</div><div class="sl">Pushes</div></div>
-  </div>${flagged ? `<div style="color:#E74C3C;margin-bottom:10px;">⚠ ${flagged} game(s) with implausible total — data flag</div>` : ''}`;
-
-  const rows = graded.map(g => {
-    const cls = g.result === 'HOME' ? 'win' : g.result === 'AWAY' ? 'loss' : 'push';
-    return `<tr>
-      <td>${g.date}</td><td>${g.away}</td><td>${g.home}</td>
-      <td>${g.spread > 0 ? '+'+g.spread : g.spread}</td>
-      <td>${g.score}</td><td>${g.margin > 0 ? '+'+g.margin : g.margin}</td>
-      <td class="${cls}">${g.result}</td>
-      <td class="flag">${g.flag}</td>
-    </tr>`;
-  }).join('');
-
-  out(summary + `<table>
-    <thead><tr><th>Date</th><th>Away</th><th>Home</th><th>Spread</th><th>Score</th><th>Margin</th><th>Cover</th><th></th></tr></thead>
-    <tbody>${rows}</tbody></table>`);
-  document.getElementById('go').disabled = false;
+function clearResults() {
+  gameResults = [];
+  familyStats = {};
+  situationStats = {};
+  confStats = {};
+  document.getElementById('log').textContent = 'Ready.';
+  document.getElementById('output').innerHTML = '';
 }
 
-function copyCsv() {
-  if (!lastGraded.length) return;
-  const header = 'date,away,home,spread,score,margin,cover,total';
-  const lines = lastGraded.map(g =>
-    [g.date, g.away, g.home, g.spread, g.score, g.margin, g.result, g.total].join(',')
-  );
-  const csv = header + '\n' + lines.join('\n');
-  navigator.clipboard.writeText(csv)
-    .then(() => { document.getElementById('copy').textContent = 'COPIED'; setTimeout(() => document.getElementById('copy').textContent = 'COPY CSV', 1500); })
-    .catch(() => { prompt('Copy:', csv); });
+async function run() {
+  const btn = document.getElementById('runBtn');
+  const sport = document.getElementById('sport').value;
+  const cap = parseInt(document.getElementById('cap').value, 10);
+  const fromDate = document.getElementById('from').value;
+  const toDate = document.getElementById('to').value;
+
+  if (!fromDate || !toDate) { alert('Set both dates'); return; }
+  const url = SB_URL(), key = SB_KEY();
+  if (!url || !key) { alert('Supabase not connected'); return; }
+  if (!window.EDGE_POWER || !window.EDGE_ALGOS || !window.EDGE_GOVERNOR || !window.EDGE_PHYSICS) {
+    alert('Pipeline modules not loaded');
+    return;
+  }
+
+  btn.disabled = true;
+  clearLog();
+  out('');
+  log(`Slate test · ${sport} · ${fromDate} → ${toDate} · cap ${cap}`);
+
+  try {
+    // ── 1. Load historical games with scores ──
+    log('Loading games with scores…');
+    const games = await loadScoredGames(sport, fromDate, toDate, cap, url, key);
+    log(`  ${games.length} games with final scores`);
+    if (!games.length) {
+      out('<div class="empty">No scored games in this range. Run Backfill Scores first.</div>');
+      btn.disabled = false;
+      return;
+    }
+
+    // ── 2. Load power index for this sport ──
+    log('Loading power ratings…');
+    const power = await loadPowerForSport(sport, url, key);
+    log(`  ${Object.keys(power.teams).length} teams`);
+    if (!Object.keys(power.teams).length) {
+      out('<div class="empty">No power ratings for this sport. Run Recompute Ratings first.</div>');
+      btn.disabled = false;
+      return;
+    }
+
+    // ── 3. Load ATS and H2H ──
+    log('Loading ATS form and H2H…');
+    const atsIndex = await loadAtsForSport(sport, url, key);
+    const h2hIndex = await loadH2HForSport(sport, url, key);
+    log(`  ${Object.keys(atsIndex).length} ATS rows · ${Object.keys(h2hIndex).length} H2H pairs`);
+
+    // ── 4. Run pipeline on each game ──
+    log('Running pipeline per game…');
+    let processed = 0;
+    const total = games.length;
+
+    for (const g of games) {
+      if (processed % 25 === 0) log(`  ${processed}/${total} graded`);
+
+      try {
+        const graded = await gradeOneGame(g, power, atsIndex, h2hIndex);
+        if (graded) {
+          gameResults.push(graded);
+          tallyGraded(graded);
+        }
+      } catch (e) {
+        // Skip quietly — most common cause is missing team name
+      }
+      processed++;
+    }
+    log(`  ${processed}/${total} processed`);
+    log(`  ${gameResults.length} graded picks`);
+
+    // ── 5. Report ──
+    renderReport();
+
+  } catch (e) {
+    log('ERROR: ' + e.message);
+    out('<div class="empty">Test failed: ' + e.message + '</div>');
+  }
+
+  btn.disabled = false;
+}
+
+// ============================================================
+// ── LOAD GAMES WITH SCORES ──
+// ============================================================
+
+async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
+  const rows = [];
+  const pageSize = 1000;
+  for (let offset = 0; offset < cap; offset += pageSize) {
+    const limit = Math.min(pageSize, cap - offset);
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/historical_odds?sport=eq.${sport}` +
+        `&home_score=not.is.null&away_score=not.is.null` +
+        `&game_date=gte.${fromDate}&game_date=lte.${toDate}T23:59:59` +
+        `&select=game_id,home,away,spread,total,home_score,away_score,game_date` +
+        `&order=game_date.asc&limit=${limit}&offset=${offset}`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      if (!res.ok) break;
+      const batch = await res.json();
+      rows.push(...batch);
+      if (batch.length < limit) break;
+    } catch (e) { break; }
+  }
+  return rows.filter(r => r.spread != null);
+}
+
+// ============================================================
+// ── LOAD POWER INDEX ──
+// ============================================================
+
+async function loadPowerForSport(sport, url, key) {
+  const teams = {};
+  const coaching = {};
+  try {
+    const [tr, cr] = await Promise.all([
+      fetch(`${url}/rest/v1/power_ratings?sport=eq.${sport}&select=*`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+      fetch(`${url}/rest/v1/coaching_ratings?sport=eq.${sport}&select=*`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+    ]);
+    if (tr.ok) (await tr.json()).forEach(t => { teams[`${t.sport}:${t.team_name}`] = t; });
+    if (cr.ok) (await cr.json()).forEach(c => { coaching[`${c.sport}:${c.team_name}`] = c; });
+  } catch {}
+  return { teams, coaching };
+}
+
+async function loadAtsForSport(sport, url, key) {
+  const out = {};
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/team_ats?sport=eq.${sport}&select=*&limit=5000`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (res.ok) (await res.json()).forEach(r => { out[r.team_name] = r; });
+  } catch {}
+  return out;
+}
+
+async function loadH2HForSport(sport, url, key) {
+  const out = {};
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/matchup_ats?sport=eq.${sport}&select=*&limit=5000`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (res.ok) {
+      (await res.json()).forEach(r => {
+        const k = [r.team_a, r.team_b].sort().join('|');
+        out[k] = r;
+      });
+    }
+  } catch {}
+  return out;
+}
+
+// ============================================================
+// ── GRADE ONE GAME ──
+// Build a prior the way the live pipeline does, run the nine
+// families + situations + governor + physics, then grade the
+// result against the actual final score.
+// ============================================================
+
+async function gradeOneGame(g, power, atsIndex, h2hIndex) {
+  const sport = g.sport || 'NFL';
+  const homeKey = `${sport}:${g.home}`;
+  const awayKey = `${sport}:${g.away}`;
+
+  const homeStats = power.teams[homeKey];
+  const awayStats = power.teams[awayKey];
+  if (!homeStats || !awayStats) return null;
+
+  const homeCoach = power.coaching[homeKey] || null;
+  const awayCoach = power.coaching[awayKey] || null;
+
+  const game = {
+    id: g.game_id,
+    _sport: sport,
+    sport,
+    home_team: g.home,
+    away_team: g.away,
+    home: g.home,
+    away: g.away,
+    spread: g.spread,
+    total: g.total,
+    commence_time: g.game_date,
+  };
+
+  // Minimal market — only what we stored.
+  const market = {
+    open_spread: null,      // historical_odds does not keep open
+    current_spread: g.spread,
+    total: g.total,
+    home_ml: null,
+    away_ml: null,
+  };
+
+  // Context — ATS + H2H from DB. No weather/rest (would require
+  // re-fetching ESPN per game; separate project).
+  const h2hKey = [g.home, g.away].sort().join('|');
+  const gameContext = {
+    homeAts: atsIndex[g.home] || null,
+    awayAts: atsIndex[g.away] || null,
+    h2h: h2hIndex[h2hKey] || null,
+    hoursToGame: 24,
+  };
+
+  // 1. Prior
+  let prior;
+  try {
+    prior = await EDGE_POWER.computeGamePrior(game, {
+      homeStats: { ...homeStats, _coach: homeCoach },
+      awayStats: { ...awayStats, _coach: awayCoach },
+      market,
+    });
+  } catch { return null; }
+
+  // 2. Algorithms
+  let families;
+  try {
+    families = await EDGE_ALGOS.runAll(prior, gameContext);
+  } catch { families = []; }
+
+  // 3. Situations
+  let sitFamily = null;
+  if (window.EDGE_SITUATIONS) {
+    try {
+      const slateGame = {
+        id: g.game_id, _sport: sport, sport,
+        home_team: g.home, away_team: g.away,
+        home: g.home, away: g.away,
+        spread: g.spread, open_spread: null,
+        total: g.total, ml: null, away_ml: null,
+        commence_time: g.game_date,
+      };
+      const sitCtx = {
+        homeAts: gameContext.homeAts,
+        awayAts: gameContext.awayAts,
+        h2h: gameContext.h2h,
+        homeRestDays: null,
+        awayRestDays: null,
+        travelMiles: null,
+        timezoneShift: null,
+        weather: null,
+        homeInjuries: [],
+        awayInjuries: [],
+      };
+      const res = await EDGE_SITUATIONS.evaluateSlate([slateGame], sitCtx);
+      if (res && res.length) {
+        const sit = res[0];
+        const strength = sit.strength || 0;
+        const lean = sit.lean;
+        const sig = lean === 'home' ? Math.min(strength / 4, 1)
+                  : lean === 'away' ? -Math.min(strength / 4, 1)
+                  : 0;
+        const vote = lean === 'home' ? 'yes' : lean === 'away' ? 'no' : 'neu';
+        sitFamily = {
+          family: 'situations',
+          signal: sig,
+          vote,
+          confidence: strength > 0 ? Math.min(0.5 + strength * 0.08, 0.9) : 0.5,
+          edge: Math.abs(sig) * 0.08,
+          reason: (sit.situations || []).slice(0, 3).map(x => x.label).join(' · '),
+          subs: sit.situations || [],
+          data: sit,
+        };
+      }
+    } catch {}
+  }
+
+  const allFamilies = sitFamily ? [sitFamily, ...families] : families;
+
+  // 4. Governor
+  const dyn = EDGE_GOVERNOR.getDynamicWeights(sport);
+  const merged = { ...dyn, situations: 12 };
+  let gov;
+  try {
+    gov = EDGE_GOVERNOR.run(allFamilies, prior, { dynamicWeights: merged });
+  } catch { return null; }
+
+  // 5. Physics
+  let phys;
+  try {
+    phys = EDGE_PHYSICS.decide(gov, prior, {});
+  } catch { return null; }
+
+  if (phys.decision === 'PASS' || phys.decision === 'CAPPED' || phys.decision === 'VETOED') {
+    return null;
+  }
+  if (!phys.direction || phys.direction === 'none') return null;
+
+  // ── Grade against the actual final ──
+  const margin = g.home_score - g.away_score;
+  const coverMarginHome = margin + g.spread;   // spread signed home perspective
+  let pickCoverMargin;
+  if (phys.direction === 'home') pickCoverMargin = coverMarginHome;
+  else pickCoverMargin = -coverMarginHome;
+
+  let result;
+  if (Math.abs(pickCoverMargin) < 0.01) result = 'P';
+  else if (pickCoverMargin > 0) result = 'W';
+  else result = 'L';
+
+  return {
+    game_id: g.game_id,
+    sport,
+    date: (g.game_date || '').slice(0, 10),
+    home: g.home,
+    away: g.away,
+    spread: g.spread,
+    final_score: `${g.away_score}-${g.home_score}`,
+    final_margin: margin,
+    pick_direction: phys.direction,
+    pick_side: phys.side_label?.team || phys.direction,
+    decision: phys.decision,
+    confidence: phys.confidence,
+    edge: phys.edge,
+    units: phys.units,
+    result,
+    cover_margin: Math.round(pickCoverMargin * 100) / 100,
+    families: allFamilies.map(f => ({
+      family: f.family,
+      signal: f.signal,
+      vote: f.vote,
+      confidence: f.confidence,
+    })),
+    situations: (sitFamily && sitFamily.subs) ? sitFamily.subs : [],
+  };
+}
+
+// ============================================================
+// ── TALLY ──
+// ============================================================
+
+function tallyGraded(g) {
+  // Per family: did the family's vote match the winning side?
+  g.families.forEach(f => {
+    if (f.vote === 'neu') return;
+    if (!familyStats[f.family]) familyStats[f.family] = { wins: 0, losses: 0, pushes: 0, games: 0 };
+    const stat = familyStats[f.family];
+    stat.games++;
+    const familyPickedHome = f.vote === 'yes';
+    const pickerPickedHome = g.pick_direction === 'home';
+    // Family is "correct" if it agreed with the winning side,
+    // regardless of what physics picked. That measures the
+    // family's signal directly, not the pipeline's.
+    const margin = g.final_margin;
+    const coverHome = (margin + g.spread) > 0.01;
+    const pushHome = Math.abs(margin + g.spread) < 0.01;
+    if (pushHome) { stat.pushes++; return; }
+    const winnerIsHome = coverHome;
+    const familyCorrect = (familyPickedHome && winnerIsHome) || (!familyPickedHome && !winnerIsHome);
+    if (familyCorrect) stat.wins++;
+    else stat.losses++;
+  });
+
+  // Per situation: which side it leaned and whether that side covered
+  g.situations.forEach(s => {
+    if (!s.side || s.side === 'pass') return;
+    if (!situationStats[s.id]) situationStats[s.id] = { label: s.label, wins: 0, losses: 0, pushes: 0, games: 0 };
+    const stat = situationStats[s.id];
+    stat.games++;
+    const margin = g.final_margin;
+    const coverHome = (margin + g.spread) > 0.01;
+    const pushHome = Math.abs(margin + g.spread) < 0.01;
+    if (pushHome) { stat.pushes++; return; }
+    const winnerIsHome = coverHome;
+    const sitHome = s.side === 'home' || s.side === 'favorite';
+    const correct = (sitHome && winnerIsHome) || (!sitHome && !winnerIsHome);
+    if (correct) stat.wins++;
+    else stat.losses++;
+  });
+
+  // Per confidence bucket (the pipeline's own pick)
+  const conf = g.confidence;
+  const bucket = conf >= 75 ? '75+' : conf >= 70 ? '70-74' : conf >= 65 ? '65-69' : conf >= 60 ? '60-64' : conf >= 55 ? '55-59' : '<55';
+  if (!confStats[bucket]) confStats[bucket] = { wins: 0, losses: 0, pushes: 0, games: 0 };
+  confStats[bucket].games++;
+  if (g.result === 'W') confStats[bucket].wins++;
+  else if (g.result === 'L') confStats[bucket].losses++;
+  else confStats[bucket].pushes++;
+}
+
+// ============================================================
+// ── REPORT ──
+// ============================================================
+
+function renderReport() {
+  if (!gameResults.length) {
+    out('<div class="empty">No picks produced. Nothing to report.</div>');
+    return;
+  }
+
+  const w = gameResults.filter(g => g.result === 'W').length;
+  const l = gameResults.filter(g => g.result === 'L').length;
+  const p = gameResults.filter(g => g.result === 'P').length;
+  const settled = w + l;
+  const hitRate = settled > 0 ? (w / settled) * 100 : 0;
+
+  // Units at flat 1u per pick
+  const flatPnl = gameResults.reduce((s, g) => s + (g.result === 'W' ? 0.91 : g.result === 'L' ? -1 : 0), 0);
+  // Break-even at -110 is 52.4%
+  const breaksEven = hitRate >= 52.4;
+
+  let html = '';
+
+  // Summary
+  html += `
+    <div class="summary">
+      <div class="sum-cell"><div class="sum-v gold">${gameResults.length}</div><div class="sum-l">Picks</div></div>
+      <div class="sum-cell"><div class="sum-v">${w}-${l}-${p}</div><div class="sum-l">W-L-P</div></div>
+      <div class="sum-cell"><div class="sum-v ${breaksEven ? 'green' : 'red'}">${hitRate.toFixed(1)}%</div><div class="sum-l">Hit rate</div></div>
+      <div class="sum-cell"><div class="sum-v ${flatPnl > 0 ? 'green' : flatPnl < 0 ? 'red' : 'muted'}">${flatPnl > 0 ? '+' : ''}${flatPnl.toFixed(2)}u</div><div class="sum-l">Flat P&L</div></div>
+    </div>
+  `;
+
+  html += `<div class="sub" style="margin-bottom:20px;">Break-even at -110 juice is 52.4%. ${breaksEven ? 'Above break-even.' : 'Below break-even.'}</div>`;
+
+  // Per family
+  const famRows = Object.entries(familyStats)
+    .map(([k, v]) => ({ family: k, ...v, rate: v.games > 0 ? v.wins / (v.wins + v.losses) : 0 }))
+    .filter(r => r.games >= 10)
+    .sort((a, b) => b.rate - a.rate);
+
+  if (famRows.length) {
+    html += `<div class="section"><div class="sec-title">BY <em>FAMILY</em></div>`;
+    html += `<div class="row head"><span>Family</span><span>Games</span><span>Record</span><span>Rate</span><span>Edge</span></div>`;
+    famRows.forEach(r => {
+      const total = r.wins + r.losses;
+      const rate = total > 0 ? (r.wins / total) * 100 : 0;
+      const edge = rate - 52.4;
+      const cls = edge > 2 ? 'pos' : edge < -2 ? 'neg' : 'neu';
+      html += `<div class="row">
+        <span class="name">${r.family}</span>
+        <span class="num neu">${r.games}</span>
+        <span class="num neu">${r.wins}-${r.losses}-${r.pushes}</span>
+        <span class="num ${cls}">${rate.toFixed(1)}%</span>
+        <span class="num ${cls}">${edge > 0 ? '+' : ''}${edge.toFixed(1)}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Per situation
+  const sitRows = Object.entries(situationStats)
+    .map(([id, v]) => ({ id, ...v, rate: (v.wins + v.losses) > 0 ? v.wins / (v.wins + v.losses) : 0 }))
+    .filter(r => r.games >= 8)
+    .sort((a, b) => b.rate - a.rate);
+
+  if (sitRows.length) {
+    html += `<div class="section"><div class="sec-title">BY <em>SITUATION</em></div>`;
+    html += `<div class="row head"><span>Rule</span><span>Games</span><span>Record</span><span>Rate</span><span>Edge</span></div>`;
+    sitRows.forEach(r => {
+      const total = r.wins + r.losses;
+      const rate = total > 0 ? (r.wins / total) * 100 : 0;
+      const edge = rate - 52.4;
+      const cls = edge > 3 ? 'pos' : edge < -3 ? 'neg' : 'neu';
+      html += `<div class="row">
+        <span class="name" style="font-size:11px;">${r.label || r.id}</span>
+        <span class="num neu">${r.games}</span>
+        <span class="num neu">${r.wins}-${r.losses}-${r.pushes}</span>
+        <span class="num ${cls}">${rate.toFixed(1)}%</span>
+        <span class="num ${cls}">${edge > 0 ? '+' : ''}${edge.toFixed(1)}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Per confidence bucket
+  const confOrder = ['75+', '70-74', '65-69', '60-64', '55-59', '<55'];
+  const confRows = confOrder.filter(k => confStats[k]).map(k => {
+    const v = confStats[k];
+    const total = v.wins + v.losses;
+    return { bucket: k, ...v, rate: total > 0 ? v.wins / total : 0 };
+  });
+
+  if (confRows.length) {
+    html += `<div class="section"><div class="sec-title">BY <em>CONFIDENCE</em></div>`;
+    html += `<div class="row head"><span>Bucket</span><span>Games</span><span>Record</span><span>Rate</span><span>Edge</span></div>`;
+    confRows.forEach(r => {
+      const total = r.wins + r.losses;
+      const rate = total > 0 ? (r.wins / total) * 100 : 0;
+      const edge = rate - 52.4;
+      const cls = edge > 2 ? 'pos' : edge < -2 ? 'neg' : 'neu';
+      html += `<div class="row">
+        <span class="name">${r.bucket}%</span>
+        <span class="num neu">${r.games}</span>
+        <span class="num neu">${r.wins}-${r.losses}-${r.pushes}</span>
+        <span class="num ${cls}">${rate.toFixed(1)}%</span>
+        <span class="num ${cls}">${edge > 0 ? '+' : ''}${edge.toFixed(1)}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // All games
+  html += `<div class="section"><div class="sec-title">ALL <em>PICKS</em></div>`;
+  html += `<div class="game-row head"><span>Date</span><span>Matchup</span><span>Spread</span><span>Pick</span><span>Score</span><span>Result</span></div>`;
+  gameResults.slice().reverse().forEach(g => {
+    const resCls = g.result === 'W' ? 'res-w' : g.result === 'L' ? 'res-l' : 'res-p';
+    html += `<div class="game-row">
+      <span class="date">${g.date}</span>
+      <span class="matchup">${g.away} @ ${g.home}</span>
+      <span class="num">${g.spread > 0 ? '+' : ''}${g.spread}</span>
+      <span class="side">${g.pick_side}</span>
+      <span class="num">${g.final_score}</span>
+      <span class="${resCls}">${g.result}</span>
+    </div>`;
+  });
+  html += `</div>`;
+
+  out(html);
 }
 </script>
+
 </body>
 </html>
