@@ -1,10 +1,32 @@
 // ============================================================
-// EDGE — ATS + H2H TRACKER v2.3
+// EDGE — ATS + H2H TRACKER v2.4
 //
 // Odds sources, in priority order:
 //   1. historical_odds in Supabase       (cached from earlier runs)
 //   2. ESPN core API per-event odds      (close → current → open)
 //   3. line_history                      (games seen live)
+//
+// v2.4 — open_spread is now captured. The four line-movement
+// situations (rlm_against_home, rlm_against_away,
+// line_moved_2plus_toward_home, line_moved_2plus_toward_away)
+// depend on knowing where the number opened, and every
+// historical_odds row was previously written with only the
+// closing spread. ESPN's core API sends the open block on the
+// same response the close comes from — parseOddsItem was
+// returning on the first phase that had a spread and
+// discarding the rest.
+//
+//   · parseOddsItem now parses every phase independently.
+//     close → spread, open → open_spread. No fallback for open;
+//     a missing open stays null rather than fabricating a number.
+//   · Multi-book: prefers the item that carries both a close
+//     and an open over one that only has a close.
+//   · Schema probe. historical_odds may not have open_spread
+//     yet. If the column is missing the write omits it, the
+//     log prints the exact ALTER, and everything else keeps
+//     working. Add the column before re-running to populate.
+//   · Refetch logic. Games with a cached spread but no cached
+//     open are queued on the next run so the column fills in.
 //
 // v2.3 — fetch uses ?dates=YYYY (single year). College endpoints
 // need a groups filter (80 FBS / 50 D-I) or they return nothing.
@@ -13,6 +35,8 @@
 // ============================================================
 
 const EDGE_ATS = (() => {
+
+  const BUILD = 'ats-20260923-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -26,23 +50,23 @@ const EDGE_ATS = (() => {
   }
 
   const ESPN_MAP = {
-  NFL:   { path: 'football/nfl',                        sport: 'football',   league: 'nfl' },
-  NBA:   { path: 'basketball/nba',                      sport: 'basketball', league: 'nba' },
-  WNBA:  { path: 'basketball/wnba',                     sport: 'basketball', league: 'wnba' },
-  MLB:   { path: 'baseball/mlb',                        sport: 'baseball',   league: 'mlb' },
-  NHL:   { path: 'hockey/nhl',                          sport: 'hockey',     league: 'nhl' },
-  NCAAF: { path: 'football/college-football',           sport: 'football',   league: 'college-football' },
-  NCAAB: { path: 'basketball/mens-college-basketball',  sport: 'basketball', league: 'mens-college-basketball' },
-  MLS:   { path: 'soccer/usa.1',                        sport: 'soccer',     league: 'usa.1' },
-};
+    NFL:   { path: 'football/nfl',                        sport: 'football',   league: 'nfl' },
+    NBA:   { path: 'basketball/nba',                      sport: 'basketball', league: 'nba' },
+    WNBA:  { path: 'basketball/wnba',                     sport: 'basketball', league: 'wnba' },
+    MLB:   { path: 'baseball/mlb',                        sport: 'baseball',   league: 'mlb' },
+    NHL:   { path: 'hockey/nhl',                          sport: 'hockey',     league: 'nhl' },
+    NCAAF: { path: 'football/college-football',           sport: 'football',   league: 'college-football' },
+    NCAAB: { path: 'basketball/mens-college-basketball',  sport: 'basketball', league: 'mens-college-basketball' },
+    MLS:   { path: 'soccer/usa.1',                        sport: 'soccer',     league: 'usa.1' },
+  };
 
   const H2H_SEASONS = 5;
   const HISTORY_DAYS = H2H_SEASONS * 365;
 
   const SPORT_HISTORY_DAYS = {
-  NFL: 1825, NCAAF: 1825, MLS: 1460,
-  NHL: 1095, NBA: 1095, MLB: 1095, NCAAB: 1095, WNBA: 1095,
-};
+    NFL: 1825, NCAAF: 1825, MLS: 1460,
+    NHL: 1095, NBA: 1095, MLB: 1095, NCAAB: 1095, WNBA: 1095,
+  };
 
   const FORM_WINDOW = 10;
   const FETCH_CONCURRENCY = 4;
@@ -76,6 +100,7 @@ const EDGE_ATS = (() => {
   };
 
   return {
+    BUILD,
     buildAll,
     buildSport,
     resolveGameOdds,
@@ -91,7 +116,10 @@ const EDGE_ATS = (() => {
   async function buildAll(options = {}) {
     const { sports = Object.keys(ESPN_MAP), onProgress = null } = options;
     const log = makeLogger(onProgress);
-    const summary = { sports: {}, totals: { teams: 0, matchups: 0, odds_resolved: 0 } };
+    const summary = {
+      sports: {},
+      totals: { teams: 0, matchups: 0, odds_resolved: 0, opens_resolved: 0 },
+    };
 
     for (const sport of sports) {
       log(`── ${sport} ──`);
@@ -101,6 +129,7 @@ const EDGE_ATS = (() => {
         summary.totals.teams += result.teams_written || 0;
         summary.totals.matchups += result.matchups_written || 0;
         summary.totals.odds_resolved += result.odds_resolved || 0;
+        summary.totals.opens_resolved += result.opens_resolved || 0;
       } catch (e) {
         log(`${sport} failed: ${e.message}`);
         summary.sports[sport] = { error: e.message };
@@ -118,6 +147,13 @@ const EDGE_ATS = (() => {
     const cfg = ESPN_MAP[sport];
     if (!cfg) throw new Error(`Unknown sport: ${sport}`);
 
+    const canStoreOpen = await hasOpenSpreadColumn(url, key);
+    if (!canStoreOpen) {
+      log('  ⚠ historical_odds has no open_spread column');
+      log('    market situations will stay untestable until added:');
+      log('    alter table historical_odds add column open_spread numeric;');
+    }
+
     const days = SPORT_HISTORY_DAYS[sport] || HISTORY_DAYS;
     const now = new Date();
     const start = new Date(now.getTime() - days * 86400000);
@@ -129,44 +165,66 @@ const EDGE_ATS = (() => {
     log(`  ${games.length} completed games`);
 
     if (!games.length) {
-      return { teams_written: 0, matchups_written: 0, odds_resolved: 0, note: 'No results' };
+      return { teams_written: 0, matchups_written: 0, odds_resolved: 0, opens_resolved: 0, note: 'No results' };
     }
 
     log('  loading cached odds');
-    const oddsIndex = await loadCachedOdds(sport, url, key);
-    log(`  ${Object.keys(oddsIndex).length} cached`);
+    const oddsIndex = await loadCachedOdds(sport, url, key, canStoreOpen);
+    const withSpread = Object.values(oddsIndex).filter(r => r.spread != null).length;
+    const withOpen   = Object.values(oddsIndex).filter(r => r.open_spread != null).length;
+    log(`  ${withSpread} cached spreads · ${withOpen} cached opens`);
 
-    const missing = games.filter(g => oddsIndex[g.id]?.spread == null);
+    // Games to (re)look-up. Priority:
+    //   1. Never cached.
+    //   2. Cached without a spread.
+    //   3. Cached with a spread but missing an open — only when the
+    //      column exists, since there's no point re-fetching a value
+    //      we can't store.
+    const missing = games.filter(g => {
+      const cached = oddsIndex[g.id];
+      if (!cached) return true;
+      if (cached.spread == null) return true;
+      if (canStoreOpen && cached.open_spread == null) return true;
+      return false;
+    });
+
     const toLookup = missing.slice(0, MAX_ODDS_LOOKUPS_PER_RUN);
     let resolved = 0;
+    let opensResolved = 0;
 
     if (toLookup.length) {
       log(`  resolving ${toLookup.length} of ${missing.length} from ESPN`);
       const fresh = [];
+
       await parallelMap(toLookup, ODDS_CONCURRENCY, async g => {
         const odds = await resolveGameOdds(cfg, g.id);
-        if (odds && odds.spread != null) {
-          oddsIndex[g.id] = odds;
-          fresh.push({
-            game_id: g.id,
-            sport,
-            home: g.home,
-            away: g.away,
-            game_date: g.date,
-            spread: odds.spread,
-            total: odds.total ?? null,
-            home_ml: odds.home_ml ?? null,
-            away_ml: odds.away_ml ?? null,
-            provider: odds.provider ?? null,
-            updated_at: new Date().toISOString(),
-          });
-          resolved++;
-        }
+        if (!odds || odds.spread == null) return;
+
+        oddsIndex[g.id] = odds;
+        resolved++;
+        if (odds.open_spread != null) opensResolved++;
+
+        const row = {
+          game_id: g.id,
+          sport,
+          home: g.home,
+          away: g.away,
+          game_date: g.date,
+          spread: odds.spread,
+          total: odds.total ?? null,
+          home_ml: odds.home_ml ?? null,
+          away_ml: odds.away_ml ?? null,
+          provider: odds.provider ?? null,
+          updated_at: new Date().toISOString(),
+        };
+        if (canStoreOpen) row.open_spread = odds.open_spread ?? null;
+
+        fresh.push(row);
       });
 
       if (fresh.length) {
         await upsert(`${url}/rest/v1/historical_odds?on_conflict=game_id`, fresh, key, log, 'historical_odds');
-        log(`  cached ${fresh.length} new lines`);
+        log(`  cached ${fresh.length} lines · ${opensResolved} with an open`);
       }
       if (missing.length > toLookup.length) {
         log(`  ${missing.length - toLookup.length} still unresolved — run again to continue`);
@@ -177,7 +235,11 @@ const EDGE_ATS = (() => {
     log(`  ${priced.length} games with a spread`);
 
     if (!priced.length) {
-      return { teams_written: 0, matchups_written: 0, odds_resolved: resolved, note: 'No spreads resolved' };
+      return {
+        teams_written: 0, matchups_written: 0,
+        odds_resolved: resolved, opens_resolved: opensResolved,
+        note: 'No spreads resolved',
+      };
     }
 
     const teamState = {};
@@ -224,9 +286,27 @@ const EDGE_ATS = (() => {
       teams_written: teamRows.length,
       matchups_written: matchupRows.length,
       odds_resolved: resolved,
+      opens_resolved: opensResolved,
       games_graded: priced.length,
       games_unpriced: games.length - priced.length,
+      open_spread_available: canStoreOpen,
     };
+  }
+
+  // ============================================================
+  // ── SCHEMA PROBE ──
+  // open_spread is optional. When it is missing, writes must omit
+  // it or PostgREST rejects the entire batch — including the
+  // spread, total and ML that were working before.
+  // ============================================================
+
+  async function hasOpenSpreadColumn(url, key) {
+    try {
+      const res = await fetch(`${url}/rest/v1/historical_odds?select=open_spread&limit=1`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+      return res.ok;
+    } catch { return false; }
   }
 
   // ============================================================
@@ -265,6 +345,11 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── CORE API ODDS ──
+  //
+  // ESPN sends one item per provider per event. Each item carries
+  // three phase blocks — open, current, close — with the line as
+  // it stood at each point. Which blocks are populated varies by
+  // sport and by how close to kickoff the fetch happened.
   // ============================================================
 
   async function resolveGameOdds(cfg, eventId) {
@@ -277,13 +362,28 @@ const EDGE_ATS = (() => {
       const items = data.items || [];
       if (!items.length) return null;
 
+      // Score each item: close is required for grading, open is what
+      // this version adds. Prefer an item that carries both.
       let best = null;
+      let bestScore = -1;
+
       for (const item of items) {
         const parsed = parseOddsItem(item);
         if (!parsed) continue;
-        if (parsed.phase === 'close') return parsed;
-        if (!best) best = parsed;
+
+        const score =
+          (parsed.phase === 'close' ? 10 : parsed.phase === 'current' ? 5 : 1) +
+          (parsed.open_spread != null ? 8 : 0);
+
+        if (score > bestScore) {
+          best = parsed;
+          bestScore = score;
+        }
+        // Early exit: an item that has both a close and an open
+        // is as good as it gets.
+        if (parsed.phase === 'close' && parsed.open_spread != null) return parsed;
       }
+
       return best;
     } catch (e) {
       logEdgeError('ats.resolveGameOdds.' + eventId, e);
@@ -292,49 +392,27 @@ const EDGE_ATS = (() => {
   }
 
   function parseOddsItem(item) {
-    const phases = [
-      ['close', item.close],
+    if (!item) return null;
+
+    const phaseBlocks = [
+      ['close',   item.close],
       ['current', item.current],
-      ['open', item.open],
+      ['open',    item.open],
     ];
 
-    for (const [phase, block] of phases) {
+    const parsed = {};
+    for (const [phase, block] of phaseBlocks) {
       if (!block) continue;
-
-      let spread =
-        numOrNull(block.pointSpread?.alternateDisplayValue) ??
-        numOrNull(block.pointSpread?.american) ??
-        numOrNull(block.pointSpread?.value) ??
-        numOrNull(block.spread?.value) ??
-        numOrNull(block.spread);
-
-      if (spread == null && block.home?.pointSpread) {
-        spread =
-          numOrNull(block.home.pointSpread.alternateDisplayValue) ??
-          numOrNull(block.home.pointSpread.american) ??
-          numOrNull(block.home.pointSpread.value);
-      }
-
-      if (spread == null) continue;
-
-      const total =
-        numOrNull(block.total?.alternateDisplayValue) ??
-        numOrNull(block.total?.value) ??
-        numOrNull(block.overUnder?.value) ??
-        numOrNull(item.overUnder);
-
-      return {
-        spread,
-        total,
-        home_ml: numOrNull(block.home?.moneyLine?.american) ?? numOrNull(item.homeTeamOdds?.moneyLine),
-        away_ml: numOrNull(block.away?.moneyLine?.american) ?? numOrNull(item.awayTeamOdds?.moneyLine),
-        provider: item.provider?.name || null,
-        phase,
-      };
+      const p = parsePhaseBlock(block);
+      if (p.spread == null) continue;
+      parsed[phase] = p;
     }
 
-    const flat = numOrNull(item.spread);
-    if (flat != null) {
+    // Flat fields, seen on some events. Only used when no phase
+    // block carried a spread.
+    if (!parsed.close && !parsed.current && !parsed.open) {
+      const flat = numOrNull(item.spread);
+      if (flat == null) return null;
       return {
         spread: flat,
         total: numOrNull(item.overUnder),
@@ -342,22 +420,75 @@ const EDGE_ATS = (() => {
         away_ml: numOrNull(item.awayTeamOdds?.moneyLine),
         provider: item.provider?.name || null,
         phase: 'flat',
+        open_spread: null,
       };
     }
-    return null;
+
+    // Closing line: prefer close, fall back to current, then open.
+    const closeBlock = parsed.close || parsed.current || parsed.open;
+
+    // Opening line: only the open block. No fallback — inventing an
+    // open from a close would poison the movement rules silently.
+    const openBlock = parsed.open || null;
+
+    return {
+      spread: closeBlock.spread,
+      total: closeBlock.total,
+      home_ml: closeBlock.home_ml ?? parsed.close?.home_ml
+            ?? parsed.current?.home_ml ?? parsed.open?.home_ml ?? null,
+      away_ml: closeBlock.away_ml ?? parsed.close?.away_ml
+            ?? parsed.current?.away_ml ?? parsed.open?.away_ml ?? null,
+      provider: item.provider?.name || null,
+      phase: parsed.close ? 'close' : parsed.current ? 'current' : 'open',
+      open_spread: openBlock?.spread ?? null,
+    };
+  }
+
+  function parsePhaseBlock(block) {
+    let spread =
+      numOrNull(block.pointSpread?.alternateDisplayValue) ??
+      numOrNull(block.pointSpread?.american) ??
+      numOrNull(block.pointSpread?.value) ??
+      numOrNull(block.spread?.value) ??
+      numOrNull(block.spread);
+
+    if (spread == null && block.home?.pointSpread) {
+      spread =
+        numOrNull(block.home.pointSpread.alternateDisplayValue) ??
+        numOrNull(block.home.pointSpread.american) ??
+        numOrNull(block.home.pointSpread.value);
+    }
+
+    if (spread == null) return { spread: null, total: null, home_ml: null, away_ml: null };
+
+    const total =
+      numOrNull(block.total?.alternateDisplayValue) ??
+      numOrNull(block.total?.value) ??
+      numOrNull(block.overUnder?.value);
+
+    return {
+      spread,
+      total,
+      home_ml: numOrNull(block.home?.moneyLine?.american),
+      away_ml: numOrNull(block.away?.moneyLine?.american),
+    };
   }
 
   // ============================================================
   // ── CACHED ODDS ──
   // ============================================================
 
-  async function loadCachedOdds(sport, url, key) {
+  async function loadCachedOdds(sport, url, key, canReadOpen) {
     const out = {};
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
+    const cols = canReadOpen
+      ? 'game_id,spread,total,home_ml,away_ml,open_spread'
+      : 'game_id,spread,total,home_ml,away_ml';
+
     try {
       const res = await fetch(
-        `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=game_id,spread,total,home_ml,away_ml&limit=50000`,
+        `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=${cols}&limit=50000`,
         { headers }
       );
       if (res.ok) {
@@ -378,7 +509,12 @@ const EDGE_ATS = (() => {
         rows.forEach(r => {
           if (r.spread == null) return;
           if (out[r.game_id]?.spread != null) return;
-          out[r.game_id] = { spread: r.spread, total: r.total ?? null, home_ml: r.ml ?? null };
+          out[r.game_id] = {
+            spread: r.spread,
+            total: r.total ?? null,
+            home_ml: r.ml ?? null,
+            open_spread: null,
+          };
         });
       }
     } catch (e) { logEdgeError('ats.loadCachedOdds.lineHistory.' + sport, e); }
