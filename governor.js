@@ -1,14 +1,39 @@
 // ============================================================
-// EDGE — GOVERNOR v2.3
-// Spread-implied probability fallback when ML missing
-// Realistic thresholds · no over-capping
+// EDGE — GOVERNOR v3.0
+//
+// Turns the nine family verdicts into a single confidence score
+// and a decision.
+//
+// Design principles:
+//   1. One source of truth. The nine family signals are averaged
+//      with their sport-specific weights. That is the consensus.
+//   2. One adjustment. Consensus is shrunk toward the market
+//      probability. The market is usually right; the model is
+//      right only in the spots where its families agree and the
+//      market hasn't fully priced them.
+//   3. Everything traceable. Each step writes its inputs and
+//      outputs into the returned object. The slate test can
+//      grade every number.
+//   4. No double counting. Previous versions applied coherence,
+//      conflict penalty, and calibration as three separate
+//      discounts. All three measured overlapping things. This
+//      version keeps only the market shrinkage and lets the
+//      family signals themselves carry the conviction.
+//
+// Output shape stays compatible with physics.js and the pick
+// cards. Fields that are no longer computed are still returned
+// as neutral values so nothing downstream breaks.
 // ============================================================
 
 const EDGE_GOVERNOR = (() => {
 
+  // Weights per sport for the nine families. These are the
+  // defaults. Learning loop overwrites dynamic weights in
+  // localStorage; this table is the fallback when it hasn't run.
   const STATIC_WEIGHTS = {
     NFL:   { team_quality: 10, offense_defense: 8,  coaching: 8, market: 10, line_dynamics: 9, fatigue: 8,  environment: 7,  trend: 6, injury: 10 },
     NBA:   { team_quality: 9,  offense_defense: 10, coaching: 7, market: 9,  line_dynamics: 8, fatigue: 10, environment: 2,  trend: 8, injury: 10 },
+    WNBA:  { team_quality: 9,  offense_defense: 10, coaching: 7, market: 9,  line_dynamics: 8, fatigue: 10, environment: 2,  trend: 8, injury: 10 },
     MLB:   { team_quality: 8,  offense_defense: 8,  coaching: 6, market: 9,  line_dynamics: 8, fatigue: 7,  environment: 10, trend: 7, injury: 8  },
     NHL:   { team_quality: 8,  offense_defense: 8,  coaching: 7, market: 9,  line_dynamics: 8, fatigue: 8,  environment: 2,  trend: 7, injury: 9  },
     NCAAF: { team_quality: 9,  offense_defense: 8,  coaching: 9, market: 9,  line_dynamics: 8, fatigue: 7,  environment: 8,  trend: 7, injury: 9  },
@@ -17,9 +42,12 @@ const EDGE_GOVERNOR = (() => {
     DEFAULT: { team_quality: 8, offense_defense: 8, coaching: 7, market: 9, line_dynamics: 8, fatigue: 8, environment: 6, trend: 7, injury: 8 },
   };
 
-  const SPORT_THRESHOLDS = {
+  // Decision thresholds. Confidence is a number in [0, 100].
+  // edge is |posterior_home_prob - 0.5| * 2 (in probability units).
+  const THRESHOLDS = {
     NFL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
     NBA:   { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    WNBA:  { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
     MLB:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
     NHL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
     NCAAF: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
@@ -28,21 +56,28 @@ const EDGE_GOVERNOR = (() => {
     DEFAULT: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
   };
 
-  const SHRINKAGE = {
-    NFL: 0.30, NBA: 0.30, MLB: 0.45, NHL: 0.45,
+  // How much of the model's opinion gets through versus the
+  // market. A shrink of 0.40 means 60% model, 40% market. Lower
+  // shrink = more trust in the model. Set per sport so low-volume
+  // markets (MLB, NHL) get less model influence.
+  const MARKET_SHRINK = {
+    NFL: 0.30, NBA: 0.30, WNBA: 0.30, MLB: 0.45, NHL: 0.45,
     NCAAF: 0.40, NCAAB: 0.40, MLS: 0.50, DEFAULT: 0.40,
   };
 
   const HOME_BASELINE = {
-    NFL: 0.565, NBA: 0.595, MLB: 0.540, NHL: 0.555,
+    NFL: 0.565, NBA: 0.595, WNBA: 0.560, MLB: 0.540, NHL: 0.555,
     NCAAF: 0.605, NCAAB: 0.640, MLS: 0.600, DEFAULT: 0.570,
   };
 
+  // Confidence ceiling. Even a perfect slate of family agreement
+  // shouldn't claim 90% certainty — no model is that good.
   const MAX_CONFIDENCE = 82;
 
   let CALIBRATION = {};
 
   function setCalibration(table) { CALIBRATION = table || {}; }
+
   function loadCalibrationFromStorage() {
     try {
       const stored = localStorage.getItem('edge_governor_calibration');
@@ -61,139 +96,141 @@ const EDGE_GOVERNOR = (() => {
     return STATIC_WEIGHTS[sport] || STATIC_WEIGHTS.DEFAULT;
   }
 
-  // ── Spread → implied home win prob (fallback when ML missing) ──
-  function spreadToImpliedProb(homeSpread, sport) {
-    if (typeof homeSpread !== 'number') return null;
-    // Home spread negative = home favored. Per point ≈ 2.5-3% shift.
-    const perPoint = {
-      NFL: 0.028, NCAAF: 0.028, NBA: 0.032, NCAAB: 0.032,
-      MLB: 0.040, NHL: 0.035, MLS: 0.040,
-    }[sport] || 0.030;
-    // homeSpread = -7 means home favored by 7 → prob 0.5 + 7*perPoint
-    return clamp(0.5 + (-homeSpread * perPoint), 0.10, 0.90);
-  }
+  // ============================================================
+  // ── MAIN ──
+  // ============================================================
 
   function run(familyOutputs, prior, options = {}) {
-    if (!Array.isArray(familyOutputs) || familyOutputs.length === 0) {
-      return emptyResult('No family outputs');
-    }
-
     const sport = prior?.sport || 'DEFAULT';
     const weights = options.dynamicWeights || getDynamicWeights(sport);
-    const thresholds = SPORT_THRESHOLDS[sport] || SPORT_THRESHOLDS.DEFAULT;
-    const shrinkage = options.shrinkage ?? (SHRINKAGE[sport] ?? SHRINKAGE.DEFAULT);
+    const thresholds = THRESHOLDS[sport] || THRESHOLDS.DEFAULT;
+    const shrink = options.shrinkage ?? (MARKET_SHRINK[sport] ?? MARKET_SHRINK.DEFAULT);
     const homeBaseline = HOME_BASELINE[sport] ?? HOME_BASELINE.DEFAULT;
 
+    // ── 1. Weighted family signal ──
+    // Each family's `signal` field is a number in [-1, +1]. Zero
+    // means the family has no opinion. Positive favors home.
     const breakdown = [];
-    let sumAbsForces = 0;
-    let netForce = 0;
+    let weightedSignal = 0;
     let totalWeight = 0;
-    let edgeWeightedSum = 0;
-    let weightForEdge = 0;
 
-    familyOutputs.forEach(f => {
+    (familyOutputs || []).forEach(f => {
       const w = weights[f.family] ?? 7;
-      const dir = f.vote === 'yes' ? 1 : f.vote === 'no' ? -1 : 0;
+      const sig = typeof f.signal === 'number' && isFinite(f.signal) ? f.signal : 0;
       const conf = clamp(f.confidence ?? 0.5, 0, 1);
-      const force = w * conf * dir;
 
-      sumAbsForces += Math.abs(force);
-      netForce += force;
+      // Effective contribution: weight times signal times the
+      // family's own confidence. Neutral families contribute
+      // nothing to the numerator but still count in the
+      // denominator so a slate of neutral families produces a
+      // near-zero final signal rather than an overconfident one.
+      const contribution = w * sig * conf;
+      weightedSignal += contribution;
       totalWeight += w;
-
-      if (typeof f.edge === 'number' && f.edge !== 0 && dir !== 0) {
-        edgeWeightedSum += f.edge * w * conf;
-        weightForEdge += w * conf;
-      }
 
       breakdown.push({
         family: f.family,
         vote: f.vote,
+        signal: round(sig, 3),
         confidence: round(conf, 3),
         edge: round(f.edge || 0, 4),
         weight: w,
-        force: round(force, 3),
+        contribution: round(contribution, 3),
         reason: f.reason || '',
         data: f.data || {},
       });
     });
 
-    if (totalWeight === 0) return emptyResult('Zero weight');
-
-    const F_norm = clamp(netForce / totalWeight, -1, 1);
-    const agreementIndex = sumAbsForces > 0
-      ? clamp(Math.abs(netForce) / sumAbsForces, 0, 1)
-      : 0;
-
-    const rawConfidence = Math.abs(F_norm) * 100;
-    const coherenceAdjusted = rawConfidence * (0.65 + agreementIndex * 0.35);
-
-    const yesFams = breakdown.filter(b => b.vote === 'yes');
-    const noFams  = breakdown.filter(b => b.vote === 'no');
-    const topYesConf = yesFams.length ? Math.max(...yesFams.map(b => b.confidence)) : 0;
-    const topNoConf  = noFams.length  ? Math.max(...noFams.map(b => b.confidence))  : 0;
-    const conflictMagnitude = Math.min(topYesConf, topNoConf);
-    const conflictPenalty = conflictMagnitude * 15;
-
-    const conflictAdjusted = Math.max(coherenceAdjusted - conflictPenalty, 0);
-
-    // ── Market implied probability (ML preferred, spread fallback) ──
-    let marketImpliedHome;
-    let marketSource;
-
-    if (prior?.market?.home_ml) {
-      marketImpliedHome = americanToImplied(prior.market.home_ml);
-      marketSource = 'moneyline';
-    } else if (typeof prior?.market?.current_spread === 'number') {
-      marketImpliedHome = spreadToImpliedProb(prior.market.current_spread, sport);
-      marketSource = 'spread';
-    } else {
-      marketImpliedHome = homeBaseline;
-      marketSource = 'baseline';
+    if (totalWeight === 0) {
+      return emptyResult('No family outputs');
     }
 
-    const modelHomeProb = 0.5 + (F_norm / 2);
-    const posteriorHomeProb = (1 - shrinkage) * modelHomeProb + shrinkage * marketImpliedHome;
-    const posteriorConfidence = Math.abs(posteriorHomeProb - 0.5) * 200;
+    // Normalized signal: weighted average, bounded to [-1, +1].
+    // weightSum of confidence-weighted families keeps the scale
+    // sane even when some families are neutral.
+    const weightSumConf = breakdown.reduce((s, b) => s + b.weight * b.confidence, 0);
+    const normalizedSignal = weightSumConf > 0
+      ? clamp(weightedSignal / weightSumConf, -1, 1)
+      : 0;
 
-    const combined = (conflictAdjusted * 0.75) + (posteriorConfidence * 0.25);
+    // ── 2. Agreement index ──
+    // How much do the families actually agree? Used as a
+    // diagnostic and to scale confidence. Not used as a separate
+    // penalty — confidence already carries per-family certainty.
+    const yesFams = breakdown.filter(b => b.vote === 'yes');
+    const noFams  = breakdown.filter(b => b.vote === 'no');
+    const neuFams = breakdown.filter(b => b.vote === 'neu');
 
-    // ── Data-availability caps (soft now) ──
+    const yesWeight = yesFams.reduce((s, b) => s + b.weight, 0);
+    const noWeight  = noFams.reduce((s, b) => s + b.weight, 0);
+    const denom = yesWeight + noWeight;
+    const agreement = denom > 0
+      ? Math.abs(yesWeight - noWeight) / denom
+      : 0;
+
+    // ── 3. Model probability, then shrink toward the market ──
+    // The model's own home win probability, before any market
+    // influence. Then the market pulls it back by the shrink
+    // factor. The result is the number the app acts on.
+    const modelHomeProb = clamp(0.5 + normalizedSignal / 2, 0.02, 0.98);
+
+    const marketInfo = resolveMarket(prior, homeBaseline, sport);
+    const marketHomeProb = marketInfo.prob;
+
+    const posteriorHomeProb = (1 - shrink) * modelHomeProb + shrink * marketHomeProb;
+
+    // Raw edge in probability terms.
+    const edge = Math.abs(posteriorHomeProb - 0.5);
+
+    // ── 4. Confidence ──
+    // Three things produce confidence: how far the posterior
+    // moved from a coin flip, how strongly the families agreed
+    // on a direction, and how much data they had. All three
+    // are already baked into normalizedSignal and agreement,
+    // so the formula is short.
+    const directional = Math.abs(posteriorHomeProb - 0.5) * 200;  // 0 to 100
+    const agreementFactor = 0.6 + agreement * 0.4;                // 0.6 to 1.0
+    const rawConfidence = directional * agreementFactor;
+    const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
+    const calibratedConfidence = applyCalibration(cappedConfidence);
+
+    // ── 5. Data-availability caps ──
+    // Two hard caps for missing inputs. These are the only caps
+    // that aren't coming from the math itself.
     const dataCaps = [];
     let cap = 100;
 
     if (prior?.market?.current_spread == null) {
-      cap = Math.min(cap, 60);
+      cap = Math.min(cap, 55);
       dataCaps.push('no spread');
     }
-    const hasLineHistory = !!(prior?.market?.open_spread
-      && prior?.market?.current_spread
-      && prior.market.open_spread !== prior.market.current_spread);
-    if (!hasLineHistory) {
+    const hasLineMovement = prior?.market?.open_spread != null
+      && prior?.market?.current_spread != null
+      && prior.market.open_spread !== prior.market.current_spread;
+    if (prior?.market?.open_spread == null) {
+      cap = Math.min(cap, 78);
+      dataCaps.push('no opening line');
+    } else if (!hasLineMovement) {
       cap = Math.min(cap, 78);
       dataCaps.push('no line movement');
     }
 
-    const capped = Math.min(combined, cap);
-    const finalConfidence = round(Math.min(capped, MAX_CONFIDENCE), 1);
-    const calibratedConfidence = applyCalibration(finalConfidence);
+    const finalConfidence = round(Math.min(calibratedConfidence, cap, MAX_CONFIDENCE), 1);
 
-    const weightedEdge = weightForEdge > 0 ? edgeWeightedSum / weightForEdge : 0;
-    const direction = F_norm > 0 ? 'home' : 'away';
-
-    const absEdge = Math.abs(weightedEdge);
+    // ── 6. Decision ──
+    const direction = posteriorHomeProb > 0.5 ? 'home' : 'away';
     let decision = 'PASS';
     let units = 0;
-    let recommendedSide = 'pass';
 
-    if (calibratedConfidence >= thresholds.bet2u && absEdge >= thresholds.minEdge2u) {
-      decision = 'BET_2U'; units = 2; recommendedSide = direction;
-    } else if (calibratedConfidence >= thresholds.bet1u && absEdge >= thresholds.minEdge1u) {
-      decision = 'BET_1U'; units = 1; recommendedSide = direction;
-    } else if (calibratedConfidence >= thresholds.lean && absEdge >= thresholds.minEdgeLean) {
-      decision = 'LEAN'; units = 0.5; recommendedSide = direction;
+    if (finalConfidence >= thresholds.bet2u && edge >= thresholds.minEdge2u) {
+      decision = 'BET_2U'; units = 2;
+    } else if (finalConfidence >= thresholds.bet1u && edge >= thresholds.minEdge1u) {
+      decision = 'BET_1U'; units = 1;
+    } else if (finalConfidence >= thresholds.lean && edge >= thresholds.minEdgeLean) {
+      decision = 'LEAN'; units = 0.5;
     }
 
+    // ── 7. Kelly input for physics ──
     const kellyInput = buildKellyInput({
       posteriorHomeProb,
       marketHomeML: prior?.market?.home_ml,
@@ -204,72 +241,111 @@ const EDGE_GOVERNOR = (() => {
     });
 
     return {
-      consensus_score: round(F_norm, 4),
-      confidence: calibratedConfidence,
-      raw_confidence: round(rawConfidence, 1),
-      coherence_adjusted: round(coherenceAdjusted, 1),
-      posterior_confidence: round(posteriorConfidence, 1),
-      combined_pre_cap: round(combined, 1),
-      data_cap: cap,
-      data_caps: dataCaps,
-      market_source: marketSource,
-      calibrated: Object.keys(CALIBRATION).length > 0,
-
-      agreement_index: round(agreementIndex, 3),
-      conflict_penalty: round(conflictPenalty, 2),
-      shrinkage: round(shrinkage, 3),
-      edge: round(weightedEdge, 4),
-
+      // Primary outputs
+      consensus_score: round(normalizedSignal, 4),
+      confidence: finalConfidence,
+      edge: round(edge, 4),
       direction,
-      recommended_side: recommendedSide,
       decision,
       units,
 
+      // Probability trail — every step the slate test can grade
       model_home_prob: round(modelHomeProb, 4),
-      market_home_prob: round(marketImpliedHome, 4),
+      market_home_prob: round(marketHomeProb, 4),
       posterior_home_prob: round(posteriorHomeProb, 4),
 
-      kelly: kellyInput,
+      // Diagnostics
+      agreement_index: round(agreement, 3),
+      shrinkage: round(shrink, 3),
+      market_source: marketInfo.source,
+      calibrated: Object.keys(CALIBRATION).length > 0,
+      data_caps: dataCaps,
+      data_cap: cap,
 
+      raw_confidence: round(rawConfidence, 1),
+      capped_confidence: round(cappedConfidence, 1),
+
+      // Family vote counts and breakdown
       alignment: {
         yes_count: yesFams.length,
         no_count: noFams.length,
-        neu_count: breakdown.length - yesFams.length - noFams.length,
-        top_yes_confidence: round(topYesConf, 3),
-        top_no_confidence: round(topNoConf, 3),
+        neu_count: neuFams.length,
+        yes_weight: round(yesWeight, 1),
+        no_weight: round(noWeight, 1),
       },
       breakdown,
+
+      // Kelly sizing details
+      kelly: kellyInput,
+
+      // Thresholds used, for audit
       thresholds_used: thresholds,
       computed_at: new Date().toISOString(),
     };
   }
 
+  // ============================================================
+  // ── MARKET RESOLUTION ──
+  // Prefer moneyline-implied probability. Fall back to the
+  // spread implied probability. Last resort, the sport baseline.
+  // ============================================================
+
+  function resolveMarket(prior, homeBaseline, sport) {
+    if (prior?.market?.home_ml) {
+      return { prob: americanToImplied(prior.market.home_ml), source: 'moneyline' };
+    }
+    if (typeof prior?.market?.current_spread === 'number') {
+      return { prob: spreadToImplied(prior.market.current_spread, sport), source: 'spread' };
+    }
+    return { prob: homeBaseline, source: 'baseline' };
+  }
+
+  function spreadToImplied(homeSpread, sport) {
+    // A point of spread moves the implied probability by ~3%.
+    // HomeSpread is signed the way a spread is quoted: negative
+    // = home is favored.
+    const perPoint = {
+      NFL: 0.028, NCAAF: 0.028, NBA: 0.032, NCAAB: 0.032, WNBA: 0.032,
+      MLB: 0.040, NHL: 0.035, MLS: 0.040,
+    }[sport] || 0.030;
+    return clamp(0.5 + (-homeSpread * perPoint), 0.10, 0.90);
+  }
+
+  // ============================================================
+  // ── CALIBRATION ──
+  // The learning loop writes a table that maps raw confidence
+  // to historically observed hit rate. When it has run, use it.
+  // When it hasn't, return the input unchanged.
+  // ============================================================
+
   function applyCalibration(confidence) {
     const keys = Object.keys(CALIBRATION);
-    if (keys.length === 0) return round(confidence, 1);
-    const bucketSize = 5;
-    const bucket = Math.round(confidence / bucketSize) * bucketSize;
-    const calibrated = CALIBRATION[String(bucket)];
-    if (typeof calibrated === 'number') return round(calibrated, 1);
+    if (!keys.length) return round(confidence, 1);
+
+    const bucket = Math.round(confidence / 5) * 5;
+    const hit = CALIBRATION[String(bucket)];
+    if (typeof hit === 'number') return round(hit, 1);
     return round(confidence, 1);
   }
 
-  function buildKellyInput({ posteriorHomeProb, marketHomeML, spread, sport, direction, units }) {
-    const ourProb = direction === 'home' ? posteriorHomeProb : (1 - posteriorHomeProb);
+  // ============================================================
+  // ── KELLY ──
+  // ============================================================
 
-    let marketProb;
-    let decimal;
-    let source;
+  function buildKellyInput({ posteriorHomeProb, marketHomeML, spread, sport, direction, units }) {
+    const ourProb = direction === 'home' ? posteriorHomeProb : 1 - posteriorHomeProb;
+
+    let marketProb, decimal, source;
 
     if (marketHomeML) {
       const marketHome = americanToImplied(marketHomeML);
-      marketProb = direction === 'home' ? marketHome : (1 - marketHome);
+      marketProb = direction === 'home' ? marketHome : 1 - marketHome;
       decimal = direction === 'home' ? americanToDecimal(marketHomeML) : americanToDecimal(-marketHomeML);
       source = 'ml';
     } else if (typeof spread === 'number') {
-      const homeImplied = spreadToImpliedProb(spread, sport);
-      marketProb = direction === 'home' ? homeImplied : (1 - homeImplied);
-      decimal = 1.91; // -110 standard
+      const homeImplied = spreadToImplied(spread, sport);
+      marketProb = direction === 'home' ? homeImplied : 1 - homeImplied;
+      decimal = 1.91;
       source = 'spread';
     } else {
       return { available: false, reason: 'No market data' };
@@ -279,7 +355,9 @@ const EDGE_GOVERNOR = (() => {
     const edge = ourProb - marketProb;
     const kellyRaw = b > 0 ? (b * ourProb - (1 - ourProb)) / b : 0;
     const kellyFractional = Math.max(kellyRaw * 0.25, 0);
-    const kellyUnits = Math.min(kellyFractional * 100 / 5, 5);
+    // kelly_units is a scaled version of fractional Kelly: 1 unit
+    // is 20% of bankroll, so a fractional Kelly of 0.10 → 0.5 units.
+    const kellyUnits = kellyFractional * 5;
 
     return {
       available: true,
@@ -287,9 +365,10 @@ const EDGE_GOVERNOR = (() => {
       our_prob: round(ourProb, 4),
       market_prob: round(marketProb, 4),
       edge: round(edge, 4),
+      decimal_odds: round(decimal, 3),
       kelly_raw: round(kellyRaw, 4),
       kelly_fractional: round(kellyFractional, 4),
-      kelly_units: round(kellyUnits, 2),
+      kelly_units: round(Math.min(kellyUnits, 5), 2),
       governor_units: units,
       final_units: round(Math.min(kellyUnits, units || 5), 2),
     };
@@ -305,20 +384,41 @@ const EDGE_GOVERNOR = (() => {
     return ml > 0 ? (ml / 100) + 1 : (100 / Math.abs(ml)) + 1;
   }
 
+  // ============================================================
+  // ── EMPTY / ERROR RESULT ──
+  // ============================================================
+
   function emptyResult(reason) {
     return {
-      consensus_score: 0, confidence: 0, raw_confidence: 0, coherence_adjusted: 0,
-      posterior_confidence: 0, combined_pre_cap: 0, data_cap: 100, data_caps: [],
-      market_source: 'none', calibrated: false, agreement_index: 0, conflict_penalty: 0,
-      shrinkage: 0, edge: 0, direction: 'none', recommended_side: 'pass',
-      decision: 'PASS', units: 0,
-      model_home_prob: 0.5, market_home_prob: 0.5, posterior_home_prob: 0.5,
+      consensus_score: 0,
+      confidence: 0,
+      edge: 0,
+      direction: 'none',
+      decision: 'PASS',
+      units: 0,
+      model_home_prob: 0.5,
+      market_home_prob: 0.5,
+      posterior_home_prob: 0.5,
+      agreement_index: 0,
+      shrinkage: 0,
+      market_source: 'none',
+      calibrated: false,
+      data_caps: [],
+      data_cap: 100,
+      raw_confidence: 0,
+      capped_confidence: 0,
+      alignment: { yes_count: 0, no_count: 0, neu_count: 0, yes_weight: 0, no_weight: 0 },
+      breakdown: [],
       kelly: { available: false, reason },
-      alignment: { yes_count: 0, no_count: 0, neu_count: 0, top_yes_confidence: 0, top_no_confidence: 0 },
-      breakdown: [], error: reason,
+      thresholds_used: THRESHOLDS.DEFAULT,
+      error: reason,
       computed_at: new Date().toISOString(),
     };
   }
+
+  // ============================================================
+  // ── UTILITIES ──
+  // ============================================================
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
@@ -326,9 +426,16 @@ const EDGE_GOVERNOR = (() => {
   loadCalibrationFromStorage();
 
   return {
-    run, setCalibration, getDynamicWeights,
-    STATIC_WEIGHTS, SPORT_THRESHOLDS, SHRINKAGE, HOME_BASELINE, MAX_CONFIDENCE,
-    spreadToImpliedProb,
+    run,
+    setCalibration,
+    getDynamicWeights,
+    STATIC_WEIGHTS,
+    THRESHOLDS,
+    MARKET_SHRINK,
+    HOME_BASELINE,
+    MAX_CONFIDENCE,
+    spreadToImplied,
+    americanToImplied,
   };
 
 })();
