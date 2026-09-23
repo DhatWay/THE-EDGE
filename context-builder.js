@@ -1,11 +1,22 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v3.3
-// Adds ATS + H2H trend data loading. Feeds the trend family
-// in algorithms.js with team ATS form and matchup history.
+// EDGE — CONTEXT BUILDER v4.0
 //
-// v3.3 — logEdgeError, empty catches now surface which fetch
-// failed. v3 previously swallowed everything, so a rate-limited
-// ESPN window looked identical to an empty slate.
+// Supplies every piece of game context the situations engine,
+// the algorithms, and the governor need:
+//   · line history (open spread, current, public/sharp pct)
+//   · rest days per team
+//   · travel miles and timezone shift per game
+//   · weather at kickoff
+//   · injuries per game (via injury-fragmentation)
+//   · ATS form per team
+//   · head-to-head history per matchup
+//
+// v4.0 fixes the ESPN schedule fetch — it was using the
+// ?dates=YYYYMMDD-YYYYMMDD range format, which returns HTTP 400
+// for any window outside the current season. Switched to
+// ?dates=YYYY (single year), which works and returns a whole
+// season in one call. This is what was silently starving rest
+// days for every sport.
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
@@ -15,11 +26,12 @@ const EDGE_CONTEXT = (() => {
 
   const ESPN_MAP = {
     NFL:   'football/nfl',
+    NCAAF: 'football/college-football',
     NBA:   'basketball/nba',
+    WNBA:  'basketball/wnba',
+    NCAAB: 'basketball/mens-college-basketball',
     MLB:   'baseball/mlb',
     NHL:   'hockey/nhl',
-    NCAAF: 'football/college-football',
-    NCAAB: 'basketball/mens-college-basketball',
     MLS:   'soccer/usa.1',
   };
 
@@ -192,35 +204,44 @@ const EDGE_CONTEXT = (() => {
 
     if (!Array.isArray(games) || !games.length) return ctx;
 
-    ctx.lineHistoryByGame = await loadLineHistory(games);
+    // Independent loads — fire them in parallel.
+    const [lineHistory, schedule, weather, injuries, trends] = await Promise.all([
+      loadLineHistory(games).catch(() => ({})),
+      loadScheduleContext(games).catch(() => ({})),
+      loadWeather(games).catch(() => ({})),
+      loadInjuries(games).catch(() => ({})),
+      loadTrends(games).catch(() => ({ atsByTeam: {}, h2hByGame: {} })),
+    ]);
 
-    const schedule = await loadScheduleContext(games);
-    ctx.restByTeam = schedule.restByTeam;
-    ctx.practiceDaysByTeam = schedule.practiceDaysByTeam;
-    ctx.travelTypeByTeam = schedule.travelTypeByTeam;
-    ctx.roadTripLengthByTeam = schedule.roadTripLengthByTeam;
+    ctx.lineHistoryByGame = lineHistory;
+    ctx.restByTeam = schedule.restByTeam || {};
+    ctx.practiceDaysByTeam = schedule.practiceDaysByTeam || {};
+    ctx.travelTypeByTeam = schedule.travelTypeByTeam || {};
+    ctx.roadTripLengthByTeam = schedule.roadTripLengthByTeam || {};
+    ctx.weatherByGame = weather;
+    ctx.injuriesByGame = injuries;
+    ctx.atsByTeam = trends.atsByTeam || {};
+    ctx.h2hByGame = trends.h2hByGame || {};
 
+    // Travel is computed locally from team coordinates.
     games.forEach(g => {
       const home = g.home_team || g.home;
       const away = g.away_team || g.away;
-      const homeCoord = TEAM_CITIES[home];
-      const awayCoord = TEAM_CITIES[away];
-      if (!homeCoord || !awayCoord) return;
+      const hc = TEAM_CITIES[home];
+      const ac = TEAM_CITIES[away];
+      if (!hc || !ac) return;
       ctx.travelByGame[g.id] = {
-        miles: Math.round(haversine(homeCoord, awayCoord)),
-        timezones: estimateTimezoneShift(awayCoord, homeCoord),
+        miles: Math.round(haversine(hc, ac)),
+        timezones: estimateTimezoneShift(ac, hc),
       };
     });
 
-    ctx.weatherByGame = await loadWeather(games);
-    ctx.injuriesByGame = await loadInjuries(games);
-
-    const trends = await loadTrends(games);
-    ctx.atsByTeam = trends.atsByTeam;
-    ctx.h2hByGame = trends.h2hByGame;
-
     return ctx;
   }
+
+  // ============================================================
+  // ── LINE HISTORY ──
+  // ============================================================
 
   async function loadLineHistory(games) {
     const url = SUPABASE_URL();
@@ -231,8 +252,8 @@ const EDGE_CONTEXT = (() => {
     const gameIds = games.map(g => g.id).filter(Boolean);
     if (!gameIds.length) return out;
 
-    const inList = gameIds.map(id => `"${id}"`).join(',');
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const inList = gameIds.map(id => `"${id}"`).join(',');
 
     const selects = [
       'game_id,spread,total,ml,public_pct,sharp_pct,created_at',
@@ -258,15 +279,15 @@ const EDGE_CONTEXT = (() => {
     });
 
     Object.entries(perGame).forEach(([gid, h]) => {
-      const openSpread = h.open.spread;
-      const currentSpread = h.latest.spread;
-      const moved = openSpread != null && currentSpread != null && openSpread !== currentSpread;
+      const open = h.open.spread;
+      const current = h.latest.spread;
+      const moved = open != null && current != null && open !== current;
       out[gid] = {
-        open_spread: openSpread,
-        current_spread: currentSpread,
+        open_spread: open,
+        current_spread: current,
         open_total: h.open.total,
         current_total: h.latest.total,
-        movement: moved ? (currentSpread - openSpread) : 0,
+        movement: moved ? (current - open) : 0,
         public_pct: h.latest.public_pct ?? null,
         sharp_pct: h.latest.sharp_pct ?? null,
       };
@@ -274,6 +295,13 @@ const EDGE_CONTEXT = (() => {
 
     return out;
   }
+
+  // ============================================================
+  // ── SCHEDULE (rest days) ──
+  //
+  // Uses ?dates=YYYY (single year). The range format returns 400
+  // for anything outside the current season.
+  // ============================================================
 
   async function loadScheduleContext(games) {
     const out = {
@@ -289,12 +317,14 @@ const EDGE_CONTEXT = (() => {
     if (!sports.length) return out;
 
     const now = new Date();
-    const start = new Date(now.getTime() - REST_LOOKBACK_DAYS * 86400000);
+    const startCutoff = new Date(now.getTime() - REST_LOOKBACK_DAYS * 86400000);
+    const year = now.getFullYear();
 
     const schedules = {};
 
     await Promise.all(sports.map(async sport => {
-      const events = await fetchEspnRange(ESPN_MAP[sport], start, now);
+      const path = ESPN_MAP[sport];
+      const events = await fetchSeasonEvents(path, year);
       const list = [];
       events.forEach(e => {
         const comp = e.competitions?.[0];
@@ -302,7 +332,7 @@ const EDGE_CONTEXT = (() => {
         if (comp.status?.type?.completed !== true) return;
 
         const when = new Date(e.date);
-        if (isNaN(when) || when < start || when > now) return;
+        if (isNaN(when) || when < startCutoff || when > now) return;
 
         const home = comp.competitors?.find(c => c.homeAway === 'home');
         const away = comp.competitors?.find(c => c.homeAway === 'away');
@@ -328,13 +358,13 @@ const EDGE_CONTEXT = (() => {
         if (!team) return;
         const key = `${sport}:${team}`;
 
-        const priorGames = schedule
+        const prior = schedule
           .filter(e => e.when < when && (e.homeName === team || e.awayName === team))
           .slice(-5);
 
-        if (!priorGames.length) return;
+        if (!prior.length) return;
 
-        const last = priorGames[priorGames.length - 1];
+        const last = prior[prior.length - 1];
         const rest = Math.round((when - last.when) / 86400000);
         if (rest < 0 || rest > 30) return;
 
@@ -348,40 +378,45 @@ const EDGE_CONTEXT = (() => {
           : (isHome ? 'away_to_home' : 'away_to_away');
 
         let roadTrip = 0;
-        for (let i = priorGames.length - 1; i >= 0; i--) {
-          const wasAway = priorGames[i].homeName !== team;
-          if (!wasAway) break;
+        for (let i = prior.length - 1; i >= 0; i--) {
+          if (prior[i].homeName === team) break;
           roadTrip++;
         }
-        const currentAway = !isHome;
-        out.roadTripLengthByTeam[key] = roadTrip + (currentAway ? 1 : 0);
+        out.roadTripLengthByTeam[key] = roadTrip + (isHome ? 0 : 1);
       });
     });
 
     return out;
   }
 
-  async function fetchEspnRange(path, start, end) {
-    const fmt = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  async function fetchSeasonEvents(path, year) {
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
+    const group = /college-football/.test(path) ? 80
+                : /college-basketball/.test(path) ? 50
+                : null;
+    const url = `${base}?dates=${year}${group ? '&groups=' + group : ''}&limit=1000`;
+
     try {
-      const res = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${fmt(start)}-${fmt(end)}&limit=1000`
-      );
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) return [];
       const data = await res.json();
       return data.events || [];
     } catch (e) {
-      logEdgeError('context.espnRange.' + path, e);
+      logEdgeError('context.fetchSeason.' + path, e);
       return [];
     }
   }
+
+  // ============================================================
+  // ── WEATHER ──
+  // ============================================================
 
   async function loadWeather(games) {
     const out = {};
 
     const targets = games.filter(g => {
       const sport = g._sport || g.sport;
-      if (['NBA', 'NHL', 'NCAAB'].includes(sport)) return false;
+      if (['NBA', 'NHL', 'NCAAB', 'WNBA'].includes(sport)) return false;
       const home = g.home_team || g.home;
       if (DOMED_HOMES.has(home)) return false;
       if (!TEAM_CITIES[home]) return false;
@@ -395,9 +430,8 @@ const EDGE_CONTEXT = (() => {
 
     const HOURLY = [
       'temperature_2m', 'apparent_temperature', 'relative_humidity_2m',
-      'dew_point_2m', 'precipitation', 'rain', 'snowfall', 'snow_depth',
-      'precipitation_probability', 'weather_code', 'cloud_cover',
-      'pressure_msl', 'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m',
+      'precipitation', 'rain', 'snowfall', 'precipitation_probability',
+      'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m',
     ].join(',');
 
     await Promise.all(targets.map(async g => {
@@ -417,8 +451,7 @@ const EDGE_CONTEXT = (() => {
         const times = data?.hourly?.time || [];
         if (!times.length) return;
 
-        let bestIdx = 0;
-        let bestGap = Infinity;
+        let bestIdx = 0, bestGap = Infinity;
         for (let i = 0; i < times.length; i++) {
           const gap = Math.abs(new Date(times[i] + 'Z') - when);
           if (gap < bestGap) { bestGap = gap; bestIdx = i; }
@@ -432,7 +465,6 @@ const EDGE_CONTEXT = (() => {
         const temp = pick('temperature_2m');
         const windSpeed = pick('wind_speed_10m');
         const windGust = pick('wind_gusts_10m');
-        const precipIn = pickF('precipitation', 3);
         const rainIn = pickF('rain', 3);
         const snowCm = pick('snowfall');
 
@@ -444,20 +476,14 @@ const EDGE_CONTEXT = (() => {
           temp_f: temp,
           feels_like_f: pick('apparent_temperature'),
           humidity: pick('relative_humidity_2m'),
-          dew_point_f: pick('dew_point_2m'),
-          pressure_hpa: pick('pressure_msl'),
-          cloud_cover: pick('cloud_cover'),
-          weather_code: pick('weather_code'),
           wind_mph: windSpeed,
           wind_gust_mph: windGust,
           wind_effect_mph: windEffect,
           wind_dir_deg: pick('wind_direction_10m'),
           precip_pct: pick('precipitation_probability'),
-          precip_in: precipIn,
           rain_in: rainIn,
           snow_cm: snowCm,
           precip_type: (snowCm && snowCm > 0) ? 'snow' : (rainIn && rainIn > 0) ? 'rain' : 'none',
-          forecast_for: times[bestIdx],
         };
       } catch (e) { logEdgeError('context.weather.' + g.id, e); }
     }));
@@ -465,20 +491,20 @@ const EDGE_CONTEXT = (() => {
     return out;
   }
 
+  // ============================================================
+  // ── INJURIES ──
+  // ============================================================
+
   async function loadInjuries(games) {
     if (window.EDGE_INJURY && typeof window.EDGE_INJURY.fragment === 'function') {
-      try {
-        return await window.EDGE_INJURY.fragment(games);
-      } catch (e) {
-        logEdgeError('context.injuries', e);
-        return {};
-      }
+      try { return await window.EDGE_INJURY.fragment(games); }
+      catch (e) { logEdgeError('context.injuries', e); return {}; }
     }
     return {};
   }
 
   // ============================================================
-  // ── TRENDS (ATS + H2H) ──
+  // ── ATS + H2H ──
   // ============================================================
 
   async function loadTrends(games) {
@@ -508,10 +534,11 @@ const EDGE_CONTEXT = (() => {
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (res.ok) {
-          const rows = await res.json();
-          rows.forEach(r => { out.atsByTeam[`${sport}:${r.team_name}`] = r; });
+          (await res.json()).forEach(r => {
+            out.atsByTeam[`${sport}:${r.team_name}`] = r;
+          });
         }
-      } catch (e) { logEdgeError('context.atsLookup.' + sport, e); }
+      } catch (e) { logEdgeError('context.ats.' + sport, e); }
     }
 
     for (const sport of Object.keys(teamsBySport)) {
@@ -535,7 +562,7 @@ const EDGE_CONTEXT = (() => {
             if (match) out.h2hByGame[g.id] = match;
           });
         }
-      } catch (e) { logEdgeError('context.h2hLookup.' + sport, e); }
+      } catch (e) { logEdgeError('context.h2h.' + sport, e); }
     }
 
     return out;
