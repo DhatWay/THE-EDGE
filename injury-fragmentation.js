@@ -1,15 +1,17 @@
 // ============================================================
-// EDGE — INJURY FRAGMENTATION v1.1
-// Reads ESPN injuries for today's slate, looks up each injured
-// player in the roster table, subtracts their offensive and
-// defensive contribution from the team's power rating.
+// EDGE — INJURY FRAGMENTATION v1.2
 //
-// v1.1 — team filter threaded through the cache, so the fetch
-// walks only teams on the slate instead of every team in the
-// sport. v1 called fetchEspnInjuries() with no filter, hammered
-// ESPN with ~260 requests per NCAAF window, got rate-limited,
-// and cached an empty result. The injury family then voted
-// neutral on every game and nothing ever surfaced the cause.
+// Reads ESPN injuries for today's slate, looks up each injured
+// player in the players table, subtracts their offensive and
+// defensive contribution from the team's effective strength.
+//
+// v1.2 changes:
+//   · Team list now comes from power_ratings, not ESPN's /teams
+//     endpoint — which is CORS-blocked in the browser (same
+//     bug that hit the roster engine). No more fetchTeamList.
+//   · WNBA added.
+//   · League-wide injuries endpoints tried first; per-team core
+//     API only if those fail. Avoids 60+ HTTP calls per sport.
 // ============================================================
 
 const EDGE_INJURY = (() => {
@@ -18,16 +20,17 @@ const EDGE_INJURY = (() => {
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
   const ESPN_MAP = {
-    NFL:   'football/nfl',
-    NBA:   'basketball/nba',
-    MLB:   'baseball/mlb',
-    NHL:   'hockey/nhl',
-    NCAAF: 'football/college-football',
-    NCAAB: 'basketball/mens-college-basketball',
-    MLS:   'soccer/usa.1',
+    NFL:   { site: 'football/nfl',                       core: ['football','nfl'] },
+    NCAAF: { site: 'football/college-football',          core: ['football','college-football'] },
+    NBA:   { site: 'basketball/nba',                     core: ['basketball','nba'] },
+    WNBA:  { site: 'basketball/wnba',                    core: ['basketball','wnba'] },
+    NCAAB: { site: 'basketball/mens-college-basketball', core: ['basketball','mens-college-basketball'] },
+    MLB:   { site: 'baseball/mlb',                       core: ['baseball','mlb'] },
+    NHL:   { site: 'hockey/nhl',                         core: ['hockey','nhl'] },
+    MLS:   { site: 'soccer/usa.1',                       core: ['soccer','usa.1'] },
   };
 
-  const CACHE_KEY = 'edge_injury_cache_v2';
+  const CACHE_KEY = 'edge_injury_cache_v3';
   const CACHE_TTL_MS = 30 * 60 * 1000;
 
   const STATUS_MULTIPLIER = {
@@ -63,26 +66,7 @@ const EDGE_INJURY = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return out;
 
-    const sports = Array.from(new Set(
-      games.map(g => g._sport || g.sport).filter(s => s && ESPN_MAP[s])
-    ));
-
-    // Collect the teams actually on the slate, per sport. Without
-    // this the injury fetch walked every team in the league.
-    const teamsForInjuries = {};
-    games.forEach(g => {
-      const sport = g._sport || g.sport;
-      if (!ESPN_MAP[sport]) return;
-      if (!teamsForInjuries[sport]) teamsForInjuries[sport] = new Set();
-      teamsForInjuries[sport].add(g.home_team || g.home);
-      teamsForInjuries[sport].add(g.away_team || g.away);
-    });
-
-    const injuriesBySport = {};
-    for (const sport of sports) {
-      injuriesBySport[sport] = await getCachedInjuries(sport, teamsForInjuries[sport]);
-    }
-
+    // Which sports and which teams are on the slate
     const teamsBySport = {};
     games.forEach(g => {
       const sport = g._sport || g.sport;
@@ -92,47 +76,51 @@ const EDGE_INJURY = (() => {
       teamsBySport[sport].add(g.away_team || g.away);
     });
 
-    const rosterBySport = {};
-    for (const sport of Object.keys(teamsBySport)) {
-      rosterBySport[sport] = await loadRosterForTeams(sport, Array.from(teamsBySport[sport]));
-    }
+    const sports = Object.keys(teamsBySport);
+    if (!sports.length) return out;
 
-    for (const g of games) {
+    // Fetch injuries per sport, in parallel
+    const injuryResults = {};
+    await Promise.all(sports.map(async sport => {
+      injuryResults[sport] = await getCachedInjuries(sport, teamsBySport[sport]);
+    }));
+
+    // Load rosters for the teams on the slate
+    const rosterBySport = {};
+    await Promise.all(sports.map(async sport => {
+      rosterBySport[sport] = await loadRosterForTeams(sport, Array.from(teamsBySport[sport]), url, key);
+    }));
+
+    // Build the fragmentation per game
+    games.forEach(g => {
       const sport = g._sport || g.sport;
       const home = g.home_team || g.home;
       const away = g.away_team || g.away;
-      if (!home || !away || !ESPN_MAP[sport]) continue;
+      if (!home || !away || !ESPN_MAP[sport]) return;
 
-      const rawInjuries = injuriesBySport[sport] || {};
+      const rawInjuries = injuryResults[sport] || {};
       const roster = rosterBySport[sport] || {};
 
-      const homeInjuries = matchInjuriesToRoster(
-        rawInjuries[home] || [],
-        roster[home] || []
-      );
-      const awayInjuries = matchInjuriesToRoster(
-        rawInjuries[away] || [],
-        roster[away] || []
-      );
+      const homeInjuries = matchInjuriesToRoster(rawInjuries[home] || [], roster[home] || []);
+      const awayInjuries = matchInjuriesToRoster(rawInjuries[away] || [], roster[away] || []);
+
+      const homeOff = sumDeduction(homeInjuries, 'offensive_contribution');
+      const homeDef = sumDeduction(homeInjuries, 'defensive_contribution');
+      const awayOff = sumDeduction(awayInjuries, 'offensive_contribution');
+      const awayDef = sumDeduction(awayInjuries, 'defensive_contribution');
 
       out[g.id] = {
         home: homeInjuries,
         away: awayInjuries,
-        home_off_deduction: sumDeduction(homeInjuries, 'offensive_contribution'),
-        home_def_deduction: sumDeduction(homeInjuries, 'defensive_contribution'),
-        away_off_deduction: sumDeduction(awayInjuries, 'offensive_contribution'),
-        away_def_deduction: sumDeduction(awayInjuries, 'defensive_contribution'),
-        net_off_edge: round(
-          sumDeduction(awayInjuries, 'offensive_contribution') -
-          sumDeduction(homeInjuries, 'offensive_contribution'), 2
-        ),
-        net_def_edge: round(
-          sumDeduction(awayInjuries, 'defensive_contribution') -
-          sumDeduction(homeInjuries, 'defensive_contribution'), 2
-        ),
+        home_off_deduction: homeOff,
+        home_def_deduction: homeDef,
+        away_off_deduction: awayOff,
+        away_def_deduction: awayDef,
+        net_off_edge: round(awayOff - homeOff, 2),
+        net_def_edge: round(awayDef - homeDef, 2),
         fetched_at: new Date().toISOString(),
       };
-    }
+    });
 
     return out;
   }
@@ -168,15 +156,17 @@ const EDGE_INJURY = (() => {
     };
   }
 
-  async function loadRosterForTeams(sport, teamNames) {
-    const url = SUPABASE_URL();
-    const key = SUPABASE_KEY();
-    if (!url || !key || !teamNames.length) return {};
+  // ============================================================
+  // ── ROSTER LOADING ──
+  // ============================================================
 
+  async function loadRosterForTeams(sport, teamNames, url, key) {
+    if (!teamNames.length) return {};
     const inList = teamNames.map(n => `"${n}"`).join(',');
     try {
       const res = await fetch(
-        `${url}/rest/v1/players?sport=eq.${sport}&team_name=in.(${inList})&select=player_id,name,position,position_group,rating,offensive_contribution,defensive_contribution,is_starter`,
+        `${url}/rest/v1/players?sport=eq.${sport}&team_name=in.(${inList})` +
+        `&select=player_id,name,position,position_group,rating,offensive_contribution,defensive_contribution,is_starter`,
         { headers: { apikey: key, Authorization: `Bearer ${key}` } }
       );
       if (!res.ok) return {};
@@ -190,6 +180,10 @@ const EDGE_INJURY = (() => {
       return byTeam;
     } catch { return {}; }
   }
+
+  // ============================================================
+  // ── MATCH INJURED PLAYERS TO ROSTER ──
+  // ============================================================
 
   function matchInjuriesToRoster(injuries, roster) {
     if (!injuries.length || !roster.length) return [];
@@ -259,7 +253,7 @@ const EDGE_INJURY = (() => {
   // ── ESPN INJURY FETCH ──
   // ============================================================
 
-  async function getCachedInjuries(sport, teamFilter = null) {
+  async function getCachedInjuries(sport, teamFilter) {
     let cache = {};
     try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); } catch {}
 
@@ -274,19 +268,20 @@ const EDGE_INJURY = (() => {
       cache[sport] = { fetchedAt: Date.now(), byTeam: fresh };
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
     }
-    return fresh;
+    return fresh || {};
   }
 
-  async function fetchEspnInjuries(sport, teamFilter = null) {
-    const path = ESPN_MAP[sport];
-    if (!path) return {};
-    const [espnSport, espnLeague] = path.split('/');
+  async function fetchEspnInjuries(sport, teamFilter) {
+    const cfg = ESPN_MAP[sport];
+    if (!cfg) return {};
 
-    const leagueWide = [
-      `https://site.web.api.espn.com/apis/site/v2/sports/${path}/injuries`,
-      `https://site.api.espn.com/apis/site/v2/sports/${path}/injuries`,
+    // ── Try league-wide endpoints first ──
+    const leagueUrls = [
+      `https://site.web.api.espn.com/apis/site/v2/sports/${cfg.site}/injuries`,
+      `https://site.api.espn.com/apis/site/v2/sports/${cfg.site}/injuries`,
     ];
-    for (const url of leagueWide) {
+
+    for (const url of leagueUrls) {
       try {
         const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) continue;
@@ -296,34 +291,40 @@ const EDGE_INJURY = (() => {
       } catch {}
     }
 
-    const teams = await fetchTeamList(path);
+    // ── Fall back to per-team core API ──
+    const teams = await fetchTeamsFromDb(sport);
     if (!teams.length) return {};
 
     const wanted = teamFilter && teamFilter.size
       ? teams.filter(t => teamFilter.has(t.name))
       : teams;
 
+    const [espnSport, espnLeague] = cfg.core;
     const byTeam = {};
+
     await parallelMap(wanted, 5, async team => {
       const list = await fetchTeamInjuries(espnSport, espnLeague, team.id);
       if (list.length) byTeam[team.name] = list;
     });
+
     return byTeam;
   }
 
-  async function fetchTeamList(path) {
+  async function fetchTeamsFromDb(sport) {
+    const url = SUPABASE_URL();
+    const key = SUPABASE_KEY();
+    if (!url || !key) return [];
+
     try {
       const res = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/${path}/teams?limit=1000`,
-        { cache: 'no-store' }
+        `${url}/rest/v1/power_ratings?sport=eq.${sport}&select=team_id,team_name&order=team_name.asc&limit=500`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
       );
       if (!res.ok) return [];
-      const data = await res.json();
-      const entries = data?.sports?.[0]?.leagues?.[0]?.teams || [];
-      return entries
-        .map(e => e.team)
-        .filter(t => t && t.id)
-        .map(t => ({ id: String(t.id), name: t.displayName }));
+      const rows = await res.json();
+      return rows
+        .filter(r => r.team_id && /^\d+$/.test(String(r.team_id)))
+        .map(r => ({ id: String(r.team_id), name: r.team_name }));
     } catch { return []; }
   }
 
@@ -367,7 +368,7 @@ const EDGE_INJURY = (() => {
           }
         }
         if (!name) return;
-        out.push({ name, position, status, detail: inj.longComment || inj.shortComment || null });
+        out.push({ name, position, status });
       } catch {}
     });
     return out;
@@ -378,17 +379,9 @@ const EDGE_INJURY = (() => {
     return String(ref).replace('.pvt', '.com').replace(/^http:/, 'https:');
   }
 
-  async function parallelMap(items, concurrency, fn) {
-    const queue = [...items];
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (queue.length) {
-        const item = queue.shift();
-        if (item === undefined) break;
-        await fn(item);
-      }
-    });
-    await Promise.all(workers);
-  }
+  // ============================================================
+  // ── PARSE LEAGUE-WIDE RESPONSE ──
+  // ============================================================
 
   function parseEspnInjuries(data) {
     const byTeam = {};
@@ -435,15 +428,27 @@ const EDGE_INJURY = (() => {
   }
 
   function invalidateCache(sport) {
-    if (!sport) {
-      localStorage.removeItem(CACHE_KEY);
-      return;
-    }
+    if (!sport) { localStorage.removeItem(CACHE_KEY); return; }
     try {
       const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
       delete cache[sport];
       localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
     } catch {}
+  }
+
+  // ============================================================
+  // ── UTILITIES ──
+  // ============================================================
+
+  async function parallelMap(items, concurrency, fn) {
+    const queue = [...items];
+    await Promise.all(Array.from({ length: concurrency }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (item === undefined) break;
+        await fn(item);
+      }
+    }));
   }
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
