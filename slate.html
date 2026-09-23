@@ -216,15 +216,17 @@ async function run() {
       return;
     }
 
-    // ── 2. Load power index for this sport ──
-    log('Loading power ratings…');
-    const power = await loadPowerForSport(sport, url, key);
-    log(`  ${Object.keys(power.teams).length} teams`);
-    if (!Object.keys(power.teams).length) {
-      out('<div class="empty">No power ratings for this sport. Run Recompute Ratings first.</div>');
-      btn.disabled = false;
-      return;
-    }
+    // ── 2. Warm-up history ──
+    // Ratings for a game must be built only from games that finished
+    // before it. Loading the current power_ratings table would hand the
+    // model the outcomes of the very games being graded.
+    log('Loading warm-up history…');
+    const warmFrom = new Date(new Date(fromDate).getTime() - WARMUP_DAYS * 86400000)
+      .toISOString().slice(0, 10);
+    const warmup = await loadScoredGames(sport, warmFrom, fromDate, 6000, url, key);
+    log(`  ${warmup.length} games before the window, for rating only`);
+
+    const coaching = await loadCoachingForSport(sport, url, key);
 
     // ── 3. Load ATS and H2H ──
     log('Loading ATS form and H2H…');
@@ -232,26 +234,52 @@ async function run() {
     const h2hIndex = await loadH2HForSport(sport, url, key);
     log(`  ${Object.keys(atsIndex).length} ATS rows · ${Object.keys(h2hIndex).length} H2H pairs`);
 
-    // ── 4. Run pipeline on each game ──
-    log('Running pipeline per game…');
-    let processed = 0;
+    // ── 4. Walk forward ──
+    // The window is cut into steps. At each step the ratings are
+    // rebuilt from every game that had finished by then, and only the
+    // games inside that step are graded. Nothing is ever picked using
+    // information that did not exist at kickoff.
+    if (!window.EDGE_RATING) {
+      out('<div class="empty">rating-core.js not loaded — the walk-forward needs it.</div>');
+      btn.disabled = false;
+      return;
+    }
+
+    log('Walking forward…');
+    const steps = buildSteps(games, STEP_DAYS[sport] || 7);
+    log(`  ${steps.length} steps of ${STEP_DAYS[sport] || 7} days`);
+
+    let processed = 0, skippedThin = 0;
     const total = games.length;
 
-    for (const g of games) {
-      if (processed % 25 === 0) log(`  ${processed}/${total} graded`);
+    for (let si = 0; si < steps.length; si++) {
+      const step = steps[si];
+      const history = warmup
+        .concat(games.filter(x => new Date(x.game_date) < step.start));
 
-      try {
-        const graded = await gradeOneGame(g, power, atsIndex, h2hIndex);
-        if (graded) {
-          gameResults.push(graded);
-          tallyGraded(graded);
-        }
-      } catch (e) {
-        // Skip quietly — most common cause is missing team name
+      if (history.length < MIN_HISTORY) {
+        skippedThin += step.games.length;
+        processed += step.games.length;
+        continue;
       }
-      processed++;
+
+      const power = buildPowerFromHistory(sport, history, coaching);
+      if (!power) { processed += step.games.length; continue; }
+
+      log(`  step ${si + 1}/${steps.length} · ${step.label} · ` +
+          `${history.length} prior games · ${step.games.length} to grade`);
+
+      for (const g of step.games) {
+        try {
+          const graded = await gradeOneGame(g, power, atsIndex, h2hIndex);
+          if (graded) { gameResults.push(graded); tallyGraded(graded); }
+        } catch (e) { /* usually an unmatched team name */ }
+        processed++;
+      }
     }
+
     log(`  ${processed}/${total} processed`);
+    if (skippedThin) log(`  ${skippedThin} skipped — fewer than ${MIN_HISTORY} prior games`);
     log(`  ${gameResults.length} graded picks`);
 
     // ── 5. Report ──
@@ -296,20 +324,141 @@ async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
 // ── LOAD POWER INDEX ──
 // ============================================================
 
-async function loadPowerForSport(sport, url, key) {
-  const teams = {};
+// How far back to reach for rating fuel before the window opens.
+const WARMUP_DAYS = 400;
+
+// Prior games needed before a step can be graded at all.
+const MIN_HISTORY = 60;
+
+// Length of each walk-forward step, per sport.
+const STEP_DAYS = { NFL: 7, NCAAF: 7, NBA: 7, NCAAB: 7, NHL: 7, MLB: 7, MLS: 14, WNBA: 7 };
+
+// Coaching ratings move slowly and are not derived from the games
+// under test, so reading the current table is not look-ahead.
+async function loadCoachingForSport(sport, url, key) {
   const coaching = {};
   try {
-    const [tr, cr] = await Promise.all([
-      fetch(`${url}/rest/v1/power_ratings?sport=eq.${sport}&select=*`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
-      fetch(`${url}/rest/v1/coaching_ratings?sport=eq.${sport}&select=*`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
-    ]);
-    if (tr.ok) (await tr.json()).forEach(t => { teams[`${t.sport}:${t.team_name}`] = t; });
-    if (cr.ok) (await cr.json()).forEach(c => { coaching[`${c.sport}:${c.team_name}`] = c; });
+    const res = await fetch(`${url}/rest/v1/coaching_ratings?sport=eq.${sport}&select=*`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (res.ok) (await res.json()).forEach(c => { coaching[`${c.sport}:${c.team_name}`] = c; });
   } catch {}
-  return { teams, coaching };
+  return coaching;
+}
+
+// Cut the window into steps, each holding the games that kicked off
+// inside it.
+function buildSteps(games, stepDays) {
+  const sorted = [...games].sort((a, b) => new Date(a.game_date) - new Date(b.game_date));
+  if (!sorted.length) return [];
+
+  const steps = [];
+  let start = new Date(sorted[0].game_date);
+  start.setHours(0, 0, 0, 0);
+  const last = new Date(sorted[sorted.length - 1].game_date);
+
+  while (start <= last) {
+    const end = new Date(start.getTime() + stepDays * 86400000);
+    const inStep = sorted.filter(g => {
+      const d = new Date(g.game_date);
+      return d >= start && d < end;
+    });
+    if (inStep.length) {
+      steps.push({ start: new Date(start), end, label: start.toISOString().slice(0, 10), games: inStep });
+    }
+    start = end;
+  }
+  return steps;
+}
+
+// Build the power index from finished games only, in the same shape
+// the live pipeline reads from the power_ratings table.
+function buildPowerFromHistory(sport, history, coaching) {
+  const R = window.EDGE_RATING;
+  if (!R || !history.length) return null;
+
+  const games = history.map(g => ({
+    home: g.home, away: g.away,
+    homeScore: g.home_score, awayScore: g.away_score,
+    date: g.game_date, neutral: false,
+  })).filter(g => isFinite(g.homeScore) && isFinite(g.awayScore));
+
+  if (games.length < MIN_HISTORY) return null;
+
+  const glicko = R.rateGlicko(sport, games);
+  const massey = R.massey(sport, games);
+  const colley = R.colley(games);
+  const blended = R.blend(sport, glicko, massey, colley);
+  const ad = R.attackDefense(sport, games);
+  const league = ad._league || null;
+
+  const agg = {};
+  games.forEach(g => {
+    [[g.home, g.homeScore, g.awayScore, true], [g.away, g.awayScore, g.homeScore, false]]
+      .forEach(([team, pf, pa, isHome]) => {
+        if (!agg[team]) agg[team] = { gp: 0, pf: 0, pa: 0, w: 0, l: 0, hw: 0, hl: 0, aw: 0, al: 0, margins: [] };
+        const a = agg[team];
+        a.gp++; a.pf += pf; a.pa += pa; a.margins.push(pf - pa);
+        if (pf > pa) { a.w++; isHome ? a.hw++ : a.aw++; }
+        else if (pf < pa) { a.l++; isHome ? a.hl++ : a.al++; }
+      });
+  });
+
+  const cfg = (window.EDGE_POWER && window.EDGE_POWER.SPORT_CONFIG && window.EDGE_POWER.SPORT_CONFIG[sport])
+    || { pyExp: 2.37, scale: 22, k: 8, avgPF: 22, avgPA: 22 };
+  const teams = {};
+
+  Object.keys(agg).forEach(name => {
+    const a = agg[name];
+    const g = glicko[name];
+    if (!g) return;
+
+    const avgPF = a.pf / a.gp, avgPA = a.pa / a.gp;
+    const avgMOV = (a.pf - a.pa) / a.gp;
+    const pythRaw = avgPA > 0
+      ? Math.pow(avgPF, cfg.pyExp) / (Math.pow(avgPF, cfg.pyExp) + Math.pow(avgPA, cfg.pyExp))
+      : 0.5;
+    const realWeight = a.gp / (a.gp + cfg.k);
+    const cl = v => Math.max(0, Math.min(100, v));
+
+    const offense = cl(50 + (((avgPF - cfg.avgPF) / cfg.scale) * 25) * realWeight);
+    const defense = cl(50 - (((avgPA - cfg.avgPA) / cfg.scale) * 25) * realWeight);
+    const mov     = cl(50 + ((avgMOV / cfg.scale) * 25) * realWeight);
+    const pyth    = 0.5 + (pythRaw - 0.5) * realWeight;
+
+    const recent = a.margins.slice(-5);
+    const wts = [0.10, 0.15, 0.20, 0.25, 0.30];
+    const off = 5 - recent.length;
+    let form = 0;
+    recent.forEach((m, i) => { form += wts[off + i] * (m / cfg.scale) * 3; });
+
+    teams[`${sport}:${name}`] = {
+      sport, team_name: name,
+      overall: Math.round(((pyth * 100 * 0.45) + (offense * 0.20) + (defense * 0.20) + (mov * 0.15)) * 10) / 10,
+      offense: Math.round(offense * 10) / 10,
+      defense: Math.round(defense * 10) / 10,
+      pythagorean: Math.round(pyth * 10000) / 10000,
+      srs: massey[name] != null ? massey[name] : 0,
+      elo: Math.round(g.rating),
+      glicko_rating: g.rating,
+      glicko_rd: g.rd,
+      glicko_vol: g.vol,
+      massey: massey[name] != null ? massey[name] : null,
+      colley: colley[name] != null ? colley[name] : null,
+      composite_points: blended[name] ? blended[name].composite_points : null,
+      rating_certainty: blended[name] ? blended[name].certainty : null,
+      attack: ad[name] ? ad[name].attack : null,
+      def_rate: ad[name] ? ad[name].defense : null,
+      possessions: ad[name] ? ad[name].possessions : null,
+      pace: Math.round(avgPF * 10) / 10,
+      games_played: a.gp,
+      record: `${a.w}-${a.l}`,
+      home_record: `${a.hw}-${a.hl}`,
+      away_record: `${a.aw}-${a.al}`,
+      last5_form: Math.round(form * realWeight * 100) / 100,
+    };
+  });
+
+  return { teams, coaching, league };
 }
 
 async function loadAtsForSport(sport, url, key) {
@@ -399,6 +548,9 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex) {
       homeStats: { ...homeStats, _coach: homeCoach },
       awayStats: { ...awayStats, _coach: awayCoach },
       market,
+      // Without this the attack/defence projection is skipped entirely
+      // and the prior silently falls back to a rating-gap estimate.
+      league: power.league || null,
     });
   } catch { return null; }
 
