@@ -1,25 +1,7 @@
 // ============================================================
 // EDGE — SIM GRADER v1.0
 //
-// The sim engine places paper bets and stores them in bet_log
-// with mode='sim' and status='pending'. This module is what
-// turns those pending rows into W/L/P.
-//
-// Workflow:
-//   1. Read pending sim bets from bet_log.
-//   2. Group them by game_id.
-//   3. For each game, load the final score from historical_odds.
-//   4. Grade each bet against the side it took.
-//   5. PATCH the row with result, pnl, graded_at, status='graded'.
-//   6. Update the local sim state so the betting page reflects
-//      the same record.
-//
-// Idempotent. A row already marked graded is skipped, so a run
-// twice a day does not double-count.
-//
-// Requires bet_log to carry result, pnl and graded_at columns.
-// The probe() method reports whether each is present before
-// attempting a write.
+// Turns pending paper bets in bet_log into W/L/P.
 // ============================================================
 
 const EDGE_SIM_GRADER = (() => {
@@ -44,11 +26,11 @@ const EDGE_SIM_GRADER = (() => {
     run,
     gradeOne,
     probe,
+    SCHEMA_SQL: `alter table public.bet_log
+  add column if not exists result text,
+  add column if not exists pnl numeric,
+  add column if not exists graded_at timestamptz;`,
   };
-
-  // ============================================================
-  // ── PROBE ──
-  // ============================================================
 
   async function probe() {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
@@ -80,10 +62,6 @@ const EDGE_SIM_GRADER = (() => {
     return status;
   }
 
-  // ============================================================
-  // ── MAIN ──
-  // ============================================================
-
   async function run(options = {}) {
     const {
       mode = 'sim',
@@ -102,16 +80,12 @@ const EDGE_SIM_GRADER = (() => {
       return { ok: false, error: 'bet_log table not readable' };
     }
     if (!schema.result_col) {
-      log('bet_log is missing the result, pnl or graded_at column');
+      log('bet_log is missing the result/pnl/graded_at columns');
       log('Add them with:');
-      log('alter table public.bet_log');
-      log('  add column if not exists result text,');
-      log('  add column if not exists pnl numeric,');
-      log('  add column if not exists graded_at timestamptz;');
-      return { ok: false, error: 'columns missing' };
+      log(SCHEMA_SQL);
+      return { ok: false, error: 'columns missing', sql: SCHEMA_SQL };
     }
 
-    // ── 1. Load pending bets ──
     const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
     const pending = await loadPending(mode, since, url, key);
     log(`${pending.length} pending ${mode} bets from the last ${LOOKBACK_DAYS} days`);
@@ -120,7 +94,6 @@ const EDGE_SIM_GRADER = (() => {
       return { ok: true, graded: 0, unresolved: 0, pending: 0 };
     }
 
-    // ── 2. Group by game ──
     const byGame = {};
     pending.forEach(b => {
       const gid = b.game_id;
@@ -134,11 +107,9 @@ const EDGE_SIM_GRADER = (() => {
     const gameIds = Object.keys(byGame);
     log(`  ${gameIds.length} unique game${gameIds.length === 1 ? '' : 's'}`);
 
-    // ── 3. Load final scores ──
     const scores = await loadScores(gameIds, url, key);
     log(`  ${Object.keys(scores).length} games have a final score`);
 
-    // ── 4. Grade each bet ──
     let graded = 0, unresolved = 0;
     const updates = [];
 
@@ -159,14 +130,12 @@ const EDGE_SIM_GRADER = (() => {
         });
 
         tryUpdateLocalSimState(bet, outcome);
-
         graded++;
       }
     }
 
     log(`  ${graded} graded · ${unresolved} unresolved`);
 
-    // ── 5. Persist ──
     if (dryRun) {
       log('Dry run — no rows written');
       return { ok: true, graded, unresolved, pending: pending.length, dryRun: true };
@@ -185,10 +154,6 @@ const EDGE_SIM_GRADER = (() => {
       written: updates.length,
     };
   }
-
-  // ============================================================
-  // ── LOAD PENDING ──
-  // ============================================================
 
   async function loadPending(mode, since, url, key) {
     const out = [];
@@ -214,10 +179,6 @@ const EDGE_SIM_GRADER = (() => {
 
     return out;
   }
-
-  // ============================================================
-  // ── LOAD FINAL SCORES ──
-  // ============================================================
 
   async function loadScores(gameIds, url, key) {
     const out = {};
@@ -254,18 +215,6 @@ const EDGE_SIM_GRADER = (() => {
     return out;
   }
 
-  // ============================================================
-  // ── GRADE ONE ──
-  //
-  // pick_label is the team name — physics builds it from
-  // side_label.team. Match it against home or away, then apply
-  // the pick type.
-  //
-  //   ATS:   pick team's cover margin against the bet's line.
-  //   ML:    pick team won outright.
-  //   Total: over/under against combined score.
-  // ============================================================
-
   function gradeOne(bet, score) {
     const type = (bet.pick_type || 'ATS').toUpperCase();
     const label = String(bet.pick_label || '').trim();
@@ -290,13 +239,12 @@ const EDGE_SIM_GRADER = (() => {
     const margin = homeScore - awayScore;
     const combined = homeScore + awayScore;
     const odds = Number(bet.odds) || -110;
-
     const winMultiplier = odds > 0 ? (odds / 100) : (100 / Math.abs(odds));
+    const stake = Number(bet.amount) || 0;
 
     if (type === 'ML') {
       if (margin === 0) return { result: 'P', pnl: 0 };
       const pickWon = (side === 'home' && margin > 0) || (side === 'away' && margin < 0);
-      const stake = Number(bet.amount) || 0;
       return pickWon
         ? { result: 'W', pnl: round(stake * winMultiplier, 2) }
         : { result: 'L', pnl: round(-stake, 2) };
@@ -309,13 +257,11 @@ const EDGE_SIM_GRADER = (() => {
       if (!overUnder) return null;
       if (Math.abs(combined - line) < 0.01) return { result: 'P', pnl: 0 };
       const won = overUnder === 'over' ? combined > line : combined < line;
-      const stake = Number(bet.amount) || 0;
       return won
         ? { result: 'W', pnl: round(stake * winMultiplier, 2) }
         : { result: 'L', pnl: round(-stake, 2) };
     }
 
-    // Default: ATS.
     const spread = Number(bet.line);
     if (!isFinite(spread)) return null;
 
@@ -323,26 +269,11 @@ const EDGE_SIM_GRADER = (() => {
     const pickMargin = side === 'home' ? margin : -margin;
     const coverMargin = pickMargin + pickSpread;
 
-    const stake = Number(bet.amount) || 0;
-
     if (Math.abs(coverMargin) < 0.01) return { result: 'P', pnl: 0 };
     return coverMargin > 0
       ? { result: 'W', pnl: round(stake * winMultiplier, 2) }
       : { result: 'L', pnl: round(-stake, 2) };
   }
-
-  // ============================================================
-  // ── LOCAL SIM STATE MIRROR ──
-  //
-  // The sim page reads edge_sim_state from localStorage. If a bet
-  // placed through the sim engine on this device is graded here,
-  // the local record has to reflect that — otherwise the page
-  // shows a pending bet while the DB shows a W.
-  //
-  // The match is game_id + pick_label + date. Local ids are
-  // Date.now() + Math.random(), DB ids are bigint, so they cannot
-  // be joined directly.
-  // ============================================================
 
   function tryUpdateLocalSimState(dbBet, outcome) {
     try {
@@ -393,10 +324,6 @@ const EDGE_SIM_GRADER = (() => {
     }
   }
 
-  // ============================================================
-  // ── WRITE GRADES ──
-  // ============================================================
-
   async function writeGrades(updates, url, key, log) {
     let written = 0;
     const headers = {
@@ -431,10 +358,6 @@ const EDGE_SIM_GRADER = (() => {
 
     return written;
   }
-
-  // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
