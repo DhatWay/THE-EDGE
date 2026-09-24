@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — PHYSICS v2.0
+// EDGE — PHYSICS v2.1
 //
 // Converts a governor verdict into units and a dollar stake.
 //
@@ -18,11 +18,36 @@
 //      units back on top of Kelly when Kelly returned zero is
 //      gone. If Kelly says zero, that is the correct answer.
 //
+// v2.1 changes:
+//   · Double-shrink removed. Governor already returns kelly_raw
+//     (the full Kelly fraction, e.g. 0.055 = 5.5% of bankroll)
+//     alongside kelly_fractional and kelly_units which are its
+//     own pre-scaled variants. Physics was reading kelly_units
+//     and applying another sport fraction on top, so the result
+//     was fraction × fraction. Now it reads kelly_raw once and
+//     applies the sport fraction once. Single shrink.
+//   · Floor inflation removed. The line
+//     `if (finalUnits < floor && finalUnits > 0) finalUnits = floor`
+//     silently promoted a Kelly of 0.05 units to 0.25 units —
+//     the exact "silent override" the header claims was removed.
+//     Deleting it means roundToQuarter handles small values
+//     correctly: 0.22 → 0.25, 0.05 → 0.0, and 0.0 becomes a
+//     PASS because a bet that small has no reason to exist.
+//   · Sizing math is now expressed in dollars first, then
+//     converted to units by the actual unit size. This fixes a
+//     latent scale mismatch: the old code assumed 1 unit = 20%
+//     of bankroll, while the settings default treats 1 unit as a
+//     flat dollar amount. The two definitions disagreed by a
+//     factor of about four. Physics now uses whatever unit size
+//     the user configured and does not assume.
+//
 // Output shape stays compatible with orchestrator.js and the
 // pick cards.
 // ============================================================
 
 const EDGE_PHYSICS = (() => {
+
+  const BUILD = 'phys-20260924-01';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -86,10 +111,24 @@ const EDGE_PHYSICS = (() => {
 
     // ── 2. Kelly from the governor's own probability ──
     // The governor already produces a posterior probability and a
-    // matching decimal price for the side we're taking. That is
-    // the correct input to Kelly — not a chain of fallbacks.
+    // matching decimal price for the side we're taking. kelly_raw
+    // is the full Kelly fraction — e.g. 0.055 means "5.5% of
+    // bankroll". Physics applies the sport-specific fraction to
+    // that, once. The double-shrink bug was physics reading
+    // kelly_units (which the governor had already scaled) and
+    // applying a second fraction on top.
     const k = governorOutput.kelly || {};
-    const kellyUnits = (k.available && k.kelly_units > 0) ? k.kelly_units : 0;
+    const kellyRaw = (k.available && typeof k.kelly_raw === 'number') ? k.kelly_raw : 0;
+    const kellyFraction = KELLY_FRACTION[sport] ?? KELLY_FRACTION.DEFAULT;
+
+    // Fractional Kelly in bankroll terms.
+    const fractionalKelly = kellyRaw * kellyFraction;
+
+    // Convert bankroll-fraction to dollars, then to units using the
+    // actual unit size the user configured. No assumption about
+    // what a unit is worth.
+    const kellyDollars = fractionalKelly * bankroll;
+    const kellyUnits = unitSize > 0 ? (kellyDollars / unitSize) : 0;
 
     // ── 3. Three ceilings ──
     //   a. What the governor already said (its own units)
@@ -99,21 +138,13 @@ const EDGE_PHYSICS = (() => {
     const bankrollCap = unitSize > 0
       ? (bankroll * MAX_BANKROLL_PCT_PER_BET) / unitSize
       : Infinity;
-
     const governorCeiling = baseUnits;
-    const kellyFraction = KELLY_FRACTION[sport] ?? KELLY_FRACTION.DEFAULT;
-
-    // Kelly units as produced are sized on the assumption of full
-    // Kelly at 1 unit = 20% bankroll. Scale by the sport's
-    // fraction to get the conservative Kelly units.
-    const scaledKelly = kellyUnits * (kellyFraction / 0.25);
 
     const ceiling = Math.min(governorCeiling, tierCap, bankrollCap);
-    const floor = MIN_UNITS;
-    let finalUnits = roundToQuarter(Math.min(ceiling, scaledKelly));
+    let finalUnits = roundToQuarter(Math.min(ceiling, kellyUnits));
 
-    // If Kelly says zero, that is the answer. No fallback.
-    if (scaledKelly <= 0 && governorCeiling > 0) {
+    // If Kelly says zero or negative, that is the answer. No fallback.
+    if (kellyUnits <= 0 && governorCeiling > 0) {
       return buildOutput({
         decision: DECISION.PASS,
         units: 0,
@@ -123,12 +154,48 @@ const EDGE_PHYSICS = (() => {
         reasons: ['Kelly says no edge at this price'],
         governor: governorOutput,
         prior,
-        sizing: { kelly_units: kellyUnits, scaled_kelly: 0, tier_cap: tierCap, bankroll_cap: bankrollCap, governor_ceiling: governorCeiling },
+        sizing: {
+          kelly_raw: kellyRaw,
+          fractional_kelly: fractionalKelly,
+          sport_fraction: kellyFraction,
+          kelly_dollars: round(kellyDollars, 2),
+          kelly_units: round(kellyUnits, 4),
+          tier_cap: tierCap,
+          bankroll_cap: round(bankrollCap, 2),
+          governor_ceiling: governorCeiling,
+        },
         capCheck: null,
       });
     }
 
-    if (finalUnits < floor && finalUnits > 0) finalUnits = floor;
+    // If rounding produced zero from a genuinely tiny Kelly, that
+    // means the correct size is below the minimum meaningful bet.
+    // Treat it as PASS rather than inflating to the floor. The
+    // v2.0 code promoted 0.05 units to 0.25 — that was the silent
+    // override this module's header claims does not exist.
+    if (finalUnits <= 0) {
+      return buildOutput({
+        decision: DECISION.PASS,
+        units: 0,
+        direction,
+        confidence,
+        edge,
+        reasons: [`Kelly size ${round(kellyUnits, 4)}u below minimum ${MIN_UNITS}u`],
+        governor: governorOutput,
+        prior,
+        sizing: {
+          kelly_raw: kellyRaw,
+          fractional_kelly: fractionalKelly,
+          sport_fraction: kellyFraction,
+          kelly_dollars: round(kellyDollars, 2),
+          kelly_units: round(kellyUnits, 4),
+          tier_cap: tierCap,
+          bankroll_cap: round(bankrollCap, 2),
+          governor_ceiling: governorCeiling,
+        },
+        capCheck: null,
+      });
+    }
 
     // ── 4. Hard caps from settings ──
     const capCheck = checkCaps(finalUnits, unitSize, context);
@@ -148,7 +215,16 @@ const EDGE_PHYSICS = (() => {
           reasons: [capCheck.reason || 'Cap exceeded'],
           governor: governorOutput,
           prior,
-          sizing: { kelly_units: kellyUnits, scaled_kelly: scaledKelly, tier_cap: tierCap, bankroll_cap: bankrollCap, governor_ceiling: governorCeiling },
+          sizing: {
+            kelly_raw: kellyRaw,
+            fractional_kelly: fractionalKelly,
+            sport_fraction: kellyFraction,
+            kelly_dollars: round(kellyDollars, 2),
+            kelly_units: round(kellyUnits, 4),
+            tier_cap: tierCap,
+            bankroll_cap: round(bankrollCap, 2),
+            governor_ceiling: governorCeiling,
+          },
           capCheck,
         });
       }
@@ -163,7 +239,7 @@ const EDGE_PHYSICS = (() => {
     // ── 6. Reasons ──
     const reasons = [];
     reasons.push(`Governor: ${baseDecision} @ ${baseUnits}u`);
-    reasons.push(`Kelly: ${round(kellyUnits, 2)}u full → ${round(scaledKelly, 2)}u at ${(kellyFraction * 100).toFixed(0)}% fraction`);
+    reasons.push(`Kelly: ${round(kellyRaw * 100, 2)}% raw → ${round(fractionalKelly * 100, 2)}% at ${(kellyFraction * 100).toFixed(0)}% fraction → ${round(kellyUnits, 3)}u`);
     if (tierCap < governorCeiling) reasons.push(`Tier cap: ${tierCap}u`);
     if (bankrollCap < tierCap) reasons.push(`Bankroll cap: ${round(bankrollCap, 2)}u`);
     if (capStatus === 'partial') reasons.push(`Settings partial: ${capCheck.reason}`);
@@ -179,9 +255,11 @@ const EDGE_PHYSICS = (() => {
       governor: governorOutput,
       prior,
       sizing: {
-        kelly_units: kellyUnits,
-        scaled_kelly: round(scaledKelly, 2),
+        kelly_raw: kellyRaw,
+        fractional_kelly: round(fractionalKelly, 5),
         sport_fraction: kellyFraction,
+        kelly_dollars: round(kellyDollars, 2),
+        kelly_units: round(kellyUnits, 4),
         tier_cap: tierCap,
         bankroll_cap: round(bankrollCap, 2),
         governor_ceiling: governorCeiling,
@@ -334,7 +412,7 @@ const EDGE_PHYSICS = (() => {
       },
 
       mode: 'deterministic',
-      engine_version: '2.0',
+      engine_version: '2.1',
       computed_at: new Date().toISOString(),
     };
   }
@@ -377,6 +455,7 @@ const EDGE_PHYSICS = (() => {
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
   return {
+    BUILD,
     decide,
     applyClaudeAdjustment,
     checkCaps,
