@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v4.0
+// EDGE — CONTEXT BUILDER v4.1
 //
 // Supplies every piece of game context the situations engine,
 // the algorithms, and the governor need:
@@ -11,6 +11,27 @@
 //   · ATS form per team
 //   · head-to-head history per matchup
 //
+// v4.1 changes:
+//   · Weather cache. Open-Meteo is called once per (location ×
+//     calendar day) and the raw hourly response is stored for
+//     12 hours. Every game at the same stadium on the same day
+//     shares one fetch instead of firing one per game. On a
+//     busy MLB slate that is roughly 15 calls reduced to 3.
+//   · Schedule cache. The whole-season ESPN scoreboard is a
+//     multi-second fetch per sport. It does not change within a
+//     day, so the reduced event list — date, home, away — is
+//     cached for 24 hours per (sport × year). Rest days are
+//     still recomputed fresh each run; only the raw schedule
+//     is cached.
+//   · Session memo. A pipeline run followed by the analysis
+//     page on the same game re-uses the same built context
+//     when the inputs have not changed. Cleared on navigation.
+//   · Cache hits and misses are reported on the returned
+//     object as ctx._cache, so the diagnostic can say whether
+//     the second run of the day actually hit the cache.
+//   · clearCache() exported. Settings or diagnostic can call it
+//     to force a full refresh.
+//
 // v4.0 fixes the ESPN schedule fetch — it was using the
 // ?dates=YYYYMMDD-YYYYMMDD range format, which returns HTTP 400
 // for any window outside the current season. Switched to
@@ -20,6 +41,8 @@
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
+
+  const BUILD = 'ctx-20260924-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -36,6 +59,30 @@ const EDGE_CONTEXT = (() => {
   };
 
   const REST_LOOKBACK_DAYS = 60;
+
+  // Weather does not meaningfully change within half a day for a
+  // given stadium, and the 16-day forecast is available from one
+  // call. Twelve hours is short enough to pick up overnight model
+  // updates and long enough that a slate processed four times in
+  // a morning fetches weather once.
+  const WEATHER_TTL_MS = 12 * 60 * 60 * 1000;
+  const WEATHER_CACHE_KEY = 'edge_weather_cache_v1';
+  const WEATHER_CACHE_MAX = 400;
+
+  // A finished season's schedule is fixed. A live season's schedule
+  // only adds completed games; it does not remove or change any.
+  // Twenty-four hours of staleness at worst means one day behind on
+  // a game that just finished, which does not affect rest-day math
+  // for a game that is still upcoming.
+  const SCHEDULE_TTL_MS = 24 * 60 * 60 * 1000;
+  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v1';
+  const SCHEDULE_CACHE_MAX = 40;
+
+  // Per-session memo. A page that calls buildContext twice for the
+  // same slate within a few minutes should not re-fetch anything.
+  // Not persisted; cleared when the tab closes.
+  const SESSION_TTL_MS = 5 * 60 * 1000;
+  const sessionMemo = new Map();
 
   function logEdgeError(where, err) {
     try {
@@ -181,11 +228,18 @@ const EDGE_CONTEXT = (() => {
   ]);
 
   return {
+    BUILD,
     buildContext,
     computeRestDays,
     computeTravelMiles,
+    clearCache,
+    cacheStats,
     TEAM_CITIES,
   };
+
+  // ============================================================
+  // ── MAIN ──
+  // ============================================================
 
   async function buildContext(games) {
     const ctx = {
@@ -204,11 +258,24 @@ const EDGE_CONTEXT = (() => {
 
     if (!Array.isArray(games) || !games.length) return ctx;
 
+    // Session memo: if the exact same slate was built a few minutes
+    // ago in this session, return the cached object. The key is a
+    // sorted list of game ids plus the current minute, so two
+    // different slates never collide but a re-run inside the TTL
+    // does.
+    const memoKey = memoKeyFor(games);
+    const memoEntry = sessionMemo.get(memoKey);
+    if (memoEntry && Date.now() - memoEntry.t < SESSION_TTL_MS) {
+      const replayed = cloneContext(memoEntry.ctx);
+      replayed._cache = { session_hit: true, from: memoEntry.t };
+      return replayed;
+    }
+
     // Independent loads — fire them in parallel.
     const [lineHistory, schedule, weather, injuries, trends] = await Promise.all([
       loadLineHistory(games).catch(() => ({})),
       loadScheduleContext(games).catch(() => ({})),
-      loadWeather(games).catch(() => ({})),
+      loadWeather(games).catch(() => ({ data: {}, stats: { hits: 0, misses: 0 } })),
       loadInjuries(games).catch(() => ({})),
       loadTrends(games).catch(() => ({ atsByTeam: {}, h2hByGame: {} })),
     ]);
@@ -218,7 +285,7 @@ const EDGE_CONTEXT = (() => {
     ctx.practiceDaysByTeam = schedule.practiceDaysByTeam || {};
     ctx.travelTypeByTeam = schedule.travelTypeByTeam || {};
     ctx.roadTripLengthByTeam = schedule.roadTripLengthByTeam || {};
-    ctx.weatherByGame = weather;
+    ctx.weatherByGame = weather.data || {};
     ctx.injuriesByGame = injuries;
     ctx.atsByTeam = trends.atsByTeam || {};
     ctx.h2hByGame = trends.h2hByGame || {};
@@ -236,7 +303,37 @@ const EDGE_CONTEXT = (() => {
       };
     });
 
+    // Report cache behaviour so the diagnostic can see whether the
+    // schedule and weather reads hit or missed this run.
+    ctx._cache = {
+      session_hit: false,
+      weather: weather.stats || { hits: 0, misses: 0 },
+      schedule: schedule.stats || { hits: 0, misses: 0 },
+    };
+
+    sessionMemo.set(memoKey, { t: Date.now(), ctx: cloneContext(ctx) });
+    if (sessionMemo.size > 8) {
+      const oldest = [...sessionMemo.entries()].sort((a, b) => a[1].t - b[1].t)[0];
+      if (oldest) sessionMemo.delete(oldest[0]);
+    }
+
     return ctx;
+  }
+
+  function memoKeyFor(games) {
+    const ids = games.map(g => g.id || g.game_id || '').sort();
+    return ids.join('|');
+  }
+
+  // Deep-ish clone. The context has no functions or prototypes,
+  // only plain objects, arrays, strings and numbers — structured
+  // clone would work but this avoids the async overhead.
+  function cloneContext(ctx) {
+    try {
+      return JSON.parse(JSON.stringify(ctx));
+    } catch {
+      return ctx;
+    }
   }
 
   // ============================================================
@@ -301,6 +398,11 @@ const EDGE_CONTEXT = (() => {
   //
   // Uses ?dates=YYYY (single year). The range format returns 400
   // for anything outside the current season.
+  //
+  // The reduced event list — date, home, away — is what this
+  // module needs, and it is what gets cached. Rest computation is
+  // still run fresh every call, since the cutoff moves and the
+  // list is cheap to iterate once it is in memory.
   // ============================================================
 
   async function loadScheduleContext(games) {
@@ -309,6 +411,7 @@ const EDGE_CONTEXT = (() => {
       practiceDaysByTeam: {},
       travelTypeByTeam: {},
       roadTripLengthByTeam: {},
+      stats: { hits: 0, misses: 0 },
     };
 
     const sports = Array.from(new Set(
@@ -324,27 +427,17 @@ const EDGE_CONTEXT = (() => {
 
     await Promise.all(sports.map(async sport => {
       const path = ESPN_MAP[sport];
-      const events = await fetchSeasonEvents(path, year);
-      const list = [];
-      events.forEach(e => {
-        const comp = e.competitions?.[0];
-        if (!comp) return;
-        if (comp.status?.type?.completed !== true) return;
+      const result = await getSeasonSchedule(path, year, sport);
+      if (result.hit) out.stats.hits++;
+      else out.stats.misses++;
 
-        const when = new Date(e.date);
-        if (isNaN(when) || when < startCutoff || when > now) return;
+      // Filter to the lookback window and sort ascending. This is
+      // cheap on the reduced form — a few hundred entries at most.
+      const list = result.events.filter(e => {
+        const t = new Date(e.date).getTime();
+        return isFinite(t) && t >= startCutoff.getTime() && t <= now.getTime();
+      }).sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        const home = comp.competitors?.find(c => c.homeAway === 'home');
-        const away = comp.competitors?.find(c => c.homeAway === 'away');
-        if (!home || !away) return;
-
-        const homeName = home.team?.displayName;
-        const awayName = away.team?.displayName;
-        if (!homeName || !awayName) return;
-
-        list.push({ when, homeName, awayName });
-      });
-      list.sort((a, b) => a.when - b.when);
       schedules[sport] = list;
     }));
 
@@ -359,19 +452,19 @@ const EDGE_CONTEXT = (() => {
         const key = `${sport}:${team}`;
 
         const prior = schedule
-          .filter(e => e.when < when && (e.homeName === team || e.awayName === team))
+          .filter(e => new Date(e.date) < when && (e.home === team || e.away === team))
           .slice(-5);
 
         if (!prior.length) return;
 
         const last = prior[prior.length - 1];
-        const rest = Math.round((when - last.when) / 86400000);
+        const rest = Math.round((when - new Date(last.date)) / 86400000);
         if (rest < 0 || rest > 30) return;
 
         out.restByTeam[key] = rest;
         out.practiceDaysByTeam[key] = Math.max(0, rest - 1);
 
-        const wasHome = last.homeName === team;
+        const wasHome = last.home === team;
         const isHome = side === 'home';
         out.travelTypeByTeam[key] = wasHome
           ? (isHome ? 'home_to_home' : 'home_to_away')
@@ -379,7 +472,7 @@ const EDGE_CONTEXT = (() => {
 
         let roadTrip = 0;
         for (let i = prior.length - 1; i >= 0; i--) {
-          if (prior[i].homeName === team) break;
+          if (prior[i].home === team) break;
           roadTrip++;
         }
         out.roadTripLengthByTeam[key] = roadTrip + (isHome ? 0 : 1);
@@ -389,12 +482,50 @@ const EDGE_CONTEXT = (() => {
     return out;
   }
 
-  async function fetchSeasonEvents(path, year) {
+  // Reduced schedule shape: { date, home, away }.
+  // Cache lives in localStorage under SCHEDULE_CACHE_KEY.
+  async function getSeasonSchedule(path, year, sport) {
+    const key = `${path}:${year}`;
+    const cache = readCache(SCHEDULE_CACHE_KEY);
+    const entry = cache[key];
+
+    if (entry && (Date.now() - entry.t) < SCHEDULE_TTL_MS) {
+      return { events: entry.events, hit: true };
+    }
+
+    const events = await fetchSeasonEvents(path, year, sport);
+    const reduced = events.map(e => {
+      const comp = e.competitions?.[0];
+      if (!comp) return null;
+      if (comp.status?.type?.completed !== true) return null;
+      const home = comp.competitors?.find(c => c.homeAway === 'home');
+      const away = comp.competitors?.find(c => c.homeAway === 'away');
+      if (!home || !away) return null;
+      const h = home.team?.displayName;
+      const a = away.team?.displayName;
+      if (!h || !a) return null;
+      return { date: e.date, home: h, away: a };
+    }).filter(Boolean);
+
+    cache[key] = { t: Date.now(), events: reduced };
+    trimCache(cache, SCHEDULE_CACHE_MAX);
+    writeCache(SCHEDULE_CACHE_KEY, cache);
+
+    return { events: reduced, hit: false };
+  }
+
+  async function fetchSeasonEvents(path, year, sport) {
     const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
     const group = /college-football/.test(path) ? 80
                 : /college-basketball/.test(path) ? 50
                 : null;
-    const url = `${base}?dates=${year}${group ? '&groups=' + group : ''}&limit=1000`;
+
+    // Soccer wants a range rather than a year.
+    const dateParam = sport === 'MLS'
+      ? `${year}0101-${year}1231`
+      : String(year);
+
+    const url = `${base}?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=1000`;
 
     try {
       const res = await fetch(url, { cache: 'no-store' });
@@ -409,10 +540,16 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── WEATHER ──
+  //
+  // One fetch per (rounded lat/lon × calendar day). Two games at
+  // the same stadium on the same day share the response. Cache
+  // holds the raw hourly arrays — extraction to this game's hour
+  // happens on read, so a cached response serves a different
+  // kickoff time on a later run without a re-fetch.
   // ============================================================
 
   async function loadWeather(games) {
-    const out = {};
+    const stats = { hits: 0, misses: 0 };
 
     const targets = games.filter(g => {
       const sport = g._sport || g.sport;
@@ -426,7 +563,7 @@ const EDGE_CONTEXT = (() => {
       return daysOut >= -1 && daysOut <= 14;
     });
 
-    if (!targets.length) return out;
+    if (!targets.length) return { data: {}, stats };
 
     const HOURLY = [
       'temperature_2m', 'apparent_temperature', 'relative_humidity_2m',
@@ -434,61 +571,107 @@ const EDGE_CONTEXT = (() => {
       'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m',
     ].join(',');
 
-    await Promise.all(targets.map(async g => {
+    // Group by location + day so each unique fetch serves every game
+    // at that stadium on that date.
+    const groups = new Map();
+    targets.forEach(g => {
       const home = g.home_team || g.home;
       const [lat, lon] = TEAM_CITIES[home];
       const when = new Date(g.commence_time || g.time);
-      try {
-        const res = await fetch(
-          `https://api.open-meteo.com/v1/forecast` +
-          `?latitude=${lat}&longitude=${lon}` +
-          `&hourly=${HOURLY}` +
-          `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
-          `&timezone=UTC&forecast_days=16`
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        const times = data?.hourly?.time || [];
-        if (!times.length) return;
+      const dayKey = `${when.getUTCFullYear()}-${String(when.getUTCMonth() + 1).padStart(2, '0')}-${String(when.getUTCDate()).padStart(2, '0')}`;
+      const cacheKey = `${lat.toFixed(2)},${lon.toFixed(2)}@${dayKey}`;
+      if (!groups.has(cacheKey)) {
+        groups.set(cacheKey, { lat, lon, dayKey, games: [] });
+      }
+      groups.get(cacheKey).games.push(g);
+    });
 
-        let bestIdx = 0, bestGap = Infinity;
-        for (let i = 0; i < times.length; i++) {
-          const gap = Math.abs(new Date(times[i] + 'Z') - when);
-          if (gap < bestGap) { bestGap = gap; bestIdx = i; }
+    const cache = readCache(WEATHER_CACHE_KEY);
+    const data = {};
+
+    await Promise.all([...groups.entries()].map(async ([cacheKey, group]) => {
+      let hourly = null;
+
+      const entry = cache[cacheKey];
+      if (entry && (Date.now() - entry.t) < WEATHER_TTL_MS && entry.hourly) {
+        hourly = entry.hourly;
+        stats.hits++;
+      } else {
+        try {
+          const res = await fetch(
+            `https://api.open-meteo.com/v1/forecast` +
+            `?latitude=${group.lat}&longitude=${group.lon}` +
+            `&hourly=${HOURLY}` +
+            `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
+            `&timezone=UTC&forecast_days=16`
+          );
+          if (res.ok) {
+            const payload = await res.json();
+            if (payload?.hourly?.time?.length) {
+              hourly = payload.hourly;
+              cache[cacheKey] = { t: Date.now(), hourly };
+              stats.misses++;
+            }
+          }
+        } catch (e) {
+          logEdgeError('context.weather.' + cacheKey, e);
         }
-        if (bestGap > 6 * 3600000) return;
+      }
 
-        const num = (v, d = 0) => typeof v === 'number' ? Math.round(v * Math.pow(10, d)) / Math.pow(10, d) : null;
-        const pick = k => num(data.hourly?.[k]?.[bestIdx]);
-        const pickF = (k, d = 0) => num(data.hourly?.[k]?.[bestIdx], d);
+      if (!hourly) return;
 
-        const temp = pick('temperature_2m');
-        const windSpeed = pick('wind_speed_10m');
-        const windGust = pick('wind_gusts_10m');
-        const rainIn = pickF('rain', 3);
-        const snowCm = pick('snowfall');
-
-        const windEffect = (windSpeed != null && windGust != null)
-          ? Math.round(windSpeed + (windGust - windSpeed) * 0.3)
-          : windSpeed;
-
-        out[g.id] = {
-          temp_f: temp,
-          feels_like_f: pick('apparent_temperature'),
-          humidity: pick('relative_humidity_2m'),
-          wind_mph: windSpeed,
-          wind_gust_mph: windGust,
-          wind_effect_mph: windEffect,
-          wind_dir_deg: pick('wind_direction_10m'),
-          precip_pct: pick('precipitation_probability'),
-          rain_in: rainIn,
-          snow_cm: snowCm,
-          precip_type: (snowCm && snowCm > 0) ? 'snow' : (rainIn && rainIn > 0) ? 'rain' : 'none',
-        };
-      } catch (e) { logEdgeError('context.weather.' + g.id, e); }
+      group.games.forEach(g => {
+        const w = extractHourly(hourly, new Date(g.commence_time || g.time));
+        if (w) data[g.id] = w;
+      });
     }));
 
-    return out;
+    trimCache(cache, WEATHER_CACHE_MAX);
+    writeCache(WEATHER_CACHE_KEY, cache);
+
+    return { data, stats };
+  }
+
+  function extractHourly(hourly, when) {
+    const times = hourly.time || [];
+    if (!times.length) return null;
+
+    let bestIdx = 0, bestGap = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const gap = Math.abs(new Date(times[i] + 'Z') - when);
+      if (gap < bestGap) { bestGap = gap; bestIdx = i; }
+    }
+    // Beyond six hours of drift, the nearest forecast hour is not
+    // representative of kickoff.
+    if (bestGap > 6 * 3600000) return null;
+
+    const num = (v, d = 0) => typeof v === 'number' ? Math.round(v * Math.pow(10, d)) / Math.pow(10, d) : null;
+    const pick = k => num(hourly[k]?.[bestIdx]);
+    const pickF = (k, d = 0) => num(hourly[k]?.[bestIdx], d);
+
+    const temp = pick('temperature_2m');
+    const windSpeed = pick('wind_speed_10m');
+    const windGust = pick('wind_gusts_10m');
+    const rainIn = pickF('rain', 3);
+    const snowCm = pick('snowfall');
+
+    const windEffect = (windSpeed != null && windGust != null)
+      ? Math.round(windSpeed + (windGust - windSpeed) * 0.3)
+      : windSpeed;
+
+    return {
+      temp_f: temp,
+      feels_like_f: pick('apparent_temperature'),
+      humidity: pick('relative_humidity_2m'),
+      wind_mph: windSpeed,
+      wind_gust_mph: windGust,
+      wind_effect_mph: windEffect,
+      wind_dir_deg: pick('wind_direction_10m'),
+      precip_pct: pick('precipitation_probability'),
+      rain_in: rainIn,
+      snow_cm: snowCm,
+      precip_type: (snowCm && snowCm > 0) ? 'snow' : (rainIn && rainIn > 0) ? 'rain' : 'none',
+    };
   }
 
   // ============================================================
@@ -566,6 +749,80 @@ const EDGE_CONTEXT = (() => {
     }
 
     return out;
+  }
+
+  // ============================================================
+  // ── CACHE HELPERS ──
+  // ============================================================
+
+  function readCache(storageKey) {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey) || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  function writeCache(storageKey, cache) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(cache));
+    } catch (e) {
+      // Quota exceeded. Drop the oldest half and try once more.
+      try {
+        const keys = Object.keys(cache);
+        if (keys.length > 8) {
+          const kept = keys.sort((a, b) => (cache[b].t || 0) - (cache[a].t || 0)).slice(0, Math.floor(keys.length / 2));
+          const shrunk = {};
+          kept.forEach(k => { shrunk[k] = cache[k]; });
+          localStorage.setItem(storageKey, JSON.stringify(shrunk));
+        }
+      } catch {}
+    }
+  }
+
+  function trimCache(cache, max) {
+    const keys = Object.keys(cache);
+    if (keys.length <= max) return;
+    // Drop the least recently written entries.
+    keys.sort((a, b) => (cache[b].t || 0) - (cache[a].t || 0));
+    keys.slice(max).forEach(k => { delete cache[k]; });
+  }
+
+  // ============================================================
+  // ── PUBLIC CACHE MANAGEMENT ──
+  // ============================================================
+
+  // Full clear. Nothing that has already been computed is stored
+  // anywhere that survives this call.
+  function clearCache() {
+    try { localStorage.removeItem(WEATHER_CACHE_KEY); } catch {}
+    try { localStorage.removeItem(SCHEDULE_CACHE_KEY); } catch {}
+    sessionMemo.clear();
+    return { cleared: true };
+  }
+
+  // Inspect the caches without modifying them.
+  function cacheStats() {
+    const weather = readCache(WEATHER_CACHE_KEY);
+    const schedule = readCache(SCHEDULE_CACHE_KEY);
+    const now = Date.now();
+
+    const fresh = (cache, ttl) => Object.values(cache).filter(e => e && (now - e.t) < ttl).length;
+
+    return {
+      weather: {
+        entries: Object.keys(weather).length,
+        fresh: fresh(weather, WEATHER_TTL_MS),
+        ttl_hours: WEATHER_TTL_MS / 3600000,
+      },
+      schedule: {
+        entries: Object.keys(schedule).length,
+        fresh: fresh(schedule, SCHEDULE_TTL_MS),
+        ttl_hours: SCHEDULE_TTL_MS / 3600000,
+      },
+      session_entries: sessionMemo.size,
+      session_ttl_minutes: SESSION_TTL_MS / 60000,
+    };
   }
 
   // ============================================================
