@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#C9A84C" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
 <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
@@ -106,6 +106,8 @@
   .row .num.neg { color: var(--red); }
   .row .num.neu { color: var(--text-dim); }
   .row .num.gold { color: var(--gold); }
+  .row .num.green { color: var(--green); }
+  .row .num.red { color: var(--red); }
   .row.thin { opacity: 0.55; }
   .row.dropped { opacity: 0.4; border-left: 2px solid var(--red); }
   .row.kept { border-left: 2px solid var(--green); }
@@ -228,15 +230,14 @@ const WARMUP_DAYS = 400;
 
 const STEP_DAYS = { NFL: 7, NCAAF: 7, NBA: 7, NCAAB: 7, NHL: 7, MLB: 7, MLS: 14, WNBA: 7 };
 
-// Per-situation weight thresholds for the pipeline. Below MIN_SAMPLES
-// the situation carries neutral weight. Above it, weight moves with
-// measured hit rate. These match the report tags.
-const W_MIN_SAMPLES = 20;
-const W_HIT_STRONG = 0.55;
-const W_HIT_NEUTRAL = 0.52;
-const W_STRONG = 1.5;
-const W_NEUTRAL = 1.0;
-const W_WEAK = 0.3;
+// Weight thresholds live in situation-results.js. These local aliases
+// mirror them so the report can render tags without a network round-trip.
+const W_MIN_SAMPLES = EDGE_SITUATION_RESULTS.MIN_SAMPLES;
+const W_HIT_STRONG  = EDGE_SITUATION_RESULTS.STRONG_HIT;
+const W_HIT_NEUTRAL = EDGE_SITUATION_RESULTS.NEUTRAL_HIT;
+const W_STRONG      = EDGE_SITUATION_RESULTS.W_STRONG;
+const W_NEUTRAL     = EDGE_SITUATION_RESULTS.W_NEUTRAL;
+const W_WEAK        = EDGE_SITUATION_RESULTS.W_WEAK;
 
 const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
 const clearLog = () => { document.getElementById('log').textContent = ''; };
@@ -275,7 +276,6 @@ drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
 let gameResults = [];          // one row per graded pick
 let situationRows = [];        // one row per (game × fired situation), graded
 let familyStats = {};
-let situationStats = {};       // current run, built from situationRows
 let confStats = {};
 let currentRunId = null;
 let openSpreadAvailable = false;
@@ -286,7 +286,6 @@ function clearResults() {
   gameResults = [];
   situationRows = [];
   familyStats = {};
-  situationStats = {};
   confStats = {};
   document.getElementById('log').textContent = 'Ready.';
   document.getElementById('output').innerHTML = '';
@@ -294,26 +293,13 @@ function clearResults() {
 
 async function clearSituationResults() {
   const sport = document.getElementById('sport').value;
-  if (!confirm(`Delete all situation_results rows for ${sport}?`)) return;
-  const url = SB_URL(), key = SB_KEY();
-  if (!url || !key) { alert('Supabase not connected'); return; }
+  if (!confirm(`Delete all situation_results and situation_performance rows for ${sport}?`)) return;
 
-  try {
-    const res = await fetch(`${url}/rest/v1/situation_results?sport=eq.${sport}`, {
-      method: 'DELETE',
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-    });
-    if (!res.ok) {
-      alert('Delete failed: HTTP ' + res.status);
-      return;
-    }
-    await fetch(`${url}/rest/v1/situation_performance?sport=eq.${sport}`, {
-      method: 'DELETE',
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-    });
-    alert(`Cleared situation_results and situation_performance for ${sport}.`);
-  } catch (e) {
-    alert('Error: ' + e.message);
+  const result = await EDGE_SITUATION_RESULTS.clearForSport(sport);
+  if (result.ok) {
+    alert(`Cleared both tables for ${sport}.`);
+  } else {
+    alert('Clear reported an error — see edge_errors in localStorage.');
   }
 }
 
@@ -322,35 +308,19 @@ async function clearSituationResults() {
 // ============================================================
 
 async function probeSchema() {
-  const url = SB_URL(), key = SB_KEY();
-  if (!url || !key) return;
-  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const s = await EDGE_SITUATION_RESULTS.probe();
 
-  // open_spread on historical_odds
-  try {
-    const r = await fetch(`${url}/rest/v1/historical_odds?select=open_spread&limit=1`, { headers });
-    openSpreadAvailable = r.ok;
-  } catch { openSpreadAvailable = false; }
+  openSpreadAvailable = s.open_spread;
+  situationsTableAvailable = s.situation_results;
+  performanceTableAvailable = s.situation_performance;
 
-  // situation_results / situation_performance
-  try {
-    const [a, b] = await Promise.all([
-      fetch(`${url}/rest/v1/situation_results?select=id&limit=1`, { headers }),
-      fetch(`${url}/rest/v1/situation_performance?select=id&limit=1`, { headers }),
-    ]);
-    situationsTableAvailable = a.ok;
-    performanceTableAvailable = b.ok;
-  } catch {
-    situationsTableAvailable = false;
-    performanceTableAvailable = false;
-  }
+  log('schema · historical_odds.open_spread ' + (s.open_spread ? 'present' : 'MISSING'));
+  log('schema · situation_results ' + (s.situation_results ? 'present' : 'MISSING'));
+  log('schema · situation_performance ' + (s.situation_performance ? 'present' : 'MISSING'));
 
-  log('schema · historical_odds.open_spread ' + (openSpreadAvailable ? 'present' : 'MISSING'));
-  log('schema · situation_results ' + (situationsTableAvailable ? 'present' : 'MISSING'));
-  log('schema · situation_performance ' + (performanceTableAvailable ? 'present' : 'MISSING'));
-
-  if (!situationsTableAvailable) {
-    log('  → run the SQL at the top of this file to create both tables');
+  if (!s.situation_results || !s.situation_performance) {
+    log('  → situation tables missing. Paste EDGE_SITUATION_RESULTS.schemaSql()');
+    log('    into the Supabase SQL editor.');
   }
 }
 
@@ -370,6 +340,10 @@ async function run() {
   if (!url || !key) { alert('Supabase not connected'); return; }
   if (!window.EDGE_POWER || !window.EDGE_ALGOS || !window.EDGE_GOVERNOR || !window.EDGE_PHYSICS || !window.EDGE_SITUATIONS) {
     alert('Pipeline modules not loaded');
+    return;
+  }
+  if (!window.EDGE_SITUATION_RESULTS) {
+    alert('situation-results.js not loaded');
     return;
   }
 
@@ -412,13 +386,11 @@ async function run() {
     log(`  ${Object.keys(atsIndex).length} ATS rows · ${Object.keys(h2hIndex).length} H2H pairs`);
 
     // ── 4. Situation weights from prior runs ──
-    const situationWeights = await loadSituationWeights(sport, url, key);
-    const weightedCount = Object.values(situationWeights).filter(w => w !== 1).length;
+    const situationWeights = await EDGE_SITUATION_RESULTS.loadWeights(sport);
+    const weightedCount = Object.values(situationWeights).filter(w => w !== W_NEUTRAL).length;
     if (weightedCount) log(`  ${weightedCount} situations carry a non-neutral weight from prior runs`);
 
     // ── 5. Rest and prev-margin context from the combined log ──
-    // Both are computed from the games we already have. Prior games
-    // matter too, so the warmup contributes.
     const combined = [...warmup, ...games];
     const restContext = computeRestDays(combined);
     const prevContext = computePrevMargins(combined);
@@ -463,13 +435,12 @@ async function run() {
           };
           const graded = await gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights);
           if (graded) {
-            gameResults.push(graded.pick);
-            tallyFamilyGraded(graded.pick);
+            if (graded.pick) {
+              gameResults.push(graded.pick);
+              tallyFamilyGraded(graded.pick);
+            }
             if (graded.situationRows) {
-              graded.situationRows.forEach(r => {
-                situationRows.push(r);
-                tallySituation(r);
-              });
+              graded.situationRows.forEach(r => situationRows.push(r));
             }
           }
         } catch (e) { /* usually an unmatched team name */ }
@@ -482,27 +453,36 @@ async function run() {
     log(`  ${gameResults.length} graded picks`);
     log(`  ${situationRows.length} situation rows`);
 
-    // ── 7. Persist situation_results ──
+    // ── 7. Persist via the module ──
     if (situationRows.length && situationsTableAvailable) {
       log('Clearing prior situation_results for this sport…');
-      await deleteSituationResultsForSport(sport, url, key);
+      const cleared = await EDGE_SITUATION_RESULTS.clearForSport(sport);
+      if (!cleared.ok) {
+        log('  clear reported: ' + (cleared.results_error || cleared.performance_error || 'partial'));
+      }
 
       log('Writing situation_results…');
-      const written = await writeSituationResults(situationRows, url, key);
-      log(`  ${written} rows written`);
+      const w = await EDGE_SITUATION_RESULTS.writeResults(situationRows);
+      log(`  ${w.written} rows written`);
+      if (w.errors && w.errors.length) {
+        w.errors.forEach(e => log('  ' + e));
+      }
 
       if (performanceTableAvailable) {
-        log('Recomputing situation_performance…');
-        const perf = await recomputeSituationPerformance(sport, url, key);
-        log(`  ${perf} rows aggregated`);
+        log('Aggregating situation_performance…');
+        const agg = await EDGE_SITUATION_RESULTS.aggregate(sport);
+        if (agg.ok) {
+          log(`  ${agg.groups} situation-season groups aggregated`);
+        } else {
+          log(`  aggregate failed: ${agg.error || 'unknown'}`);
+        }
       }
     } else if (situationRows.length && !situationsTableAvailable) {
       log('  situation_results table missing — rows computed but not persisted');
-      log('  → run the SQL at the top of this file');
     }
 
     // ── 8. Report ──
-    renderReport();
+    await renderReport(sport);
 
   } catch (e) {
     log('ERROR: ' + e.message);
@@ -521,7 +501,6 @@ async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
   const colsWithOpen = 'game_id,home,away,spread,open_spread,total,home_score,away_score,game_date';
   const colsPlain    = 'game_id,home,away,spread,total,home_score,away_score,game_date';
 
-  const rows = [];
   const pageSize = 1000;
 
   async function attempt(selectCols) {
@@ -767,43 +746,6 @@ async function loadH2HForSport(sport, url, key) {
 }
 
 // ============================================================
-// SITUATION WEIGHTS
-// ============================================================
-
-async function loadSituationWeights(sport, url, key) {
-  const out = {};
-  if (!performanceTableAvailable) return out;
-
-  try {
-    const res = await fetch(
-      `${url}/rest/v1/situation_performance?sport=eq.${sport}&select=situation_id,samples,hit_rate`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-    );
-    if (!res.ok) return out;
-    const rows = await res.json();
-
-    // Roll up across seasons by sample weight.
-    const agg = {};
-    rows.forEach(r => {
-      if (!agg[r.situation_id]) agg[r.situation_id] = { samples: 0, weightSum: 0 };
-      const s = r.samples || 0;
-      agg[r.situation_id].samples += s;
-      agg[r.situation_id].weightSum += (r.hit_rate || 0) * s;
-    });
-
-    Object.entries(agg).forEach(([id, s]) => {
-      if (s.samples < W_MIN_SAMPLES) { out[id] = W_NEUTRAL; return; }
-      const hr = s.weightSum / s.samples;
-      if (hr >= W_HIT_STRONG) out[id] = W_STRONG;
-      else if (hr >= W_HIT_NEUTRAL) out[id] = W_NEUTRAL;
-      else out[id] = W_WEAK;
-    });
-  } catch {}
-
-  return out;
-}
-
-// ============================================================
 // GRADE ONE GAME
 // ============================================================
 
@@ -930,7 +872,6 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
           data: sitResult,
         };
 
-        // ── Grade every fired situation against this game's result ──
         gradedSituationRows = gradeSituations(sitResult, g, sport);
       }
     } catch (e) { /* situations failed, continue with families only */ }
@@ -1077,32 +1018,6 @@ function tallyFamilyGraded(g) {
   });
 }
 
-function tallySituation(row) {
-  const id = row.situation_id;
-  if (!situationStats[id]) {
-    situationStats[id] = {
-      id,
-      label: row.label || id,
-      wins: 0, losses: 0, pushes: 0, games: 0,
-      hitStreak: 0, longestStreak: 0,
-    };
-  }
-  const s = situationStats[id];
-  s.games++;
-
-  if (row.push) {
-    s.pushes++;
-    s.hitStreak = 0;
-  } else if (row.won) {
-    s.wins++;
-    s.hitStreak++;
-    if (s.hitStreak > s.longestStreak) s.longestStreak = s.hitStreak;
-  } else {
-    s.losses++;
-    s.hitStreak = 0;
-  }
-}
-
 function seasonOf(sport, date) {
   const m = date.getMonth() + 1;
   const y = date.getFullYear();
@@ -1119,142 +1034,10 @@ function seasonOf(sport, date) {
 }
 
 // ============================================================
-// PERSIST SITUATIONS
-// ============================================================
-
-async function deleteSituationResultsForSport(sport, url, key) {
-  try {
-    await fetch(`${url}/rest/v1/situation_results?sport=eq.${sport}`, {
-      method: 'DELETE',
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-    });
-  } catch {}
-}
-
-async function writeSituationResults(rows, url, key) {
-  if (!rows.length) return 0;
-  const chunkSize = 500;
-  let written = 0;
-
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize).map(r => {
-      const { label, ...rest } = r;
-      return rest;
-    });
-
-    let ok = false;
-    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
-      try {
-        const res = await fetch(`${url}/rest/v1/situation_results`, {
-          method: 'POST',
-          headers: {
-            apikey: key, Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(chunk),
-        });
-        if (res.ok) { ok = true; written += chunk.length; break; }
-
-        const txt = await res.text().catch(() => '');
-        log(`    write attempt ${attempt + 1}: HTTP ${res.status} ${txt.slice(0, 140)}`);
-      } catch (e) {
-        log(`    write attempt ${attempt + 1}: ${e.message}`);
-      }
-      if (!ok) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-    }
-  }
-  return written;
-}
-
-async function recomputeSituationPerformance(sport, url, key) {
-  let rows = [];
-  const pageSize = 1000;
-  for (let offset = 0; offset < 200000; offset += pageSize) {
-    try {
-      const res = await fetch(
-        `${url}/rest/v1/situation_results?sport=eq.${sport}` +
-        `&select=situation_id,situation_side,season,won,push,weight&limit=${pageSize}&offset=${offset}`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      if (!res.ok) break;
-      const batch = await res.json();
-      rows.push(...batch);
-      if (batch.length < pageSize) break;
-    } catch { break; }
-  }
-
-  if (!rows.length) return 0;
-
-  const agg = {};
-  const streaks = {};
-
-  rows.forEach(r => {
-    const key = `${r.situation_id}|${r.season}`;
-    if (!agg[key]) {
-      agg[key] = {
-        situation_id: r.situation_id, season: r.season,
-        wins: 0, losses: 0, pushes: 0, w: 0,
-      };
-    }
-    const a = agg[key];
-    if (r.push) { a.pushes++; a.w += 0; }
-    else if (r.won) { a.wins++; a.w += (r.weight || 1); }
-    else { a.losses++; a.w -= (r.weight || 1); }
-  });
-
-  const perfRows = Object.values(agg).map(a => {
-    const total = a.wins + a.losses;
-    const hit = total > 0 ? a.wins / total : 0;
-    const roi = total > 0 ? (a.w / total) : 0;
-    const qualified = total >= W_MIN_SAMPLES && hit >= W_HIT_STRONG;
-
-    return {
-      sport,
-      situation_id: a.situation_id,
-      situation_label: null,
-      season: a.season,
-      samples: total,
-      wins: a.wins,
-      losses: a.losses,
-      pushes: a.pushes,
-      hit_rate: round(hit, 4),
-      roi: round(roi, 4),
-      current_streak: 0,
-      longest_streak: 0,
-      qualified,
-      updated_at: new Date().toISOString(),
-    };
-  });
-
-  try {
-    const res = await fetch(`${url}/rest/v1/situation_performance?on_conflict=sport,situation_id,season`, {
-      method: 'POST',
-      headers: {
-        apikey: key, Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates,return=minimal',
-      },
-      body: JSON.stringify(perfRows),
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      log(`  performance upsert failed: HTTP ${res.status} ${txt.slice(0, 160)}`);
-      return 0;
-    }
-  } catch (e) {
-    log(`  performance upsert failed: ${e.message}`);
-    return 0;
-  }
-
-  return perfRows.length;
-}
-
-// ============================================================
 // REPORT
 // ============================================================
 
-function renderReport() {
+async function renderReport(sport) {
   if (!gameResults.length && !situationRows.length) {
     out('<div class="empty">Nothing produced. No picks and no situations fired.</div>');
     return;
@@ -1269,6 +1052,15 @@ function renderReport() {
   const flatPnl = gameResults.reduce((s, g) => s + (g.result === 'W' ? 0.91 : g.result === 'L' ? -1 : 0), 0);
   const breaksEven = hitRate >= 52.4;
 
+  // Pooled per-situation record, read from situation_performance
+  // via the module. This reflects every run on file for this sport,
+  // not just the current window.
+  let pooled = [];
+  if (performanceTableAvailable) {
+    try { pooled = await EDGE_SITUATION_RESULTS.summarise(sport); }
+    catch { pooled = []; }
+  }
+
   let html = '';
 
   // ── Summary ──
@@ -1279,49 +1071,49 @@ function renderReport() {
       <div class="sum-cell"><div class="sum-v ${breaksEven ? 'green' : 'red'}">${hitRate.toFixed(1)}%</div><div class="sum-l">Hit rate</div></div>
       <div class="sum-cell"><div class="sum-v ${flatPnl > 0 ? 'green' : flatPnl < 0 ? 'red' : 'muted'}">${flatPnl > 0 ? '+' : ''}${flatPnl.toFixed(2)}u</div><div class="sum-l">Flat P&amp;L</div></div>
     </div>
-    <div class="sub" style="margin-bottom:20px;">Break-even at -110 juice is 52.4%. ${breaksEven ? 'Above break-even.' : 'Below break-even.'} · ${situationRows.length} situation rows graded.</div>
+    <div class="sub" style="margin-bottom:20px;">Break-even at -110 juice is 52.4%. ${breaksEven ? 'Above break-even.' : 'Below break-even.'} · ${situationRows.length} situation rows graded this run.</div>
   `;
 
-  // ── Situations (the headline) ──
-  const sitRows = Object.values(situationStats)
-    .filter(r => r.games > 0)
-    .map(r => {
-      const total = r.wins + r.losses;
-      const rate = total > 0 ? r.wins / total : 0;
-      const edge = rate - 0.524;
-      const weight = total < W_MIN_SAMPLES ? '—'
-                   : rate >= W_HIT_STRONG ? 'KEEP'
-                   : rate >= W_HIT_NEUTRAL ? 'HOLD'
-                   : 'DROP';
-      const weightClass = weight === 'KEEP' ? 'green'
-                        : weight === 'DROP' ? 'red'
-                        : weight === 'HOLD' ? 'gold' : '';
-      return { ...r, total, rate, edge, weight, weightClass };
-    })
-    .sort((a, b) => b.rate - a.rate);
-
-  if (sitRows.length) {
-    const kept = sitRows.filter(r => r.weight === 'KEEP').length;
-    const dropped = sitRows.filter(r => r.weight === 'DROP').length;
+  // ── Situations (pooled from situation_performance) ──
+  if (pooled.length) {
+    const kept = pooled.filter(r => r.tag === 'KEEP').length;
+    const dropped = pooled.filter(r => r.tag === 'DROP').length;
+    const held = pooled.filter(r => r.tag === 'HOLD').length;
+    const thin = pooled.filter(r => r.tag === '—').length;
 
     html += `<div class="section">
       <div class="sec-title">BY <em>SITUATION</em></div>
-      <div class="sec-note">Per-rule hit rate this run. KEEP = 55%+ on ${W_MIN_SAMPLES}+ samples and becomes a weighted vote. HOLD = neutral. DROP = under 52% and down-weighted in the pipeline. Em-dash means the sample is too thin to decide.</div>
-      <div class="sub" style="margin-bottom:10px;">${kept} keep · ${sitRows.length - kept - dropped} hold · ${dropped} drop</div>
+      <div class="sec-note">Pooled across every season on file. KEEP = ${(W_HIT_STRONG * 100).toFixed(0)}%+ on ${W_MIN_SAMPLES}+ samples and becomes a ${W_STRONG}× weighted vote. HOLD = neutral. DROP = under ${(W_HIT_NEUTRAL * 100).toFixed(0)}% and down-weighted to ${W_WEAK}×. Em-dash means the sample is still too thin to decide.</div>
+      <div class="sub" style="margin-bottom:10px;">${kept} keep · ${held} hold · ${dropped} drop · ${thin} thin</div>
       <div class="row head"><span>Rule</span><span>Samples</span><span>Record</span><span>Rate</span><span>Weight</span></div>`;
 
-    sitRows.forEach(r => {
-      const rowClass = r.weight === 'KEEP' ? 'kept' : r.weight === 'DROP' ? 'dropped' : r.total < W_MIN_SAMPLES ? 'thin' : '';
+    pooled.forEach(r => {
+      const rowClass = r.tag === 'KEEP' ? 'kept'
+                     : r.tag === 'DROP' ? 'dropped'
+                     : r.tag === '—' ? 'thin' : '';
+      const rateClass = r.edge_over_break_even > 0.02 ? 'pos'
+                      : r.edge_over_break_even < -0.02 ? 'neg'
+                      : 'neu';
+      const weightClass = r.tag === 'KEEP' ? 'green'
+                        : r.tag === 'DROP' ? 'red'
+                        : r.tag === 'HOLD' ? 'gold' : '';
+      const seasons = r.seasons && r.seasons.length ? r.seasons.join(', ') : '—';
+
       html += `<div class="row ${rowClass}">
-        <span class="name">${r.label}<span class="id">${r.id}</span></span>
-        <span class="num neu">${r.total}</span>
+        <span class="name">${r.label}<span class="id">${r.id} · ${seasons}</span></span>
+        <span class="num neu">${r.samples}</span>
         <span class="num neu">${r.wins}-${r.losses}-${r.pushes}</span>
-        <span class="num ${r.edge > 0.02 ? 'pos' : r.edge < -0.02 ? 'neg' : 'neu'}">${(r.rate * 100).toFixed(1)}%</span>
-        <span class="num ${r.weightClass}">${r.weight}</span>
+        <span class="num ${rateClass}">${(r.hit_rate * 100).toFixed(1)}%</span>
+        <span class="num ${weightClass}">${r.tag}</span>
       </div>`;
     });
 
     html += `</div>`;
+  } else if (situationRows.length) {
+    html += `<div class="section">
+      <div class="sec-title">BY <em>SITUATION</em></div>
+      <div class="empty">${situationRows.length} rows written but no aggregate available yet — situation_performance table missing.</div>
+    </div>`;
   } else {
     html += `<div class="section">
       <div class="sec-title">BY <em>SITUATION</em></div>
@@ -1412,8 +1204,6 @@ function renderReport() {
 
   out(html);
 }
-
-function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 </script>
 
 </body>
