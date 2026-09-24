@@ -17,19 +17,23 @@
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
+  <script src="trends-engine.js"></script>
+  <script src="prop-trends-engine.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
+  <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
-  <script src="trends-engine.js"></script>
   <script src="situation-results.js"></script>
+  <script src="situations-engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -168,7 +172,8 @@
     .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
     .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
     .key-block, .score-block, .verdict-block, .chart-box, .line-box,
-    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
+    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card,
+    .month-row {
       box-shadow: var(--lift);
       border-radius: 2px;
       transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
@@ -179,26 +184,18 @@
     }
     .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
     .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
+    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover,
+    .month-row:hover {
       box-shadow: var(--lift-high);
       transform: translateY(-2px);
-    }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
     }
     @media (prefers-reduced-motion: reduce) {
       .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
       .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
       .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
       .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card {
+      .parlay-card, .trend-row-card, .month-row {
         transition: none;
-      }
-      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-        transform: none;
       }
     }
 
@@ -244,11 +241,15 @@
     <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="history.html" class="active"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
+    <a href="test-espn.html"><span class="ico">⌬</span> ESPN Test</a>
   </div>
 
   <main>
@@ -506,16 +507,21 @@
       picks.forEach(p => {
         if (!p.created_at) return;
         const d = new Date(p.created_at);
+        // key is YYYY-MM and is what we sort on. lbl is what we
+        // display. Sorting by lbl fails across years because
+        // "Dec 24".localeCompare("Jan 25") is negative — December
+        // is alphabetically after J only when the year is the same.
         const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
         const lbl = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-        if (!months[key]) months[key] = { lbl, wins: 0, losses: 0, pnl: 0, units: 0 };
+
+        if (!months[key]) months[key] = { key, lbl, wins: 0, losses: 0, pnl: 0, units: 0 };
         if (p.result === 'W') months[key].wins++;
         if (p.result === 'L') months[key].losses++;
         months[key].pnl += p.pnl || 0;
         months[key].units += p.units || 0;
       });
 
-      const sorted = Object.values(months).sort((a, b) => b.lbl.localeCompare(a.lbl));
+      const sorted = Object.values(months).sort((a, b) => b.key.localeCompare(a.key));
 
       container.innerHTML = sorted.map(m => {
         const total = m.wins + m.losses;
