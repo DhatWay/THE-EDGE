@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -117,6 +117,20 @@
     .family-vote.neu { border-color: var(--border); color: var(--text-dim); }
     .family-reason { font-size: 12px; color: var(--text-dim); font-weight: 300; margin-top: 4px; padding-left: 12px; }
 
+    .sit-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .sit-row { display: flex; align-items: center; gap: 10px; background: var(--bg4); border: 1px solid var(--border); padding: 8px 12px; border-left: 3px solid var(--text-dim); }
+    .sit-row.home { border-left-color: var(--green); }
+    .sit-row.away { border-left-color: var(--red); }
+    .sit-row.under { border-left-color: var(--blue); }
+    .sit-row.over  { border-left-color: var(--gold); }
+    .sit-label { flex: 1; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 1px; color: var(--text); }
+    .sit-side { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 8px; border: 1px solid; }
+    .sit-side.home { border-color: rgba(39,174,96,0.5); color: var(--green); }
+    .sit-side.away { border-color: rgba(231,76,60,0.4); color: var(--red); }
+    .sit-side.under { border-color: rgba(74,144,217,0.5); color: var(--blue); }
+    .sit-side.over  { border-color: rgba(201,168,76,0.5); color: var(--gold); }
+    .sit-weight { font-family: 'Bebas Neue', sans-serif; font-size: 14px; color: var(--text-dim); letter-spacing: 1px; min-width: 32px; text-align: right; }
+
     .context-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .context-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; border-radius: 2px; }
     .context-card h4 { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
@@ -158,6 +172,7 @@
     .claude-decision.approve { border-color: var(--green); color: var(--green); }
     .claude-decision.veto    { border-color: var(--red); color: var(--red); }
     .claude-decision.reduce  { border-color: var(--gold); color: var(--gold); }
+    .claude-decision.skip    { border-color: var(--text-dim); color: var(--text-dim); }
     .claude-reason { font-size: 13px; color: var(--text-mid); line-height: 1.6; font-weight: 300; }
     .claude-meta { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 10px; }
 
@@ -189,14 +204,14 @@
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
       --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
     }
-    .game-card, .family-row, .context-card, .sizing-card, .verdict-block, .claude-panel {
+    .game-card, .family-row, .context-card, .sizing-card, .verdict-block, .claude-panel, .sit-row {
       box-shadow: var(--lift); border-radius: 2px;
       transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
     }
     .game-card { box-shadow: var(--lift-gold); }
     .context-card:hover, .family-row:hover { box-shadow: var(--lift-high); }
     @media (prefers-reduced-motion: reduce) {
-      .game-card, .family-row, .context-card, .sizing-card, .verdict-block, .claude-panel { transition: none; }
+      .game-card, .family-row, .context-card, .sizing-card, .verdict-block, .claude-panel, .sit-row { transition: none; }
     }
 
     .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
@@ -239,6 +254,9 @@
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
+    <a href="test-espn.html"><span class="ico">⌬</span> ESPN Test</a>
   </div>
 
   <main>
@@ -311,6 +329,7 @@
       environment:     'Environment',
       trend:           'Trend & Momentum',
       injury:          'Injury Impact',
+      situations:      'Situational Handicapping',
     };
 
     function loadGames() {
@@ -377,11 +396,28 @@
           <div class="loading-row"><div class="spinner"></div> Loading ratings + context…</div>
         </div>`;
 
-      const fullGame = allGames.find(g => g.id === gameRef.id) || {
+      // Prefer the full cached record — it carries spread, total,
+      // ML, and open_spread. The URL-parameter fallback produces a
+      // synthetic game with none of those, and an analysis built on
+      // a game with no market data is worse than no analysis.
+      const cached = allGames.find(g => g.id === gameRef.id);
+      const fullGame = cached || {
         id: gameRef.id, home_team: gameRef.home, away_team: gameRef.away,
         _sport: gameRef.sport, sport: gameRef.sport, commence_time: gameRef.time,
-        spread: null, total: null, ml: null,
+        spread: null, total: null, ml: null, open_spread: null,
       };
+
+      const hasMarket = fullGame.spread !== null && fullGame.spread !== undefined;
+      if (!hasMarket) {
+        output.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">◎</div>
+            <div class="empty-title">NO MARKET DATA</div>
+            <div class="empty-sub">This game has no cached spread.<br>Refresh Matchups, then try again.</div>
+            <a href="matchups.html" class="go-btn">Go to Matchups →</a>
+          </div>`;
+        return;
+      }
 
       const powerIndex = await loadPowerIndex();
       const homeKey = `${gameRef.sport}:${gameRef.home}`;
@@ -450,6 +486,7 @@
         prior = await EDGE_POWER.computeGamePrior(fullGame, {
           homeStats: homePower,
           awayStats: awayPower,
+          league: powerIndex.league?.[fullGame.sport] || null,
           market: {
             open_spread: fullGame.open_spread ?? fullGame.spread ?? null,
             current_spread: fullGame.spread ?? null,
@@ -467,7 +504,82 @@
       prior._raw_game = fullGame;
 
       const families = await EDGE_ALGOS.runAll(prior, context);
-      const governor = EDGE_GOVERNOR.run(families, prior);
+
+      // Situations engine runs alongside the families so this page
+      // shows the same 10-family view the pipeline produces.
+      let sitFamily = null;
+      let sitResult = null;
+      if (window.EDGE_SITUATIONS) {
+        try {
+          const slateGame = {
+            id: fullGame.id, _sport: fullGame.sport, sport: fullGame.sport,
+            home_team: fullGame.home_team, away_team: fullGame.away_team,
+            home: fullGame.home_team, away: fullGame.away_team,
+            spread: fullGame.spread, open_spread: fullGame.open_spread ?? null,
+            total: fullGame.total, ml: fullGame.ml ?? null, away_ml: fullGame.away_ml ?? null,
+            commence_time: fullGame.commence_time,
+          };
+
+          const restByTeam = {};
+          if (context.homeRestDays != null) restByTeam[`${fullGame.sport}:${fullGame.home_team}`] = context.homeRestDays;
+          if (context.awayRestDays != null) restByTeam[`${fullGame.sport}:${fullGame.away_team}`] = context.awayRestDays;
+
+          const sitCtx = {
+            restByTeam,
+            travelByGame: context.travelMiles != null ? { [fullGame.id]: { miles: context.travelMiles, timezones: context.timezoneShift } } : {},
+            weatherByGame: context.weather ? { [fullGame.id]: context.weather } : {},
+            injuriesByGame: (context.homeInjuries || context.awayInjuries)
+              ? { [fullGame.id]: {
+                  home: context.homeInjuries || [],
+                  away: context.awayInjuries || [],
+                  home_off_deduction: context.homeOffDeduction || 0,
+                  home_def_deduction: context.homeDefDeduction || 0,
+                  away_off_deduction: context.awayOffDeduction || 0,
+                  away_def_deduction: context.awayDefDeduction || 0,
+                } }
+              : {},
+            lineHistoryByGame: context.lineHistory ? { [fullGame.id]: context.lineHistory } : {},
+          };
+
+          let weights = {};
+          if (window.EDGE_SITUATION_RESULTS) {
+            try { weights = await EDGE_SITUATION_RESULTS.loadWeights(fullGame.sport); }
+            catch {}
+          }
+
+          const res = await EDGE_SITUATIONS.evaluateSlate(
+            [slateGame], sitCtx,
+            { powerIndex: powerIndex.teams, situationWeights: weights }
+          );
+
+          if (res && res.length) {
+            sitResult = res[0];
+            const strength = sitResult.weighted_strength || sitResult.strength || 0;
+            const lean = sitResult.weighted_lean || sitResult.lean;
+            const sig = lean === 'home' ? Math.min(strength / 6, 1)
+                      : lean === 'away' ? -Math.min(strength / 6, 1)
+                      : 0;
+            const vote = lean === 'home' ? 'yes' : lean === 'away' ? 'no' : 'neu';
+            sitFamily = {
+              family: 'situations',
+              signal: sig,
+              vote,
+              confidence: strength > 0 ? Math.min(0.5 + strength * 0.06, 0.9) : 0.5,
+              edge: Math.abs(sig) * 0.08,
+              reason: (sitResult.situations || []).slice(0, 4).map(x => x.label).join(' · '),
+              subs: sitResult.situations || [],
+              data: sitResult,
+            };
+          }
+        } catch (e) { logEdgeError('analysis.situations', e); }
+      }
+
+      const allFamilies = sitFamily ? [sitFamily, ...families] : families;
+
+      const dyn = EDGE_GOVERNOR.getDynamicWeights(fullGame.sport);
+      const merged = { ...dyn, situations: 12 };
+      const governor = EDGE_GOVERNOR.run(allFamilies, prior, { dynamicWeights: merged });
+
       const physics = EDGE_PHYSICS.decide(governor, prior, context);
       physics.pick_id = `analysis_${fullGame.id}`;
       physics.game_id = fullGame.id;
@@ -482,52 +594,78 @@
       let claudeResult = null;
 
       if (mode === 'ai_assisted' && physics.decision !== 'PASS' && physics.decision !== 'CAPPED' && physics.units > 0) {
-        output.innerHTML = `
-          <div class="section">
-            <div class="loading-row"><div class="spinner"></div> Claude review…</div>
-          </div>`;
+        const startTs = new Date(fullGame.commence_time || 0).getTime();
+        const upcoming = isFinite(startTs) && startTs > Date.now();
 
-        let selection = { ok: false, selections: [], note: 'Claude not available' };
-        try {
-          selection = await EDGE_CLAUDE.selectFromSlate([{
-            prior,
-            families,
-            governor,
-            context,
-            trends: null,
-            h2h: context.h2h || null,
-          }], { floor: 0 });
-        } catch (e) {
-          logEdgeError('analysis.claude', e);
-        }
-
-        if (selection.ok && selection.selections && selection.selections.length) {
-          const s = selection.selections[0];
+        if (!upcoming) {
+          // The selector only runs on upcoming games. Report that
+          // honestly rather than pretending Claude declined.
           claudeResult = {
-            decision: s.confidence >= physics.confidence ? 'approve' : 'reduce',
+            decision: 'skip',
             confidence_adjustment: 0,
-            reason: s.reason || s.key_factor || 'Selected',
-            side: s.side,
-            market: s.market,
-            confidence: s.confidence,
-            selected: true,
+            reason: 'Game has started — Claude selector runs on upcoming games only',
+            selected: false,
+            skipped: true,
           };
         } else {
-          claudeResult = {
-            decision: 'veto',
-            confidence_adjustment: 0,
-            reason: (selection && selection.note) || 'Claude declined this game',
-            selected: false,
-          };
+          output.innerHTML = `
+            <div class="section">
+              <div class="loading-row"><div class="spinner"></div> Claude review…</div>
+            </div>`;
+
+          let selection = { ok: false, selections: [], note: 'Claude not available' };
+          try {
+            selection = await EDGE_CLAUDE.selectFromSlate([{
+              prior,
+              families: allFamilies,
+              governor,
+              context,
+              trends: null,
+              h2h: context.h2h || null,
+            }], { floor: 0 });
+          } catch (e) {
+            logEdgeError('analysis.claude', e);
+          }
+
+          if (selection.ok && selection.selections && selection.selections.length) {
+            const s = selection.selections[0];
+            claudeResult = {
+              decision: s.confidence >= physics.confidence ? 'approve' : 'reduce',
+              confidence_adjustment: 0,
+              reason: s.reason || s.key_factor || 'Selected',
+              side: s.side,
+              market: s.market,
+              confidence: s.confidence,
+              selected: true,
+              model: selection.model,
+            };
+          } else {
+            // Not selected is not the same as vetoed. Apply no
+            // adjustment — the analysis shows the model's own view.
+            claudeResult = {
+              decision: 'skip',
+              confidence_adjustment: 0,
+              reason: (selection && selection.note) || 'Not selected by the selector',
+              selected: false,
+              skipped: false,
+              model: selection.model,
+            };
+          }
         }
 
-        if (claudeResult) {
+        // Only an explicit veto or reduce adjusts the sizing. A skip
+        // is informational — the analysis still shows what the model
+        // would have sized the pick at.
+        if (claudeResult && claudeResult.decision !== 'skip') {
           const adjusted = EDGE_PHYSICS.applyClaudeAdjustment(physics, claudeResult);
           Object.assign(physics, adjusted);
         }
       }
 
-      currentAnalysis = { prior, families, governor, physics, claudeResult, mode, context };
+      currentAnalysis = {
+        prior, families: allFamilies, governor, physics,
+        claudeResult, mode, context, sitResult,
+      };
       renderAnalysis(currentAnalysis);
     }
 
@@ -544,19 +682,30 @@
             const teams = await t.json();
             const coaches = await c.json();
             if (teams.length) {
-              const idx = { teams: {}, coaching: {} };
+              const idx = { teams: {}, coaching: {}, league: {} };
               teams.forEach(r => { idx.teams[`${r.sport}:${r.team_name}`] = r; });
               coaches.forEach(r => { idx.coaching[`${r.sport}:${r.team_name}`] = r; });
+              // League baselines for the prior's projection.
+              const bySport = {};
+              teams.forEach(t2 => {
+                if (!t2 || t2.attack == null) return;
+                (bySport[t2.sport] = bySport[t2.sport] || []).push(t2.attack);
+              });
+              Object.entries(bySport).forEach(([sp, list]) => {
+                const poss = window.EDGE_RATING?.POSSESSIONS?.[sp] ?? 100;
+                const per = list.reduce((a, b) => a + b, 0) / list.length;
+                idx.league[sp] = { per_possession: per, per_game: per * poss, possessions: poss };
+              });
               return idx;
             }
           }
         } catch (e) { logEdgeError('analysis.powerIndexRead', e); }
       }
       const fresh = await EDGE_POWER.computeAllTeamRatings();
-      return { teams: fresh.teams, coaching: fresh.coaching };
+      return { teams: fresh.teams, coaching: fresh.coaching, league: {} };
     }
 
-    function renderAnalysis({ prior, families, governor, physics, claudeResult, mode, context }) {
+    function renderAnalysis({ prior, families, governor, physics, claudeResult, mode, context, sitResult }) {
       const output = document.getElementById('analysisOutput');
       const conf = physics.confidence || 0;
       const confPct = Math.round(conf);
@@ -587,6 +736,30 @@
         const confDisplay = Math.round((f.confidence || 0.5) * 100);
         const voteLabel = f.vote === 'yes' ? 'YES' : f.vote === 'no' ? 'NO' : 'NEU';
         const edgePct = ((f.edge || 0) * 100).toFixed(2);
+
+        // Situations family gets its own detail block below its row.
+        let sitDetail = '';
+        if (f.family === 'situations' && sitResult && sitResult.situations && sitResult.situations.length) {
+          const rows = sitResult.situations.map(s => {
+            const sideCls = s.side || 'pass';
+            const label = s.side === 'home' ? (prior.home_team.split(' ').slice(-1)[0] || 'HOME')
+                        : s.side === 'away' ? (prior.away_team.split(' ').slice(-1)[0] || 'AWAY')
+                        : s.side.toUpperCase();
+            const w = typeof s.weight === 'number' ? s.weight.toFixed(1) : '1.0';
+            return `<div class="sit-row ${sideCls}">
+              <span class="sit-label">${s.label}</span>
+              <span class="sit-side ${sideCls}">${label}</span>
+              <span class="sit-weight">${w}×</span>
+            </div>`;
+          }).join('');
+          sitDetail = `<div class="sit-list">${rows}</div>`;
+        }
+
+        const untestableCount = (f.data && f.data.untestable) ? f.data.untestable.length : 0;
+        const untestableNote = untestableCount
+          ? `<div class="family-reason">${untestableCount} rule${untestableCount === 1 ? '' : 's'} untestable — missing context for this game</div>`
+          : '';
+
         return `
           <div class="family-row ${cls}">
             <div class="family-name">${label}<br><span style="font-size:10px;color:var(--text-dim);font-weight:400;letter-spacing:0.5px;">edge ${edgePct}%</span></div>
@@ -594,6 +767,8 @@
             <span class="family-vote ${cls}">${voteLabel}</span>
           </div>
           ${f.reason ? `<div class="family-reason">${f.reason}</div>` : ''}
+          ${untestableNote}
+          ${sitDetail}
         `;
       }).join('');
 
@@ -609,10 +784,17 @@
             <div class="claude-meta">
               ${claudeResult.selected
                 ? `Confidence ${claudeResult.confidence}% · side ${claudeResult.side || '—'} · market ${claudeResult.market || 'spread'}`
-                : 'Not selected for the slate'}
+                : claudeResult.skipped
+                  ? 'Selector skipped — game already started'
+                  : 'Not selected for the slate'}
+              ${claudeResult.model ? ` · model ${claudeResult.model}` : ''}
             </div>
           </div>
         </div>` : '';
+
+      // Sizing trail from physics v2.1. Field names are kelly_raw,
+      // fractional_kelly, kelly_units, sport_fraction.
+      const sizing = physics.sizing_details || {};
 
       output.innerHTML = `
 
@@ -711,7 +893,7 @@
           <div class="sizing-grid">
             <div class="sizing-card"><div class="sizing-lbl">Units</div><div class="sizing-val gold">${physics.units || 0}u</div></div>
             <div class="sizing-card"><div class="sizing-lbl">Stake</div><div class="sizing-val">$${(physics.stake_dollars || 0).toFixed(2)}</div></div>
-            <div class="sizing-card"><div class="sizing-lbl">Kelly Units</div><div class="sizing-val">${(physics.kelly_details?.kelly_units || 0).toFixed(2)}u</div></div>
+            <div class="sizing-card"><div class="sizing-lbl">Kelly Units</div><div class="sizing-val">${(sizing.kelly_units || 0).toFixed(2)}u</div></div>
             <div class="sizing-card"><div class="sizing-lbl">Mode</div><div class="sizing-val" style="font-size:16px;">${mode === 'ai_assisted' ? 'AI-Assisted' : 'Deterministic'}</div></div>
           </div>
         </div>`;
