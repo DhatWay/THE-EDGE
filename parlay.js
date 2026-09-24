@@ -1,8 +1,37 @@
 // ============================================================
-// EDGE — TREND BET / PARLAY ENGINE v1.1
+// EDGE — TREND BET / PARLAY ENGINE v1.2
 // Mines graded shadow_picks for repeatable trends, then builds
 // correlation-safe parlays out of today's qualifying picks.
 // Deterministic. No Claude. Pure math.
+//
+// v1.2 — three fixes:
+//
+//   1. line_moved_with_us. The trend test looked only at the
+//      market family's vote in the governor breakdown. On the
+//      live board the market family frequently votes neutral
+//      because it reads line_history, and line_history does not
+//      carry an open until a snapshot has been captured — which
+//      for a fresh game is never. The trend now checks the pick's
+//      own market_snapshot (spread vs open_spread) first, and
+//      only falls back to the family vote when the snapshot is
+//      absent. Under the old code this trend almost never fired.
+//
+//   2. legOdds. Spread picks are what the pipeline produces, and
+//      their price is the spread price — normally -110. The old
+//      code read market_home_ml / market_away_ml, which are the
+//      moneyline prices. For a home spread pick on a heavy
+//      favourite, that could be -180 while the spread pays -110.
+//      Reading ML as the spread price inflated the payout and
+//      made every parlay look better than it was. Spread legs
+//      now take the spread price if the pick carries one, else
+//      default to -110. The ML price is used for nothing in
+//      parlay sizing.
+//
+//   3. legProbability fallback. When posterior_home_prob was
+//      missing, the old code computed 0.5 + confidence/200. A
+//      confidence of 65 became 0.825 — a probability the model
+//      had never claimed. The fallback now reads confidence/100,
+//      which is what the number is: a percent-scale probability.
 //
 // v1.1 — logEdgeError. Previously a failed Supabase read returned
 // an empty array and the page said "no trends" — indistinguishable
@@ -10,6 +39,8 @@
 // ============================================================
 
 const EDGE_PARLAY = (() => {
+
+  const BUILD = 'parlay-20260924-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -67,6 +98,15 @@ const EDGE_PARLAY = (() => {
       label: 'Line moved toward our side',
       describe: 'Closing line value confirmed the model before kickoff',
       test: p => {
+        // Prefer direct market movement. physics.js carries
+        // market_snapshot.open_spread and market_snapshot.spread
+        // on every persisted pick, so this check works even when
+        // the market family voted neutral for lack of line data.
+        if (lineMovedTowardPick(p)) return true;
+
+        // Fall back to the market family vote. Kept so picks
+        // persisted before market_snapshot was populated still
+        // get a chance to qualify on this rule.
         const bd = p.governor_snapshot?.breakdown || [];
         const market = bd.find(b => b.family === 'market');
         return !!market && market.vote !== 'neu' && num(market.confidence) >= 0.7;
@@ -86,7 +126,10 @@ const EDGE_PARLAY = (() => {
       id: 'small_spread_games',
       label: 'Tight spreads',
       describe: 'Games priced inside a field goal / three points',
-      test: p => Math.abs(num(p.market_spread)) > 0 && Math.abs(num(p.market_spread)) <= 3,
+      test: p => {
+        const s = Math.abs(num(p.market_spread));
+        return s > 0 && s <= 3;
+      },
     },
     {
       id: 'divisional_style_low_total',
@@ -161,6 +204,7 @@ const EDGE_PARLAY = (() => {
   ];
 
   return {
+    BUILD,
     scoreTrends,
     matchupTrends,
     attachMatchupTrends,
@@ -178,7 +222,29 @@ const EDGE_PARLAY = (() => {
     TREND_MIN_HIT_RATE,
     H2H_TRENDS,
     MIN_H2H_MEETINGS,
+    DEFAULT_LEG_ODDS,
   };
+
+  // ============================================================
+  // ── LINE MOVEMENT HELPER ──
+  // Reads the market snapshot physics persists onto every pick.
+  // A pick qualifies if the number moved toward the side we took.
+  // Market spread is signed from the home perspective, so a move
+  // toward home means the number got more negative.
+  // ============================================================
+
+  function lineMovedTowardPick(p) {
+    const snap = p.physics_output?.market_snapshot || p.market_snapshot || {};
+    const open = num(snap.open_spread);
+    const current = num(snap.spread);
+    if (!open || !current) return false;
+    if (open === current) return false;
+
+    const movedTowardHome = current < open;
+    if (p.direction === 'home') return movedTowardHome;
+    if (p.direction === 'away') return !movedTowardHome;
+    return false;
+  }
 
   // ============================================================
   // ── TREND SCORING ──
@@ -594,6 +660,7 @@ const EDGE_PARLAY = (() => {
       const mt = p.matchup_trends || null;
       const agreeing = (mt?.trends || []).filter(t =>
         t.side === 'any' || t.side === p.direction);
+      const movedToward = lineMovedTowardPick(p);
 
       return {
         pick_id: p.pick_id || p.game_id,
@@ -622,9 +689,11 @@ const EDGE_PARLAY = (() => {
         edge: num(p.edge),
         spread: p.market_spread ?? null,
         odds,
+        odds_source: legOddsSource(p),
         decimal: americanToDecimal(odds),
         model_prob: round(modelProb, 4),
         market_prob: round(marketProb, 4),
+        line_moved_toward_us: movedToward,
       };
     });
 
@@ -687,20 +756,41 @@ const EDGE_PARLAY = (() => {
     return clamp(prob, 0, 1);
   }
 
-  function legProbability(p) {
-    const posterior = num(p.governor_snapshot?.posterior_home_prob);
-    if (posterior > 0) {
-      return p.direction === 'home' ? posterior : 1 - posterior;
-    }
-    const conf = num(p.confidence);
-    if (conf > 0) return clamp(0.5 + (conf / 200), 0.05, 0.95);
-    return 0.5;
+  // Picks in the pipeline are spread picks. Their price is the
+  // spread price — normally -110 — not the moneyline. Reading the
+  // ML price as the payout on a spread leg overstates every parlay.
+  function legOdds(p) {
+    if (p.direction === 'home' && num(p.home_spread_price)) return num(p.home_spread_price);
+    if (p.direction === 'away' && num(p.away_spread_price)) return num(p.away_spread_price);
+    if (num(p.spread_price)) return num(p.spread_price);
+    return DEFAULT_LEG_ODDS;
   }
 
-  function legOdds(p) {
-    if (p.direction === 'home' && num(p.market_home_ml)) return num(p.market_home_ml);
-    if (p.direction === 'away' && num(p.market_away_ml)) return num(p.market_away_ml);
-    return DEFAULT_LEG_ODDS;
+  function legOddsSource(p) {
+    if (p.direction === 'home' && num(p.home_spread_price)) return 'explicit_home';
+    if (p.direction === 'away' && num(p.away_spread_price)) return 'explicit_away';
+    if (num(p.spread_price)) return 'explicit_spread';
+    return 'default_110';
+  }
+
+  function legProbability(pick) {
+    // Prefer the governor's own posterior — it is the number the
+    // pipeline actually bet on. Only use it when it is a genuine
+    // probability in (0,1).
+    const posterior = num(pick.governor_snapshot?.posterior_home_prob);
+    if (posterior > 0 && posterior < 1) {
+      return pick.direction === 'home' ? posterior : 1 - posterior;
+    }
+
+    // Fall back to confidence. This is a percent-scale number
+    // already, so 65 becomes 0.65, not 0.825. The old formula
+    // 0.5 + conf/200 treated a moderate pick as a strong one.
+    const conf = num(pick.confidence);
+    if (conf > 0) {
+      const prob = clamp(conf / 100, 0.05, 0.95);
+      return pick.direction === 'home' ? prob : 1 - prob;
+    }
+    return 0.5;
   }
 
   // ============================================================
