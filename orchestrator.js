@@ -1,25 +1,40 @@
 // ============================================================
-// EDGE — ORCHESTRATOR v3.0
+// EDGE — ORCHESTRATOR v3.1
 //
 // Runs the full pipeline: games → ratings → context → priors →
 // algorithms → situations → governor → physics → persist.
 //
-// v3.0 changes:
-//   · Situations engine is now a first-class input. Its output
-//     becomes a 10th family vote (weighted higher than any
-//     single family, because it's a composite of rules).
-//   · Every stage logs what it produced, not just "success".
-//     When a stage returns nothing the log says why.
-//   · Live/final games are excluded at the prior-build step
-//     using the same grading window that context-builder uses.
-//   · Team resolution uses EDGE_TEAMS when present, falls back
-//     to exact name matching when it isn't.
-//   · Persist writes the full verdict trail: every family's
-//     signal, the situations that fired, the governor's
-//     probability chain, the physics sizing trail.
+// v3.1 changes:
+//   · Situations now carry per-rule weights. The engine reads
+//     measured hit rates from situation_performance via
+//     EDGE_SITUATION_RESULTS.loadWeights(sport), applies them
+//     during evaluation, and returns weighted_tally alongside
+//     the raw tally. The governor consumes the weighted number.
+//   · situationsAsFamily emits the individual fired rules and
+//     their weights inside data.fired. The governor already
+//     stores family data in its breakdown, so the learning loop
+//     and the diagnostic page can now see which specific
+//     situations contributed, not just the aggregate family
+//     vote. This closes the loop the weight reader opens.
+//   · The situations family result carries weighted_lean and
+//     weighted_strength. Where the raw lean and the weighted
+//     lean disagree — a rule with a heavy weight pulling one
+//     way against many thin unweighted rules — the weighted
+//     read wins.
+//
+// v3.0 changes (retained):
+//   · Situations engine is a first-class input. Its output
+//     becomes a 10th family vote weighted above any single
+//     family, since it aggregates rules rather than reading
+//     one signal.
+//   · Live/final games excluded at the prior-build step.
+//   · Team resolution uses EDGE_TEAMS when present.
+//   · Persist writes the full verdict trail.
 // ============================================================
 
 const EDGE_ORCHESTRATOR = (() => {
+
+  const BUILD = 'orch-20260924-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -33,9 +48,9 @@ const EDGE_ORCHESTRATOR = (() => {
   const MAX_PARALLEL_GAMES = 6;
 
   // Situations contribute as one weighted vote. It sits above any
-  // single family because it aggregates 22 rules; the weight is
-  // 12 (top-end of the family weight table) unless the learning
-  // loop overrides it.
+  // single family because it aggregates rules; the weight is 12
+  // (top-end of the family weight table) unless the learning loop
+  // overrides it.
   const SITUATIONS_FAMILY_WEIGHT = 12;
 
   function logEdgeError(where, err) {
@@ -109,6 +124,34 @@ const EDGE_ORCHESTRATOR = (() => {
       summary.stages.active_sports = Array.from(activeSports);
       log(`  ${gameList.length} games across ${activeSports.size} sport(s)`);
 
+      // ── Stage 1b · Situation weights ──
+      // Loaded once per sport. Each weight is a rule's measured
+      // reliability — 1.5× for a rule clearing 55%, 0.3× for one
+      // scraping below 52%, 1.0× for anything with too thin a
+      // sample to decide. Missing table or missing history falls
+      // back to 1.0 for every rule.
+      const situationWeightsBySport = {};
+      if (window.EDGE_SITUATION_RESULTS) {
+        for (const sp of activeSports) {
+          try {
+            situationWeightsBySport[sp] = await EDGE_SITUATION_RESULTS.loadWeights(sp);
+          } catch (e) {
+            situationWeightsBySport[sp] = {};
+            logEdgeError('orch.situationWeights.' + sp, e);
+          }
+        }
+        const totalWeighted = Object.values(situationWeightsBySport)
+          .reduce((s, map) => s + Object.values(map).filter(w => w !== 1).length, 0);
+        if (totalWeighted) {
+          log(`  ${totalWeighted} situation weight${totalWeighted === 1 ? '' : 's'} loaded from situation_performance`);
+        } else {
+          log('  situations running at neutral weight — no learned weights on file yet');
+        }
+      } else {
+        log('  situation-results.js not loaded — situations run at neutral weight');
+      }
+      summary.stages.situation_weights_loaded = Object.keys(situationWeightsBySport).length;
+
       // ── Stage 2 · Power ratings ──
       log('Stage 2/7 · Power ratings');
       const powerIndex = await loadPowerIndex(activeSports, log);
@@ -167,9 +210,14 @@ const EDGE_ORCHESTRATOR = (() => {
 
       // ── Stage 5b · Situations engine ──
       log('Stage 5b · Evaluating situations');
-      const situationsByGame = await evaluateSituations(priors, builtContext, log);
+      const situationsByGame = await evaluateSituations(
+        priors, builtContext, log, situationWeightsBySport
+      );
       summary.stages.situations_evaluated = Object.keys(situationsByGame).length;
-      log(`  ${summary.stages.situations_evaluated} games scored by situations`);
+      const firedTotal = Object.values(situationsByGame)
+        .reduce((s, r) => s + ((r.situations && r.situations.length) || 0), 0);
+      log(`  ${summary.stages.situations_evaluated} games · ${firedTotal} rule firings`);
+      summary.stages.situation_firings = firedTotal;
 
       // ── Stage 6 · Governor ──
       log('Stage 6/7 · Governor consensus');
@@ -213,8 +261,6 @@ const EDGE_ORCHESTRATOR = (() => {
         p.claude_verdict = a ? a.claudeVerdict : null;
         p.shadow_units = shadow ? shadow.units : null;
         p.shadow_decision = shadow ? shadow.decision : null;
-        // Attach the situation list to the pick for the card and
-        // the slate test to see.
         const sit = situationsByGame[p.game_id];
         if (sit) p.situations = sit.situations || [];
       });
@@ -398,7 +444,6 @@ const EDGE_ORCHESTRATOR = (() => {
     for (const game of games) {
       const sport = game._sport || game.sport;
 
-      // Exclude any game that has already started or completed.
       if (game.completed === true || game.gradable === false || game.is_live === true) {
         skipped.live++;
         continue;
@@ -538,21 +583,35 @@ const EDGE_ORCHESTRATOR = (() => {
 
   // ============================================================
   // ── SITUATIONS ──
+  // Per-sport weights are read once per pipeline run and passed
+  // through to the engine. The engine evaluates each rule against
+  // its weight and returns both the raw tally and the weighted
+  // tally. When the two disagree on lean the weighted read is
+  // what the governor consumes.
   // ============================================================
 
-  async function evaluateSituations(priors, context, log) {
+  async function evaluateSituations(priors, context, log, weightsBySport = {}) {
     if (!window.EDGE_SITUATIONS) {
       log('  situations-engine.js not loaded — skipping');
       return {};
     }
 
-    try {
-      const slate = priors.map(p => {
+    const bySport = {};
+    priors.forEach(p => {
+      const sp = p.sport;
+      if (!bySport[sp]) bySport[sp] = [];
+      bySport[sp].push(p);
+    });
+
+    const byGame = {};
+
+    for (const [sport, list] of Object.entries(bySport)) {
+      const slate = list.map(p => {
         const raw = p._raw_game || {};
         return {
           id: p.game_id,
-          _sport: p.sport,
-          sport: p.sport,
+          _sport: sport,
+          sport,
           home_team: p.home_team,
           away_team: p.away_team,
           home: p.home_team,
@@ -566,19 +625,31 @@ const EDGE_ORCHESTRATOR = (() => {
         };
       });
 
-      const result = await window.EDGE_SITUATIONS.evaluateSlate(slate, context);
-      const byGame = {};
-      result.forEach(r => { byGame[r.game_id] = r; });
-      return byGame;
-    } catch (e) {
-      log('  situations evaluation failed: ' + e.message);
-      logEdgeError('orch.situations', e);
-      return {};
+      try {
+        const result = await window.EDGE_SITUATIONS.evaluateSlate(
+          slate,
+          context,
+          { situationWeights: weightsBySport[sport] || {} }
+        );
+        result.forEach(r => { byGame[r.game_id] = r; });
+      } catch (e) {
+        log(`  situations evaluation failed for ${sport}: ${e.message}`);
+        logEdgeError('orch.situations.' + sport, e);
+      }
     }
+
+    return byGame;
   }
 
   // Convert a situations result into a family-shaped output the
   // governor can consume alongside the nine families.
+  //
+  // The engine has already done the per-rule weighting — a rule
+  // carrying 1.5× contributes 1.5 to the tally, a rule carrying
+  // 0.3× contributes 0.3. Here we take the weighted read as the
+  // family signal and carry the raw tally plus the fired-rule list
+  // into `data.fired` so the governor's breakdown preserves it.
+  // The learning loop and the diagnostic page read from there.
   function situationsAsFamily(sitResult) {
     if (!sitResult || !sitResult.tally) {
       return {
@@ -593,28 +664,47 @@ const EDGE_ORCHESTRATOR = (() => {
       };
     }
 
-    const { home, away, under, over } = sitResult.tally;
-    const lean = sitResult.lean;
-    const strength = sitResult.strength || 0;
+    // Prefer the weighted read. If the engine did not produce one —
+    // older engine version, or every weight at 1.0 — the weighted
+    // fields equal the raw fields and either works.
+    const weightedLean = sitResult.weighted_lean || sitResult.lean;
+    const weightedStrength = sitResult.weighted_strength ?? sitResult.strength ?? 0;
 
     let signal = 0;
-    if (lean === 'home') signal = Math.min(strength / 4, 1);
-    else if (lean === 'away') signal = -Math.min(strength / 4, 1);
-    else if (lean === 'under') signal = -Math.min(strength / 6, 0.5);
-    else if (lean === 'over') signal = Math.min(strength / 6, 0.5);
+    if (weightedLean === 'home') signal = Math.min(weightedStrength / 6, 1);
+    else if (weightedLean === 'away') signal = -Math.min(weightedStrength / 6, 1);
+    else if (weightedLean === 'under') signal = -Math.min(weightedStrength / 8, 0.5);
+    else if (weightedLean === 'over') signal = Math.min(weightedStrength / 8, 0.5);
 
-    const vote = lean === 'home' ? 'yes'
-              : lean === 'away' ? 'no'
+    const vote = weightedLean === 'home' ? 'yes'
+              : weightedLean === 'away' ? 'no'
               : 'neu';
 
-    const confidence = strength > 0
-      ? Math.min(0.5 + strength * 0.08, 0.9)
+    // Confidence scales with the weighted strength. The divisor is
+    // larger than the raw version because weights above 1.0 push
+    // strength past what an unweighted count would produce, and we
+    // do not want a single heavy rule to claim 0.9 on its own.
+    const confidence = weightedStrength > 0
+      ? Math.min(0.5 + weightedStrength * 0.06, 0.9)
       : 0.5;
 
-    const reasons = (sitResult.situations || [])
+    const fired = sitResult.situations || [];
+    const reasons = fired
       .slice(0, 4)
       .map(s => s.label)
       .join(' · ');
+
+    // The per-rule list travels inside data.fired. governor.js
+    // stores family data in the breakdown, so this survives to the
+    // shadow_picks row and the learning loop reads it there.
+    const firedDetail = fired.map(s => ({
+      id: s.id,
+      label: s.label,
+      side: s.side,
+      side_source: s.side_source || null,
+      weight: typeof s.weight === 'number' ? s.weight : 1,
+      note: s.note || null,
+    }));
 
     return {
       family: 'situations',
@@ -623,11 +713,17 @@ const EDGE_ORCHESTRATOR = (() => {
       confidence: round(confidence, 3),
       edge: round(Math.abs(signal) * 0.08, 4),
       reason: reasons || 'No situations fired',
-      subs: sitResult.situations || [],
+      subs: firedDetail,
       data: {
-        tally: sitResult.tally,
-        lean: sitResult.lean,
-        strength: sitResult.strength,
+        tally: sitResult.tally || null,
+        weighted_tally: sitResult.weighted_tally || null,
+        lean: sitResult.lean || null,
+        weighted_lean: weightedLean,
+        strength: sitResult.strength ?? null,
+        weighted_strength: weightedStrength,
+        testable_count: sitResult.testable_count ?? null,
+        untestable: sitResult.untestable || [],
+        fired: firedDetail,
       },
     };
   }
@@ -648,7 +744,6 @@ const EDGE_ORCHESTRATOR = (() => {
         // governor's dynamic override below.
         const allFamilies = [sitFamily, ...r.families];
 
-        // Override the governor's weight for the situations family.
         const dynamic = EDGE_GOVERNOR.getDynamicWeights(r.prior.sport);
         const merged = { ...dynamic, situations: SITUATIONS_FAMILY_WEIGHT };
 
@@ -898,13 +993,27 @@ const EDGE_ORCHESTRATOR = (() => {
       dailyUsed += stake;
       betsUsed += 1;
       localStorage.setItem(flagKey, 'true');
+
+      // The matchup string used to read market_snapshot.home/away,
+      // which do not exist on that object. physics.js carries the
+      // market numbers, not the team names — so the sim ledger was
+      // logging " vs ". The prior has them.
+      const prior = pick._prior || null;
+      const matchup = prior
+        ? `${prior.away_team} @ ${prior.home_team}`
+        : `${pick.away_team || ''} @ ${pick.home_team || ''}`.trim() || '—';
+
       placedBets.push({
-        pick_id: pick.pick_id, game_id: pick.game_id, sport: pick.sport,
-        matchup: `${pick.market_snapshot?.away || ''} vs ${pick.market_snapshot?.home || ''}`,
+        pick_id: pick.pick_id,
+        game_id: pick.game_id,
+        sport: pick.sport,
+        matchup,
         pick_label: pick.side_label?.team || pick.direction,
-        units, stake,
+        units,
+        stake,
         odds: pick.market_snapshot?.home_ml || -110,
-        confidence: pick.confidence, edge: pick.edge,
+        confidence: pick.confidence,
+        edge: pick.edge,
       });
       placed++;
     }
@@ -986,7 +1095,15 @@ const EDGE_ORCHESTRATOR = (() => {
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
-  return { run, getMode, setMode, MODES, DEFAULT_MODE, SITUATIONS_FAMILY_WEIGHT };
+  return {
+    BUILD,
+    run,
+    getMode,
+    setMode,
+    MODES,
+    DEFAULT_MODE,
+    SITUATIONS_FAMILY_WEIGHT,
+  };
 
 })();
 
