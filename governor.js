@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — GOVERNOR v3.0
+// EDGE — GOVERNOR v3.1
 //
 // Turns the nine family verdicts into a single confidence score
 // and a decision.
@@ -20,12 +20,40 @@
 //      version keeps only the market shrinkage and lets the
 //      family signals themselves carry the conviction.
 //
+// v3.1 changes:
+//   · applyCalibration is now a blend, not a replacement. The
+//     v3.0 code did `return round(hit, 1)` when the bucket had
+//     an empirical hit rate — it substituted the observed rate
+//     for the model's confidence. That was wrong twice over:
+//     once because the thresholds (bet2u: 68) were calibrated
+//     against model confidence, not against observed hit rate,
+//     so re-bucketing the observed rate as if it were
+//     confidence produced nonsense; once because a 25-sample
+//     bucket was given the same weight as a 500-sample bucket.
+//     Now confidence moves toward the empirical rate by a
+//     sample-weighted factor, and the sample size is stored in
+//     the calibration table so the weight is honest.
+//   · Calibration reload is available on demand. v3.0 loaded it
+//     once at module init, so if the learning loop ran in the
+//     same session and wrote a fresh table, the governor kept
+//     using the stale one until the page was reloaded. Now
+//     `reloadCalibration()` is exported and orchestrator calls
+//     it after the learning loop completes.
+//   · Calibration table shape is backward compatible. If the
+//     stored table is the old `{bucket: rate}` shape, it is
+//     still read — just with a default sample weight of 0.25,
+//     which treats it as low confidence and blends lightly.
+//     New tables written by learning.js should include
+//     `{bucket: {rate, samples}}` for the full effect.
+//
 // Output shape stays compatible with physics.js and the pick
 // cards. Fields that are no longer computed are still returned
 // as neutral values so nothing downstream breaks.
 // ============================================================
 
 const EDGE_GOVERNOR = (() => {
+
+  const BUILD = 'gov-20260924-01';
 
   // Weights per sport for the nine families. These are the
   // defaults. Learning loop overwrites dynamic weights in
@@ -74,15 +102,37 @@ const EDGE_GOVERNOR = (() => {
   // shouldn't claim 90% certainty — no model is that good.
   const MAX_CONFIDENCE = 82;
 
+  // How strongly an empirical calibration may pull the model's
+  // own confidence. 0.75 means the blend can move the number up
+  // to 75% of the way to the observed hit rate, weighted down by
+  // the sample size in the bucket. Never a full substitution.
+  const MAX_CALIBRATION_PULL = 0.75;
+
+  // Sample size at which the calibration pull reaches full
+  // strength. Below this, the pull scales linearly. A bucket
+  // with 100 samples gets its pull at (100/300) = 33% strength.
+  const CALIBRATION_FULL_SAMPLE = 300;
+
+  // Fallback sample weight for the old shape of the calibration
+  // table, where only the hit rate was stored. Low enough that
+  // the blend stays gentle.
+  const LEGACY_SAMPLE_WEIGHT = 0.25;
+
   let CALIBRATION = {};
 
-  function setCalibration(table) { CALIBRATION = table || {}; }
+  function setCalibration(table) {
+    CALIBRATION = table || {};
+  }
 
-  function loadCalibrationFromStorage() {
+  // Load the calibration table from storage. Called at module init
+  // and again by the orchestrator after the learning loop runs,
+  // so a fresh table takes effect in the same session.
+  function reloadCalibration() {
     try {
       const stored = localStorage.getItem('edge_governor_calibration');
       if (stored) CALIBRATION = JSON.parse(stored);
     } catch {}
+    return CALIBRATION;
   }
 
   function getDynamicWeights(sport) {
@@ -137,6 +187,9 @@ const EDGE_GOVERNOR = (() => {
         weight: w,
         contribution: round(contribution, 3),
         reason: f.reason || '',
+        // The situations family carries per-rule detail here.
+        // Other families do not, but the slot is uniform so
+        // consumers can iterate breakdown without branching.
         data: f.data || {},
       });
     });
@@ -192,7 +245,11 @@ const EDGE_GOVERNOR = (() => {
     const agreementFactor = 0.6 + agreement * 0.4;                // 0.6 to 1.0
     const rawConfidence = directional * agreementFactor;
     const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
-    const calibratedConfidence = applyCalibration(cappedConfidence);
+
+    // Calibration is a pull, not a substitution. The blended value
+    // moves toward the observed hit rate in the bucket by a
+    // sample-weighted factor. See applyCalibration for the shape.
+    const calibrated = applyCalibration(cappedConfidence);
 
     // ── 5. Data-availability caps ──
     // Two hard caps for missing inputs. These are the only caps
@@ -215,7 +272,7 @@ const EDGE_GOVERNOR = (() => {
       dataCaps.push('no line movement');
     }
 
-    const finalConfidence = round(Math.min(calibratedConfidence, cap, MAX_CONFIDENCE), 1);
+    const finalConfidence = round(Math.min(calibrated.value, cap, MAX_CONFIDENCE), 1);
 
     // ── 6. Decision ──
     const direction = posteriorHomeProb > 0.5 ? 'home' : 'away';
@@ -258,7 +315,8 @@ const EDGE_GOVERNOR = (() => {
       agreement_index: round(agreement, 3),
       shrinkage: round(shrink, 3),
       market_source: marketInfo.source,
-      calibrated: Object.keys(CALIBRATION).length > 0,
+      calibrated: calibrated.applied,
+      calibration_detail: calibrated.detail,
       data_caps: dataCaps,
       data_cap: cap,
 
@@ -313,19 +371,86 @@ const EDGE_GOVERNOR = (() => {
 
   // ============================================================
   // ── CALIBRATION ──
-  // The learning loop writes a table that maps raw confidence
-  // to historically observed hit rate. When it has run, use it.
-  // When it hasn't, return the input unchanged.
+  //
+  // The learning loop writes a table that maps raw confidence to
+  // historically observed hit rate. When it has run, the model's
+  // own confidence is pulled toward that observed rate — but only
+  // as far as the sample size in the bucket justifies.
+  //
+  // The table can be one of two shapes:
+  //
+  //   Old shape: { "65": 58.2, "70": 63.1, ... }
+  //     The bucket's observed hit rate. No sample size. Blended
+  //     with a fixed low pull weight because we don't know how
+  //     many picks the number came from.
+  //
+  //   New shape: { "65": { rate: 58.2, samples: 340 }, ... }
+  //     Rate and sample. The pull weight scales with sample size,
+  //     so a bucket backed by 500 picks moves the number a lot
+  //     and a bucket backed by 12 picks barely moves it.
+  //
+  // The v3.0 code substituted the rate for the confidence. That
+  // meant a 25-sample bucket had the same authority as a
+  // 500-sample bucket, and it meant the number leaving the
+  // governor was no longer on the same scale as the thresholds
+  // it was about to be compared against.
   // ============================================================
 
   function applyCalibration(confidence) {
     const keys = Object.keys(CALIBRATION);
-    if (!keys.length) return round(confidence, 1);
+    if (!keys.length) {
+      return { value: round(confidence, 1), applied: false, detail: null };
+    }
 
     const bucket = Math.round(confidence / 5) * 5;
-    const hit = CALIBRATION[String(bucket)];
-    if (typeof hit === 'number') return round(hit, 1);
-    return round(confidence, 1);
+    const entry = CALIBRATION[String(bucket)];
+    if (entry == null) {
+      return { value: round(confidence, 1), applied: false, detail: null };
+    }
+
+    // Support both table shapes.
+    let rate = null;
+    let samples = null;
+    let shape = 'unknown';
+
+    if (typeof entry === 'number') {
+      rate = entry;
+      samples = null;
+      shape = 'legacy';
+    } else if (entry && typeof entry === 'object') {
+      if (typeof entry.rate === 'number') rate = entry.rate;
+      if (typeof entry.samples === 'number') samples = entry.samples;
+      shape = 'structured';
+    }
+
+    if (rate == null || !isFinite(rate)) {
+      return { value: round(confidence, 1), applied: false, detail: null };
+    }
+
+    // Bucket rate is a percent (e.g. 58.2). Confidence is also a
+    // percent. Both on the same scale — good.
+    const sampleWeight = samples != null
+      ? clamp(samples / CALIBRATION_FULL_SAMPLE, 0, 1)
+      : LEGACY_SAMPLE_WEIGHT;
+
+    const pull = MAX_CALIBRATION_PULL * sampleWeight;
+    const blended = confidence + (rate - confidence) * pull;
+    const final = clamp(blended, 0, MAX_CONFIDENCE);
+
+    return {
+      value: round(final, 1),
+      applied: true,
+      detail: {
+        bucket,
+        bucket_rate: round(rate, 2),
+        samples,
+        sample_weight: round(sampleWeight, 3),
+        pull: round(pull, 3),
+        input: round(confidence, 1),
+        output: round(final, 1),
+        shape,
+      },
+    };
   }
 
   // ============================================================
@@ -357,6 +482,9 @@ const EDGE_GOVERNOR = (() => {
     const kellyFractional = Math.max(kellyRaw * 0.25, 0);
     // kelly_units is a scaled version of fractional Kelly: 1 unit
     // is 20% of bankroll, so a fractional Kelly of 0.10 → 0.5 units.
+    // Physics does not use this field; it reads kelly_raw and does
+    // its own scaling against the configured unit size. Kept here
+    // for consumers that want a quick "approximately N units" read.
     const kellyUnits = kellyFractional * 5;
 
     return {
@@ -403,6 +531,7 @@ const EDGE_GOVERNOR = (() => {
       shrinkage: 0,
       market_source: 'none',
       calibrated: false,
+      calibration_detail: null,
       data_caps: [],
       data_cap: 100,
       raw_confidence: 0,
@@ -423,17 +552,22 @@ const EDGE_GOVERNOR = (() => {
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
-  loadCalibrationFromStorage();
+  // Load once at module init.
+  reloadCalibration();
 
   return {
+    BUILD,
     run,
     setCalibration,
+    reloadCalibration,
     getDynamicWeights,
     STATIC_WEIGHTS,
     THRESHOLDS,
     MARKET_SHRINK,
     HOME_BASELINE,
     MAX_CONFIDENCE,
+    MAX_CALIBRATION_PULL,
+    CALIBRATION_FULL_SAMPLE,
     spreadToImplied,
     americanToImplied,
   };
