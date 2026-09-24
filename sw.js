@@ -1,26 +1,32 @@
 // ============================================================
-// EDGE — Service Worker v3.1
+// EDGE — Service Worker v2
 // App shell is precached so every page opens offline.
 // Network-first at runtime so a reload always gets fresh code.
 //
-// v3.1 — Two fixes from the roster build dying at "teams returned
-// non-object (len 2)":
+// v2 — VERSION bumped. Any browser that has the old service
+// worker installed will not fetch new files until the cache
+// name changes, because the install handler only runs when the
+// script bytes differ and the activate handler keeps whichever
+// caches match the current names. Bumping VERSION creates new
+// cache names, so activate drops the old ones and the next load
+// pulls the fresh modules. Every code fix deployed before this
+// bump was sitting behind the old cache on any installed device.
 //
-//   1. isCacheableApi no longer treats every ESPN endpoint the same.
-//      Teams, rosters, and summaries always go to the network.
-//      Only scoreboard reads are cacheable. The previous rule cached
-//      the empty-array fallback for /teams, so the first network
-//      failure poisoned every subsequent roster build — the SW kept
-//      handing back `[]` and the fetch looked like it succeeded.
+// Every current engine is now precached. score-backfill,
+// situations-engine, situation-results, backfill and the
+// prop-trends file were all missing from v1, so a browser that
+// loaded a page using one of them offline would 404 the script
+// and the page would fail silently at the first call.
 //
-//   2. The offline fallback is no longer cached. If the network is
-//      down, the caller gets an empty body but nothing is stored, so
-//      the next attempt hits the real ESPN.
-//
-// Also added the missing engines to the precache list.
+// The v3.1 fetch rules are retained:
+//   · Only scoreboard reads are cacheable on ESPN. Teams,
+//     rosters, summaries and injuries always go to the network
+//     because a cached empty array there poisons the next run.
+//   · The offline fallback is never stored, so a transient
+//     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v1';
+const VERSION = 'edge-v2';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -42,8 +48,11 @@ const SHELL_FILES = [
   './admin.html',
   './diagnostic.html',
   './data.html',
+  './slate.html',
+  './test-espn.html',
+  './login.html',
 
-  // Core engines
+  // Core rating and pipeline engines
   './rating-core.js',
   './power-engine.js',
   './algorithms.js',
@@ -61,6 +70,14 @@ const SHELL_FILES = [
   './trends-engine.js',
   './prop-trends-engine.js',
   './box-score-fetcher.js',
+
+  // Situations and scoring
+  './situations-engine.js',
+  './situation-results.js',
+  './score-backfill.js',
+
+  // Calibration
+  './backfill.js',
 
   // Orchestration
   './orchestrator.js',
@@ -125,11 +142,11 @@ self.addEventListener('fetch', (event) => {
 //   · ESPN /scoreboard    — the one endpoint whose empty response is
 //                           meaningful (no games today is real data)
 //
-// Everything else on ESPN — /teams, /roster, /summary, /injuries —
-// must hit the network every time. Those endpoints do not have a
-// meaningful empty response; a cached `[]` there silently breaks
-// the roster build, the box score fetch, and anything that relies
-// on them.
+// Everything else on ESPN — /teams, /roster, /summary, /injuries,
+// /events/*/odds — must hit the network every time. Those endpoints
+// do not have a meaningful empty response; a cached [] there
+// silently breaks the roster build, the box score fetch, and the
+// ATS odds resolver.
 function isCacheableApi(url) {
   if (url.hostname.endsWith('.supabase.co') && url.pathname.startsWith('/rest/v1/')) {
     return true;
