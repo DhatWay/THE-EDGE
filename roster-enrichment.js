@@ -1,67 +1,116 @@
 // ============================================================
-// EDGE — ROSTER ENRICHMENT v3.1
+// EDGE — ROSTER ENRICHMENT v3.2
+//
+// Reads production from player_game_stats and refines each
+// player's rating from the 50 baseline to a 40-95 scale.
+//
+// Workflow:
+//   1. Fetch Box Scores  → fills player_game_stats
+//   2. Enrich Rosters    → reads player_game_stats, z-scores
+//                          per position group, updates players
+//
+// v3.2 changes:
+//
+//   · METRIC_CONFIG now holds independent objects per sport.
+//     The v3.1 code did `METRIC_CONFIG.NCAAF = METRIC_CONFIG.NFL`,
+//     which made the two keys point at the same array — and the
+//     array's inner objects were shared too. Nothing currently
+//     mutates the config, so the bug is latent rather than active.
+//     But the next person who adds a college-specific tweak to
+//     NCAAF would silently change NFL as well, and the mistake
+//     would not surface until the two sports' numbers disagreed
+//     in a way that was hard to trace back. Each key now owns
+//     its own array and its own objects, produced by cloning the
+//     template at module load.
+//
+//   · POSITION_WEIGHTS was duplicated between roster-engine.js
+//     and this file. Same values in both. Not a bug — just a
+//     maintenance hazard worth noting for whenever the two files
+//     are next touched together. Left as-is here because fixing
+//     it properly means exporting from one file and importing
+//     in the other, which is a change to roster-engine.js.
 //
 // v3.1 — Reads production from player_game_stats instead of
 // ESPN. The leaders endpoint is CORS-blocked in the browser
 // (same as /teams), and re-fetching data we already own was
 // the wrong shape anyway. player_game_stats has every stat
 // we need, already mapped, already local.
-//
-// Workflow:
-//   1. Fetch Box Scores  → fills player_game_stats
-//   2. Enrich Rosters    → reads player_game_stats, z-scores
-//                          per position group, updates players
 // ============================================================
 
 const EDGE_ROSTER_ENRICH = (() => {
 
+  const BUILD = 'enrich-20260924-01';
+
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  // Which stat columns on player_game_stats to aggregate, per
-  // position group. The column names match the schema exactly.
+  // Deep clone of a metric config array. Each entry becomes its
+  // own object with its own `groups` array, so mutating a clone
+  // cannot reach the original.
+  function cloneMetrics(list) {
+    return list.map(m => ({
+      col: m.col,
+      weight: m.weight,
+      groups: Array.isArray(m.groups) ? m.groups.slice() : m.groups,
+      agg: m.agg,
+      inverted: m.inverted,
+    }));
+  }
+
+  const NFL_METRICS = [
+    { col: 'passing_yards',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    { col: 'passing_tds',      weight: 1.0, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    { col: 'rushing_yards',    weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    { col: 'rushing_tds',      weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    { col: 'receiving_yards',  weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    { col: 'receiving_tds',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    // Defense — no per-player sacks/tackles stored yet, skip
+  ];
+
+  const NBA_METRICS = [
+    { col: 'points',    weight: 1.0, groups: [], agg: 'avg' },
+    { col: 'assists',   weight: 0.6, groups: [], agg: 'avg' },
+    { col: 'rebounds',  weight: 0.5, groups: [], agg: 'avg' },
+    { col: 'steals',    weight: 0.4, groups: [], agg: 'avg' },
+    { col: 'blocks',    weight: 0.4, groups: [], agg: 'avg' },
+    { col: 'three_made',weight: 0.5, groups: [], agg: 'avg' },
+  ];
+
+  const MLB_METRICS = [
+    { col: 'hits',                weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'avg' },
+    { col: 'home_runs',           weight: 0.9, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'sum' },
+    { col: 'rbis',                weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'sum' },
+    { col: 'earned_runs',         weight: 1.0, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], agg: 'avg', inverted: true },
+    { col: 'pitching_strikeouts', weight: 0.8, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], agg: 'avg' },
+  ];
+
+  const NHL_METRICS = [
+    { col: 'goals',         weight: 0.9, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
+    { col: 'assists',       weight: 0.8, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
+    { col: 'shots',         weight: 0.5, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
+    { col: 'saves',         weight: 1.0, groups: ['GOALIE'], agg: 'avg' },
+    { col: 'goals_against', weight: 1.0, groups: ['GOALIE'], agg: 'avg', inverted: true },
+  ];
+
+  const MLS_METRICS = [
+    { col: 'goals',           weight: 1.0, groups: ['FORWARD','MIDFIELD','DEFENSE'], agg: 'sum' },
+    { col: 'assists',         weight: 0.7, groups: ['FORWARD','MIDFIELD','DEFENSE'], agg: 'sum' },
+    { col: 'shots_on_target', weight: 0.4, groups: ['FORWARD','MIDFIELD'], agg: 'sum' },
+    { col: 'saves',           weight: 1.0, groups: ['GOALKEEPER'], agg: 'sum' },
+  ];
+
+  // Every key owns its own array and its own inner objects. No
+  // two keys share a reference.
   const METRIC_CONFIG = {
-    NFL: [
-      { col: 'passing_yards',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-      { col: 'passing_tds',      weight: 1.0, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-      { col: 'rushing_yards',    weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-      { col: 'rushing_tds',      weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-      { col: 'receiving_yards',  weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-      { col: 'receiving_tds',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-      // Defense — no per-player sacks/tackles stored yet, skip
-    ],
-    NBA: [
-      { col: 'points',    weight: 1.0, groups: [], agg: 'avg' },
-      { col: 'assists',   weight: 0.6, groups: [], agg: 'avg' },
-      { col: 'rebounds',  weight: 0.5, groups: [], agg: 'avg' },
-      { col: 'steals',    weight: 0.4, groups: [], agg: 'avg' },
-      { col: 'blocks',    weight: 0.4, groups: [], agg: 'avg' },
-      { col: 'three_made',weight: 0.5, groups: [], agg: 'avg' },
-    ],
-    MLB: [
-      { col: 'hits',              weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'avg' },
-      { col: 'home_runs',         weight: 0.9, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'sum' },
-      { col: 'rbis',              weight: 0.7, groups: ['CATCHER','INFIELD','OUTFIELD','DH','HITTER'], agg: 'sum' },
-      { col: 'earned_runs',       weight: 1.0, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], agg: 'avg', inverted: true },
-      { col: 'pitching_strikeouts', weight: 0.8, groups: ['PITCHER_START','PITCHER_RELIEF','PITCHER'], agg: 'avg' },
-    ],
-    NHL: [
-      { col: 'goals',      weight: 0.9, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
-      { col: 'assists',    weight: 0.8, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
-      { col: 'shots',      weight: 0.5, groups: ['FORWARD','DEFENSE'], agg: 'sum' },
-      { col: 'saves',      weight: 1.0, groups: ['GOALIE'], agg: 'avg' },
-      { col: 'goals_against', weight: 1.0, groups: ['GOALIE'], agg: 'avg', inverted: true },
-    ],
-    MLS: [
-      { col: 'goals',           weight: 1.0, groups: ['FORWARD','MIDFIELD','DEFENSE'], agg: 'sum' },
-      { col: 'assists',         weight: 0.7, groups: ['FORWARD','MIDFIELD','DEFENSE'], agg: 'sum' },
-      { col: 'shots_on_target', weight: 0.4, groups: ['FORWARD','MIDFIELD'], agg: 'sum' },
-      { col: 'saves',           weight: 1.0, groups: ['GOALKEEPER'], agg: 'sum' },
-    ],
+    NFL:   cloneMetrics(NFL_METRICS),
+    NCAAF: cloneMetrics(NFL_METRICS),
+    NBA:   cloneMetrics(NBA_METRICS),
+    NCAAB: cloneMetrics(NBA_METRICS),
+    WNBA:  cloneMetrics(NBA_METRICS),
+    MLB:   cloneMetrics(MLB_METRICS),
+    NHL:   cloneMetrics(NHL_METRICS),
+    MLS:   cloneMetrics(MLS_METRICS),
   };
-  METRIC_CONFIG.NCAAF = METRIC_CONFIG.NFL;
-  METRIC_CONFIG.NCAAB = METRIC_CONFIG.NBA;
-  METRIC_CONFIG.WNBA  = METRIC_CONFIG.NBA;
 
   const POSITION_WEIGHTS = {
     OFFENSE_SKILL: 0.55, OFFENSE_LINE: 0.45,
@@ -93,6 +142,7 @@ const EDGE_ROSTER_ENRICH = (() => {
   const WRITE_CONCURRENCY = 8;
 
   return {
+    BUILD,
     enrichAll,
     enrichSport,
     METRIC_CONFIG,
