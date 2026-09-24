@@ -17,20 +17,23 @@
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
+  <script src="trends-engine.js"></script>
+  <script src="prop-trends-engine.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
+  <script src="situations-engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -243,6 +246,9 @@
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
+    <a href="test-espn.html"><span class="ico">⌬</span> ESPN Test</a>
   </div>
 
   <main>
@@ -510,13 +516,17 @@
       picks.forEach(p => {
         if (!p.created_at) return;
         const d = new Date(p.created_at);
+        // key for sorting, lbl for display. The old sort used the
+        // display label, which is wrong across year boundaries.
         const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
         const lbl = d.toLocaleDateString('en-US', { month: 'short' });
-        if (!months[key]) months[key] = { lbl, pnl: 0 };
+        if (!months[key]) months[key] = { key, lbl, pnl: 0 };
         months[key].pnl += p.pnl || 0;
       });
 
-      const sorted = Object.values(months).sort((a, b) => a.lbl.localeCompare(b.lbl)).slice(-10);
+      const sorted = Object.values(months)
+        .sort((a, b) => a.key.localeCompare(b.key))
+        .slice(-10);
       const svg = document.getElementById('pnlChart');
       const labels = document.getElementById('chartLabels');
 
@@ -644,6 +654,7 @@
           environment: 'Environment',
           trend: 'Trend & Momentum',
           injury: 'Injury Impact',
+          situations: 'Situational Handicapping',
         };
 
         const sorted = Object.values(byFamily).map(f => ({
