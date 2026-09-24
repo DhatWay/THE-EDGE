@@ -25,7 +25,7 @@
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
-  <script src="box-score-fetcher.js"></script>  
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -34,6 +34,7 @@
   <script src="score-backfill.js"></script>
   <script src="situation-results.js"></script>
   <script src="situations-engine.js"></script>
+  <script src="backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -187,7 +188,7 @@
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
     <a href="test-espn.html"><span class="ico">◈</span> ESPN</a>
-    <a href="slate.html" class="active"><span class="ico">⬡</span> SPREAD</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -223,7 +224,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -307,6 +308,19 @@
           <button class="pipeline-btn secondary" id="runScoreBtn" onclick="runScoreBackfill()">▲ Backfill Scores</button>
         </div>
         <div class="pipeline-log" id="scoreLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Backfill &amp; Calibration</div>
+        </div>
+        <div class="pipeline-desc">
+          Pulls multiple completed seasons per sport, rates each in order with carry-over between seasons, walks the season forward to measure projection error on unseen games, fits the model constants (home advantage, margin scale) to real results, and measures how much the model adds beyond the closing line. Writes model_calibration, which the governor reads on every run. Without this the model uses compiled defaults it never validated.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runBackfillBtn" onclick="runBackfill()">▲ Run Backfill &amp; Calibration</button>
+        </div>
+        <div class="pipeline-log" id="backfillLog">Idle.</div>
       </div>
 
       <div class="pipeline-panel">
@@ -443,7 +457,7 @@
         <div class="key-saved" id="savedClaudeKey"></div>
       </div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1.5px;color:var(--text-dim);line-height:1.7;margin-top:8px;">
-        Model: claude-opus-4 · Batch-first with prompt caching · Only active in AI-assisted mode
+        Model: claude-sonnet-4-5 · Batch-first with prompt caching · Only active in AI-assisted mode
       </div>
     </div>
 
@@ -522,6 +536,8 @@
         <button class="raw-tab" data-tab="trends" onclick="setRawTab('trends',this)">Trends</button>
         <button class="raw-tab" data-tab="pgs" onclick="setRawTab('pgs',this)">Player Stats</button>
         <button class="raw-tab" data-tab="proptrends" onclick="setRawTab('proptrends',this)">Prop Trends</button>
+        <button class="raw-tab" data-tab="situations" onclick="setRawTab('situations',this)">Situations</button>
+        <button class="raw-tab" data-tab="calibration" onclick="setRawTab('calibration',this)">Calibration</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -534,6 +550,7 @@
       <button class="danger-btn" onclick="clearAllKeys()">Remove All API Keys</button>
       <button class="danger-btn" onclick="clearShadowPicks()">Clear All Shadow Picks</button>
       <button class="danger-btn" onclick="clearInjuryCache()">Clear Injury Cache</button>
+      <button class="danger-btn" onclick="clearContextCache()">Clear Context Cache (weather + schedule)</button>
       <button class="danger-btn" onclick="clearLocalStorage()">Wipe Local Storage (keeps API keys)</button>
     </div>
 
@@ -601,31 +618,34 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/9 · Power Ratings');
+      log('Stage 1/10 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/9 · Build Rosters');
+      log('Stage 2/10 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/9 · Enrich Rosters');
+      log('Stage 3/10 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/9 · Build ATS & H2H');
+      log('Stage 4/10 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/9 · Backfill Scores');
+      log('Stage 5/10 · Backfill Scores');
       try { await runScoreBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/9 · Build Trends');
+      log('Stage 6/10 · Backfill & Calibration');
+      try { await runBackfill(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 7/10 · Build Trends');
       try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 7/9 · Pull Player Stats');
+      log('Stage 8/10 · Pull Player Stats');
       try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 8/9 · Build Prop Trends');
+      log('Stage 9/10 · Build Prop Trends');
       try { await runPropTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 9/9 · Refresh Injuries');
+      log('Stage 10/10 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
@@ -825,6 +845,39 @@
       return result;
     }
 
+    async function runBackfill(silent = false) {
+      const btn = document.getElementById('runBackfillBtn');
+      const logEl = document.getElementById('backfillLog');
+      if (!window.EDGE_BACKFILL) { showToast('backfill.js not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Backfilling seasons…\n'; }
+
+      const log = (msg) => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      let result;
+      try {
+        result = await window.EDGE_BACKFILL.run({
+          sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'MLS'],
+          seasons: 3,
+          onProgress: log,
+        });
+      } catch (e) {
+        log('failed: ' + e.message);
+        if (!silent) { btn.disabled = false; showToast('Backfill failed', 'error'); }
+        return null;
+      }
+
+      if (!silent) {
+        btn.disabled = false;
+        const sportsOk = Object.values(result.sports || {}).filter(s => s && s.ok).length;
+        log(`✓ ${sportsOk} sports calibrated`);
+        showToast(`✓ ${sportsOk} sports calibrated`, '');
+      }
+      return result;
+    }
+
     async function runTrendsBuild(silent = false) {
       const btn = document.getElementById('runTrendsBtn');
       const logEl = document.getElementById('trendsLog');
@@ -1006,7 +1059,7 @@
             'Content-Type':'application/json', 'x-api-key':key,
             'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'
           },
-          body: JSON.stringify({ model: 'claude-opus-4-20250514', max_tokens: 10, messages: [{ role: 'user', content: 'ping' }] })
+          body: JSON.stringify({ model: 'claude-sonnet-4-5-20250929', max_tokens: 10, messages: [{ role: 'user', content: 'ping' }] })
         });
         if (res.ok) { updateDot('dotClaude','statusClaude','ok','Connected'); showToast('Claude connected ✓'); }
         else { updateDot('dotClaude','statusClaude','err','Invalid key'); showToast('Invalid Claude API key', 'error'); }
@@ -1127,6 +1180,26 @@
           out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
+        if (currentRawTab === 'situations') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const [perf, results] = await Promise.all([
+            fetch(`${url}/rest/v1/situation_performance?select=*&order=hit_rate.desc&limit=40`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+            fetch(`${url}/rest/v1/situation_results?select=*&order=game_date.desc&limit=20`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+          ]);
+          const perfRows = perf.ok ? await perf.json() : [];
+          const resultRows = results.ok ? await results.json() : [];
+          out.textContent = JSON.stringify({
+            performance_sample: perfRows,
+            results_sample: resultRows,
+          }, null, 2);
+          return;
+        }
+        if (currentRawTab === 'calibration') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/model_calibration?select=*&order=sport`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
+          return;
+        }
         if (currentRawTab === 'odds') {
           const oddsKey = localStorage.getItem('edge_odds_api_key');
           if (!oddsKey) { out.textContent = 'No Odds API key'; return; }
@@ -1170,7 +1243,19 @@
     function clearInjuryCache() {
       localStorage.removeItem('edge_injury_cache_v1');
       localStorage.removeItem('edge_injury_cache_v2');
+      localStorage.removeItem('edge_injury_cache_v3');
       showToast('Injury cache cleared');
+    }
+
+    function clearContextCache() {
+      if (window.EDGE_CONTEXT && typeof EDGE_CONTEXT.clearCache === 'function') {
+        EDGE_CONTEXT.clearCache();
+        showToast('Context cache cleared');
+      } else {
+        localStorage.removeItem('edge_weather_cache_v1');
+        localStorage.removeItem('edge_schedule_cache_v1');
+        showToast('Context cache cleared (fallback)');
+      }
     }
 
     function clearLocalStorage() {
