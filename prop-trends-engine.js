@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — PROP TRENDS ENGINE v1.0
+// EDGE — PROP TRENDS ENGINE v1.1
 //
 // Reads player_game_stats and mines per-player, per-opponent
 // streaks like "Josh Allen 300+ pass yards vs NYJ — 10 straight".
@@ -10,9 +10,25 @@
 //
 // Run once per sport. Reads only from the local database — no
 // external fetches. Takes seconds.
+//
+// v1.1 changes:
+//
+//   · THRESHOLDS now holds independent objects per sport. The
+//     v1.0 code did THRESHOLDS.NCAAF = THRESHOLDS.NFL and the
+//     same for NCAAB, which made the two keys point at the same
+//     array — and the array's inner objects were shared too.
+//     Nothing currently mutates the config, so the bug is latent
+//     rather than active. But the next time someone adds a
+//     college-only threshold they would silently also change the
+//     pro sport, and the mistake would not surface until the two
+//     sports' prop trends disagreed in a way that was hard to
+//     trace. Each key now owns its own array and its own objects,
+//     produced by cloning the template at module load.
 // ============================================================
 
 const EDGE_PROP_TRENDS = (() => {
+
+  const BUILD = 'props-20260924-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -25,51 +41,77 @@ const EDGE_PROP_TRENDS = (() => {
     } catch {}
   }
 
+  // Deep clone of a threshold config array. Each entry becomes
+  // its own object with its own `thresholds` array, so mutating a
+  // clone cannot reach the original or any other sport.
+  function cloneThresholds(list) {
+    return list.map(t => ({
+      stat: t.stat,
+      label: t.label,
+      thresholds: Array.isArray(t.thresholds) ? t.thresholds.slice() : t.thresholds,
+      computed: t.computed || false,
+    }));
+  }
+
   // ============================================================
   // ── THRESHOLDS ──
-  // Each entry: { stat, label, threshold, direction }
-  // direction 'over' = we're tracking games AT OR ABOVE the number.
+  // Each entry: { stat, label, thresholds, computed? }
+  //
+  // `computed` marks a stat that is not a raw column and must be
+  // derived from other stats per row — for hockey/soccer points,
+  // goals + assists.
   // ============================================================
 
+  const NFL_THRESHOLDS = [
+    { stat: 'passing_yards',    label: 'pass yds',   thresholds: [200, 250, 300, 350] },
+    { stat: 'passing_tds',      label: 'pass TD',    thresholds: [1, 2, 3] },
+    { stat: 'rushing_yards',    label: 'rush yds',   thresholds: [50, 75, 100, 125] },
+    { stat: 'rushing_tds',      label: 'rush TD',    thresholds: [1, 2] },
+    { stat: 'receptions',       label: 'receptions', thresholds: [4, 6, 8, 10] },
+    { stat: 'receiving_yards',  label: 'rec yds',    thresholds: [50, 75, 100] },
+    { stat: 'receiving_tds',    label: 'rec TD',     thresholds: [1, 2] },
+  ];
+
+  const NBA_THRESHOLDS = [
+    { stat: 'points',     label: 'points',   thresholds: [15, 20, 25, 30, 40] },
+    { stat: 'rebounds',   label: 'rebounds', thresholds: [5, 8, 10, 12] },
+    { stat: 'assists',    label: 'assists',  thresholds: [4, 6, 8, 10] },
+    { stat: 'three_made', label: '3PM',      thresholds: [2, 3, 4, 5] },
+  ];
+
+  const MLB_THRESHOLDS = [
+    { stat: 'hits',       label: 'hits', thresholds: [1, 2, 3] },
+    { stat: 'home_runs',  label: 'HR',   thresholds: [1, 2] },
+    { stat: 'rbis',       label: 'RBIs', thresholds: [1, 2, 3] },
+    { stat: 'runs',       label: 'runs', thresholds: [1, 2] },
+    { stat: 'strikeouts', label: 'K',    thresholds: [5, 7, 10] },
+  ];
+
+  const NHL_THRESHOLDS = [
+    { stat: 'goals',   label: 'goals',   thresholds: [1, 2] },
+    { stat: 'assists', label: 'assists', thresholds: [1, 2] },
+    { stat: 'points',  label: 'points',  thresholds: [1, 2, 3], computed: true },
+    { stat: 'saves',   label: 'saves',   thresholds: [25, 30, 35] },
+  ];
+
+  const MLS_THRESHOLDS = [
+    { stat: 'goals',   label: 'goals',   thresholds: [1, 2] },
+    { stat: 'assists', label: 'assists', thresholds: [1] },
+    { stat: 'saves',   label: 'saves',   thresholds: [3, 5, 7] },
+  ];
+
+  // Every key owns its own array and its own inner objects. No two
+  // keys share a reference.
   const THRESHOLDS = {
-    NFL: [
-      { stat: 'passing_yards',    label: 'pass yds',    thresholds: [200, 250, 300, 350] },
-      { stat: 'passing_tds',      label: 'pass TD',     thresholds: [1, 2, 3] },
-      { stat: 'rushing_yards',    label: 'rush yds',    thresholds: [50, 75, 100, 125] },
-      { stat: 'rushing_tds',      label: 'rush TD',     thresholds: [1, 2] },
-      { stat: 'receptions',       label: 'receptions',  thresholds: [4, 6, 8, 10] },
-      { stat: 'receiving_yards',  label: 'rec yds',     thresholds: [50, 75, 100] },
-      { stat: 'receiving_tds',    label: 'rec TD',      thresholds: [1, 2] },
-    ],
-    NCAAF: null,   // same as NFL — assigned below
-    NBA: [
-      { stat: 'points',    label: 'points',   thresholds: [15, 20, 25, 30, 40] },
-      { stat: 'rebounds',  label: 'rebounds', thresholds: [5, 8, 10, 12] },
-      { stat: 'assists',   label: 'assists',  thresholds: [4, 6, 8, 10] },
-      { stat: 'three_made',label: '3PM',      thresholds: [2, 3, 4, 5] },
-    ],
-    NCAAB: null,   // same as NBA
-    MLB: [
-      { stat: 'hits',       label: 'hits',    thresholds: [1, 2, 3] },
-      { stat: 'home_runs',  label: 'HR',      thresholds: [1, 2] },
-      { stat: 'rbis',       label: 'RBIs',    thresholds: [1, 2, 3] },
-      { stat: 'runs',       label: 'runs',    thresholds: [1, 2] },
-      { stat: 'strikeouts', label: 'K',       thresholds: [5, 7, 10] },
-    ],
-    NHL: [
-      { stat: 'goals',  label: 'goals',    thresholds: [1, 2] },
-      { stat: 'assists',label: 'assists',  thresholds: [1, 2] },
-      { stat: 'points', label: 'points',   thresholds: [1, 2, 3], computed: true },
-      { stat: 'saves',  label: 'saves',    thresholds: [25, 30, 35] },
-    ],
-    MLS: [
-      { stat: 'goals',   label: 'goals',    thresholds: [1, 2] },
-      { stat: 'assists', label: 'assists',  thresholds: [1] },
-      { stat: 'saves',   label: 'saves',    thresholds: [3, 5, 7] },
-    ],
+    NFL:   cloneThresholds(NFL_THRESHOLDS),
+    NCAAF: cloneThresholds(NFL_THRESHOLDS),
+    NBA:   cloneThresholds(NBA_THRESHOLDS),
+    NCAAB: cloneThresholds(NBA_THRESHOLDS),
+    WNBA:  cloneThresholds(NBA_THRESHOLDS),
+    MLB:   cloneThresholds(MLB_THRESHOLDS),
+    NHL:   cloneThresholds(NHL_THRESHOLDS),
+    MLS:   cloneThresholds(MLS_THRESHOLDS),
   };
-  THRESHOLDS.NCAAF = THRESHOLDS.NFL;
-  THRESHOLDS.NCAAB = THRESHOLDS.NBA;
 
   // Streak shorter than this doesn't qualify on its own.
   const MIN_STREAK = 3;
@@ -79,11 +121,13 @@ const EDGE_PROP_TRENDS = (() => {
   const MIN_GAMES_VS_OPPONENT = 3;
 
   return {
+    BUILD,
     buildAll,
     buildSport,
     THRESHOLDS,
     MIN_STREAK,
     MIN_HIT_RATE,
+    MIN_GAMES_VS_OPPONENT,
   };
 
   // ============================================================
