@@ -49,6 +49,20 @@
     .page-title em { color: var(--gold); font-style: normal; }
     .page-sub { font-size: 13px; color: var(--text-dim); font-weight: 300; margin-top: 8px; }
 
+    .download-section { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .download-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+    .download-title { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: var(--text); }
+    .download-title em { color: var(--gold); font-style: normal; }
+    .download-all-btn { background: var(--gold); border: none; color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 9px 16px; cursor: pointer; border-radius: 2px; box-shadow: var(--lift); transition: all 0.2s; }
+    .download-all-btn:hover { background: var(--gold-bright); box-shadow: var(--lift-high); }
+    .download-all-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .download-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+    .dl-tile { background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 8px 12px; cursor: pointer; border-radius: 2px; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
+    .dl-tile:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+    .dl-tile:disabled { opacity: 0.4; cursor: wait; }
+    .dl-tile .count { color: var(--gold-dim); font-size: 10px; letter-spacing: 1.5px; }
+    .dl-tile:hover .count { color: var(--gold); }
+
     .toolbar { display: flex; gap: 8px; padding: 14px 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
     .tb-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 9px 13px; cursor: pointer; border-radius: 2px; box-shadow: var(--lift); transition: all 0.2s; }
     .tb-btn:hover { border-color: var(--gold); color: var(--gold); }
@@ -98,7 +112,7 @@
     .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s; }
     .offline-bar.show { transform: translateY(0); }
   </style>
- <script src="power-engine.js"></script>
+   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
@@ -138,7 +152,7 @@
   <div class="overlay" id="overlay"></div>
   <div class="drawer" id="drawer">
     <div class="drawer-section">Core</div>
-    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+        <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
@@ -170,11 +184,23 @@
       <div class="page-sub">Every table the pipeline reads and writes. Sort any column, filter by sport, export what you're looking at.</div>
     </div>
 
+    <div class="download-section">
+      <div class="download-head">
+        <div class="download-title">DOWNLOAD <em>DATA</em></div>
+        <button class="download-all-btn" id="downloadAllBtn" onclick="downloadAllTables()">↓ Download All</button>
+      </div>
+      <div class="download-grid" id="downloadGrid">
+        <div class="state" style="padding:20px;">
+          <div class="state-sub">Reading table sizes…</div>
+        </div>
+      </div>
+    </div>
+
     <div class="toolbar">
       <button class="tb-btn primary" onclick="loadActive(true)">Refresh</button>
       <button class="tb-btn" id="autoBtn" onclick="toggleAuto()">Auto: off</button>
       <input class="tb-search" id="search" placeholder="Filter rows…" oninput="render()" />
-      <button class="tb-btn" onclick="exportCsv()">CSV</button>
+      <button class="tb-btn" onclick="exportCsv()">CSV (view)</button>
       <div class="tb-meta" id="meta">—</div>
     </div>
 
@@ -465,6 +491,171 @@
     const SB_KEY = () => localStorage.getItem('edge_supabase_key');
     const PAGE_SIZE = 1000;
 
+    // ============================================================
+    // DOWNLOAD BAR
+    // ============================================================
+
+    async function renderDownloadBar() {
+      const grid = document.getElementById('downloadGrid');
+      const url = SB_URL(), key = SB_KEY();
+      if (!url || !key) {
+        grid.innerHTML = '<div class="state" style="padding:20px;"><div class="state-sub">Supabase not connected</div></div>';
+        return;
+      }
+
+      grid.innerHTML = '<div class="state" style="padding:20px;"><div class="state-sub"><span class="spinner"></span> Reading table sizes…</div></div>';
+
+      const headers = { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'count=exact' };
+      const counts = {};
+
+      await Promise.all(TABLES.map(async t => {
+        try {
+          const res = await fetch(`${url}/rest/v1/${t.id}?select=id&limit=1`, { headers });
+          if (!res.ok) { counts[t.id] = null; return; }
+          const range = res.headers.get('content-range') || '';
+          const parsed = parseInt(range.split('/')[1], 10);
+          counts[t.id] = Number.isFinite(parsed) ? parsed : null;
+        } catch { counts[t.id] = null; }
+      }));
+
+      grid.innerHTML = TABLES.map(t => {
+        const c = counts[t.id];
+        const countText = c == null ? '—' : c.toLocaleString();
+        const disabled = c === 0 ? 'disabled' : '';
+        return `<button class="dl-tile" id="dl-${t.id}" onclick="downloadTable('${t.id}')" ${disabled}>
+          ${t.label} <span class="count">${countText}</span>
+        </button>`;
+      }).join('');
+    }
+
+    async function fetchAllRows(tableId) {
+      const url = SB_URL(), key = SB_KEY();
+      if (!url || !key) return null;
+
+      const all = [];
+      const pageSize = 1000;
+      for (let offset = 0; offset < 500000; offset += pageSize) {
+        const res = await fetch(
+          `${url}/rest/v1/${tableId}?select=*&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) return null;
+        const batch = await res.json();
+        all.push(...batch);
+        if (batch.length < pageSize) break;
+      }
+      return all;
+    }
+
+    function rowsToCsv(table, rows) {
+      if (!rows || !rows.length) return null;
+
+      // Column order: union of keys, sorted alphabetically, with
+      // id first if present. This is stable across exports so a
+      // diff between two downloads of the same table is meaningful.
+      const keys = new Set();
+      rows.forEach(r => Object.keys(r).forEach(k => keys.add(k)));
+      const headers = Array.from(keys).sort();
+      if (headers.includes('id')) {
+        headers.splice(headers.indexOf('id'), 1);
+        headers.unshift('id');
+      }
+
+      const esc = v => {
+        if (v == null) return '';
+        if (typeof v === 'object') {
+          const s = JSON.stringify(v);
+          return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+        }
+        const s = String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+
+      const lines = [
+        headers.join(','),
+        ...rows.map(r => headers.map(h => esc(r[h])).join(',')),
+      ];
+
+      return lines.join('\n');
+    }
+
+    function saveCsv(filename, content) {
+      const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+
+    async function downloadTable(tableId) {
+      const tile = document.getElementById('dl-' + tableId);
+      if (tile) {
+        tile.disabled = true;
+        tile.dataset.originalText = tile.innerHTML;
+        tile.innerHTML = `${tableId} <span class="count">reading…</span>`;
+      }
+
+      try {
+        const data = await fetchAllRows(tableId);
+        if (!data) {
+          showToast(`${tableId} read failed`, true);
+          return false;
+        }
+        if (!data.length) {
+          showToast(`${tableId} is empty`, true);
+          return false;
+        }
+
+        const csv = rowsToCsv(tableId, data);
+        if (!csv) {
+          showToast(`${tableId} produced no rows`, true);
+          return false;
+        }
+
+        const stamp = new Date().toISOString().slice(0, 10);
+        saveCsv(`edge-${tableId}-${stamp}.csv`, csv);
+        showToast(`${tableId}: ${data.length.toLocaleString()} rows`);
+        return true;
+      } catch (e) {
+        showToast(`${tableId}: ${e.message}`, true);
+        return false;
+      } finally {
+        if (tile) {
+          tile.disabled = false;
+          if (tile.dataset.originalText) tile.innerHTML = tile.dataset.originalText;
+        }
+      }
+    }
+
+    async function downloadAllTables() {
+      const btn = document.getElementById('downloadAllBtn');
+      btn.disabled = true;
+      const original = btn.textContent;
+
+      let done = 0, failed = 0;
+      const total = TABLES.length;
+
+      for (const t of TABLES) {
+        btn.textContent = `↓ ${done + 1}/${total} · ${t.label}`;
+        const ok = await downloadTable(t.id);
+        if (ok) done++; else failed++;
+
+        // Browsers throttle concurrent downloads. A short pause
+        // between files keeps every one of them from being blocked
+        // and dropped.
+        await new Promise(r => setTimeout(r, 350));
+      }
+
+      btn.disabled = false;
+      btn.textContent = original;
+      showToast(`Downloaded ${done} of ${total}${failed ? ` · ${failed} failed` : ''}`);
+    }
+
     // ── TABS ──
     function renderTabs() {
       document.getElementById('tabs').innerHTML = TABLES.map(t => {
@@ -512,10 +703,6 @@
           all.push(...batch);
 
           if (offset === 0) {
-            // content-range looks like "0-99/12345" when the total is
-            // known, "0-99/*" when it is not, and is missing when the
-            // server does not return it. Parse defensively: only set
-            // the count when the tail is a finite integer.
             const range = res.headers.get('content-range') || '';
             const tail = range.split('/')[1];
             const parsed = parseInt(tail, 10);
@@ -642,28 +829,22 @@
       }
     }
 
-    // ── EXPORT ──
+    // ── EXPORT CURRENT VIEW ──
     function exportCsv() {
       const list = visibleRows();
       if (!list.length) { showToast('Nothing to export', true); return; }
       const t = activeTable;
-      const esc = v => {
-        if (v == null) return '';
-        const s = String(v);
-        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-      };
-      const csv = [
-        t.cols.map(c => c.t).join(','),
-        ...list.map(r => t.cols.map(c => esc(r[c.k])).join(',')),
-      ].join('\n');
 
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `edge-${t.id}-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      // Uses the displayed columns, not the union of all keys.
+      // Same columns you see on screen, same order.
+      const csv = rowsToCsv(t.id, list.map(r => {
+        const o = {};
+        t.cols.forEach(c => { o[c.k] = r[c.k]; });
+        return o;
+      }));
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      saveCsv(`edge-${t.id}-view-${stamp}.csv`, csv);
       showToast(`Exported ${list.length} rows`);
     }
 
@@ -676,6 +857,7 @@
 
     // ── INIT ──
     renderTabs();
+    renderDownloadBar();
     loadActive();
   </script>
 </body>
