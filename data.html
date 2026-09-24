@@ -111,7 +111,7 @@
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
-  <script src="box-score-fetcher.js"></script>  
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
@@ -120,6 +120,7 @@
   <script src="score-backfill.js"></script>
   <script src="situation-results.js"></script>
   <script src="situations-engine.js"></script>
+  <script src="backfill.js"></script>
 </head>
 <body>
 
@@ -143,19 +144,21 @@
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
-    <a href="data.html" class="active"><span class="ico">▤</span> Data Explorer</a>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
     <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="diagnostic.html"><span class="ico">⚡</span> Fix</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
-    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
-    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+    <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
+    <a href="test-espn.html"><span class="ico">◈</span> ESPN</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -211,8 +214,6 @@
 
     // ============================================================
     // TABLE DEFINITIONS
-    // Each entry says which columns to show, how to format them, and
-    // which Admin action fills the table when it comes back empty.
     // ============================================================
 
     const N  = (d = 1) => (v) => v == null ? '—' : Number(v).toFixed(d);
@@ -375,6 +376,7 @@
           { k: 'away',      t: 'Away',    f: TXT },
           { k: 'home',      t: 'Home',    f: TXT },
           { k: 'spread',    t: 'Close',   f: SIGNED(1), num: true, signed: true },
+          { k: 'open_spread', t: 'Open',  f: SIGNED(1), num: true, signed: true },
           { k: 'total',     t: 'Total',   f: N(1), num: true },
           { k: 'home_ml',   t: 'Home ML', f: SIGNED(0), num: true },
           { k: 'away_ml',   t: 'Away ML', f: SIGNED(0), num: true },
@@ -391,6 +393,45 @@
           { k: 'close_game_record',  t: 'Close W%', f: N(3), num: true },
           { k: 'max_adjustment',     t: 'Max Adj',  f: N(1), num: true },
           { k: 'updated_at',         t: 'Updated',  f: DATETIME },
+        ],
+      },
+      {
+        id: 'situation_performance', label: 'Situations', sportCol: 'sport',
+        order: 'hit_rate.desc', fills: 'Run the Slate Test',
+        cols: [
+          { k: 'sport',            t: 'Sport',   f: TXT, key: true },
+          { k: 'situation_id',     t: 'Rule',    f: TXT, key: true },
+          { k: 'season',           t: 'Season',  f: TXT },
+          { k: 'samples',          t: 'Samples', f: N(0), num: true },
+          { k: 'wins',             t: 'W',       f: N(0), num: true },
+          { k: 'losses',           t: 'L',       f: N(0), num: true },
+          { k: 'pushes',           t: 'P',       f: N(0), num: true },
+          { k: 'hit_rate',         t: 'Hit%',    f: PCT, num: true },
+          { k: 'roi',              t: 'ROI',     f: PCT, num: true },
+          { k: 'current_streak',   t: 'Streak',  f: SIGNED(0), num: true, signed: true },
+          { k: 'longest_streak',   t: 'Longest', f: N(0), num: true },
+          { k: 'qualified',        t: 'Live',    f: (v) => v ? 'Yes' : 'No' },
+        ],
+      },
+      {
+        id: 'model_calibration', label: 'Calibration', sportCol: 'sport',
+        order: 'sport.asc', fills: 'Run Backfill & Calibration from Admin',
+        cols: [
+          { k: 'sport',                t: 'Sport',       f: TXT, key: true },
+          { k: 'home_advantage',       t: 'HFA',         f: N(2), num: true },
+          { k: 'avg_total',            t: 'Avg Total',   f: N(1), num: true },
+          { k: 'margin_sd',            t: 'Margin SD',   f: N(2), num: true },
+          { k: 'margin_scale',         t: 'Margin Scale',f: N(2), num: true },
+          { k: 'projection_sigma',     t: 'Proj Sigma',  f: N(2), num: true },
+          { k: 'projection_mae',       t: 'MAE',         f: N(2), num: true },
+          { k: 'projection_bias',      t: 'Bias',        f: SIGNED(2), num: true, signed: true },
+          { k: 'market_lambda',        t: 'Lambda',      f: N(3), num: true },
+          { k: 'market_sigma',         t: 'Mkt Sigma',   f: N(2), num: true },
+          { k: 'blend_sigma',          t: 'Blend Sigma', f: N(2), num: true },
+          { k: 'sample_games',         t: 'Games',       f: N(0), num: true },
+          { k: 'sample_residuals',     t: 'Residuals',   f: N(0), num: true },
+          { k: 'market_verdict',       t: 'Verdict',     f: TXT },
+          { k: 'updated_at',           t: 'Updated',     f: DATETIME },
         ],
       },
       {
@@ -426,11 +467,13 @@
 
     // ── TABS ──
     function renderTabs() {
-      document.getElementById('tabs').innerHTML = TABLES.map(t =>
-        `<button class="tab ${t.id === activeTable.id ? 'active' : ''}" onclick="selectTable('${t.id}')">
-           ${t.label}<span class="badge" id="badge_${t.id}">${counts[t.id] != null ? counts[t.id] : ''}</span>
-         </button>`
-      ).join('');
+      document.getElementById('tabs').innerHTML = TABLES.map(t => {
+        const badge = counts[t.id];
+        const badgeText = (badge != null && Number.isFinite(badge)) ? badge.toLocaleString() : '';
+        return `<button class="tab ${t.id === activeTable.id ? 'active' : ''}" onclick="selectTable('${t.id}')">
+           ${t.label}<span class="badge" id="badge_${t.id}">${badgeText}</span>
+         </button>`;
+      }).join('');
     }
 
     function selectTable(id) {
@@ -467,9 +510,16 @@
           }
           const batch = await res.json();
           all.push(...batch);
+
           if (offset === 0) {
+            // content-range looks like "0-99/12345" when the total is
+            // known, "0-99/*" when it is not, and is missing when the
+            // server does not return it. Parse defensively: only set
+            // the count when the tail is a finite integer.
             const range = res.headers.get('content-range') || '';
-            counts[t.id] = parseInt(range.split('/')[1] || all.length, 10);
+            const tail = range.split('/')[1];
+            const parsed = parseInt(tail, 10);
+            if (Number.isFinite(parsed)) counts[t.id] = parsed;
           }
           if (batch.length < PAGE_SIZE) break;
         }
@@ -561,7 +611,8 @@
       const parts = [];
       parts.push(`${shown.toLocaleString()} rows`);
       if (capped && capped < shown) parts.push(`showing first ${capped}`);
-      if (counts[activeTable.id] != null) parts.push(`${counts[activeTable.id].toLocaleString()} total`);
+      const total = counts[activeTable.id];
+      if (total != null && Number.isFinite(total)) parts.push(`${total.toLocaleString()} total`);
       if (lastLoaded) parts.push(`loaded ${lastLoaded.toLocaleTimeString()}`);
       document.getElementById('meta').textContent = parts.join(' · ');
     }
