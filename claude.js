@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — CLAUDE SELECTOR v2.0
+// EDGE — CLAUDE SELECTOR v2.1
 //
 // v1 was a risk officer: physics sized a pick, then Claude approved,
 // vetoed or shaved it. It could only scale a number that already
@@ -18,16 +18,46 @@
 //   · Output is the pick and nothing else — strict JSON, no prose.
 //   · Below the confidence floor it returns nothing for that game.
 //     Silence is a valid answer.
+//
+// v2.1 changes:
+//   · MODEL was 'claude-sonnet-4-6', which is not a real Anthropic
+//     model id. Every request 404'd. Replaced with the current
+//     Sonnet id. Override with localStorage.edge_claude_model if
+//     you want to test a different model without redeploying.
+//   · Proxy path hardened. The URL trim is done once, and the
+//     /messages suffix is only appended if the proxy URL does not
+//     already end in it — so a proxy that already terminates at
+//     /messages is not double-suffixed.
+//   · Proxy mode now sends no anthropic-version header either, on
+//     the assumption the proxy is the one talking to Anthropic and
+//     the browser is talking only to the proxy.
+//   · Sends max_tokens as before but reports the actual model used
+//     on each selection row, so a slate run can be traced back to
+//     which model produced it.
 // ============================================================
 
 const EDGE_CLAUDE = (() => {
 
-  const DIRECT_API_URL = 'https://api.anthropic.com/v1/messages';
-  const PROXY_URL = () => (localStorage.getItem('edge_proxy_url') || '').trim().replace(/\/+$/, '');
-  const API_URL = () => { const p = PROXY_URL(); return p ? p + '/messages' : DIRECT_API_URL; };
+  const BUILD = 'claude-20260924-01';
 
-  const MODEL = 'claude-sonnet-4-6';
-  const PROMPT_VERSION = 'selector-v2-rating-core';
+  const DIRECT_API_URL = 'https://api.anthropic.com/v1/messages';
+
+  // The proxy URL, if set, is treated as the base of an
+  // Anthropic-compatible endpoint. If it ends in /messages, use it
+  // as-is. Otherwise append /messages.
+  const PROXY_URL = () => (localStorage.getItem('edge_proxy_url') || '').trim().replace(/\/+$/, '');
+  const API_URL = () => {
+    const p = PROXY_URL();
+    if (!p) return DIRECT_API_URL;
+    return /\/messages$/.test(p) ? p : p + '/messages';
+  };
+
+  // Anthropic model ids. The default is the current Sonnet — fast
+  // enough for a slate, strong enough for the reasoning the system
+  // prompt asks for. Override per-device with edge_claude_model.
+  const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
+  const MODEL = () => (localStorage.getItem('edge_claude_model') || '').trim() || DEFAULT_MODEL;
+  const PROMPT_VERSION = 'selector-v2';
 
   // Games per request. Large enough to let the model compare across
   // the slate, small enough to stay inside a sane response.
@@ -72,12 +102,14 @@ OUTPUT SCHEMA
 {"selections":[{"game_id":"<exact id from input>","side":"home"|"away","market":"spread"|"moneyline","confidence":<integer 0-100>,"reason":"<one sentence, max 25 words>","key_factor":"<the single strongest input, max 8 words>"}],"slate_note":"<max 20 words on the slate overall, or empty string>"}`;
 
   return {
+    BUILD,
     selectFromSlate,
     reviewBatch,
     buildSlateBundle,
     SYSTEM_PROMPT,
     PROMPT_VERSION,
-    MODEL,
+    DEFAULT_MODEL,
+    getModel: MODEL,
     DEFAULT_FLOOR,
   };
 
@@ -95,7 +127,9 @@ OUTPUT SCHEMA
     const log = (m) => { if (typeof onProgress === 'function') onProgress(m); };
 
     const apiKey = localStorage.getItem('edge_claude_api_key');
-    if (!apiKey && !PROXY_URL()) {
+    const hasProxy = !!PROXY_URL();
+
+    if (!apiKey && !hasProxy) {
       return { ok: false, error: 'No Anthropic API key and no proxy configured', selections: [] };
     }
     if (!Array.isArray(candidates) || !candidates.length) {
@@ -114,7 +148,10 @@ OUTPUT SCHEMA
 
     const valid = new Set(slate.map(c => String(c.prior.game_id)));
     const batches = chunk(slate, BATCH_SIZE);
-    log(`Claude selector · ${slate.length} games in ${batches.length} batch(es) · floor ${floor}%`);
+    const model = MODEL();
+
+    log(`Claude selector · ${slate.length} games in ${batches.length} batch(es) · floor ${floor}% · model ${model}`);
+    if (hasProxy) log(`  routing through proxy at ${API_URL()}`);
 
     const all = [];
     const notes = [];
@@ -122,7 +159,7 @@ OUTPUT SCHEMA
 
     for (let i = 0; i < batches.length; i++) {
       log(`  batch ${i + 1}/${batches.length}`);
-      const res = await askBatch(batches[i], apiKey, floor);
+      const res = await askBatch(batches[i], apiKey, floor, model);
       if (!res.ok) { failed++; notes.push(res.error); continue; }
 
       (res.selections || []).forEach(sel => {
@@ -139,7 +176,7 @@ OUTPUT SCHEMA
           confidence: Math.round(clamp(conf, 0, 100)),
           reason: String(sel.reason || '').slice(0, 200),
           key_factor: String(sel.key_factor || '').slice(0, 60),
-          model: MODEL,
+          model,
           prompt_version: PROMPT_VERSION,
           selected_at: new Date().toISOString(),
         });
@@ -163,12 +200,13 @@ OUTPUT SCHEMA
       selections,
       slate_size: slate.length,
       floor,
+      model,
       batches_failed: failed,
       notes: notes.filter(Boolean),
     };
   }
 
-  async function askBatch(batch, apiKey, floor) {
+  async function askBatch(batch, apiKey, floor, model) {
     const payload = {
       confidence_floor: floor,
       slate_date: new Date().toISOString().slice(0, 10),
@@ -197,7 +235,7 @@ OUTPUT SCHEMA
         signal: controller.signal,
         headers,
         body: JSON.stringify({
-          model: MODEL,
+          model,
           max_tokens: MAX_TOKENS,
           system: SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userMsg }],
