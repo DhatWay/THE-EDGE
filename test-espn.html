@@ -1,116 +1,573 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ESPN Test</title>
-  <style>
-    body { background: #080808; color: #F0EAD8; font-family: -apple-system, system-ui, sans-serif; padding: 24px; line-height: 1.6; }
-    h1 { font-size: 20px; letter-spacing: 2px; color: #C9A84C; margin-bottom: 20px; }
-    .test { background: #111; border: 1px solid rgba(201,168,76,0.2); padding: 16px; margin-bottom: 12px; border-radius: 4px; }
-    .label { font-size: 11px; letter-spacing: 1.5px; color: #7A7060; text-transform: uppercase; margin-bottom: 8px; }
-    .url { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #A89878; word-break: break-all; margin-bottom: 8px; }
-    .result { font-size: 15px; font-weight: 600; }
-    .ok { color: #27AE60; }
-    .fail { color: #E74C3C; }
-    .pending { color: #C9A84C; }
-    .detail { font-size: 12px; color: #7A7060; margin-top: 6px; word-break: break-all; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EDGE — ESPN Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#C9A84C" />
+<meta name="mobile-web-app-capable" content="yes" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+
 <script src="power-engine.js"></script>
-  <script src="algorithms.js"></script>
-  <script src="governor.js"></script>
-  <script src="physics.js"></script>
-  <script src="claude.js"></script>
-  <script src="team-aliases.js"></script>
-  <script src="context-builder.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="prop-trends-engine.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
-  <script src="injury-fragmentation.js"></script>
-  <script src="ats-tracker.js"></script>
-  <script src="box-score-fetcher.js"></script>  
-  <script src="orchestrator.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
-  <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
-  <script src="situation-results.js"></script>
-  <script src="situations-engine.js"></script>
+<script src="algorithms.js"></script>
+<script src="governor.js"></script>
+<script src="physics.js"></script>
+<script src="claude.js"></script>
+<script src="team-aliases.js"></script>
+<script src="context-builder.js"></script>
+<script src="trends-engine.js"></script>
+<script src="prop-trends-engine.js"></script>
+<script src="roster-engine.js"></script>
+<script src="roster-enrichment.js"></script>
+<script src="injury-fragmentation.js"></script>
+<script src="ats-tracker.js"></script>
+<script src="box-score-fetcher.js"></script>
+<script src="orchestrator.js"></script>
+<script src="learning.js"></script>
+<script src="parlay.js"></script>
+<script src="rating-core.js"></script>
+<script src="auth.js"></script>
+<script src="score-backfill.js"></script>
+<script src="situation-results.js"></script>
+<script src="situations-engine.js"></script>
+<script src="backfill.js"></script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --gold: #C9A84C; --gold-dim: #8A6E2F;
+    --bg: #080808; --bg2: #0F0F0F; --bg4: #1C1C1C;
+    --surface: #111111; --border: rgba(201,168,76,0.12); --border-bright: rgba(201,168,76,0.32);
+    --text: #F0EAD8; --text-dim: #7A7060; --text-mid: #A89878;
+    --green: #27AE60; --red: #E74C3C; --blue: #4A90D9;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; padding: 20px 16px 60px; font-size: 13px; line-height: 1.5; }
+
+  nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 54px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+  .logo { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .logo-mark { width: 30px; height: 30px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+  .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 4px; color: var(--gold); line-height: 1; }
+  .logo-sub { font-size: 7px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; }
+  .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+  .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+  .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+  .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+  .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+  .overlay.open { opacity: 1; pointer-events: all; }
+  .drawer { position: fixed; top: 54px; right: 0; width: 270px; height: calc(100vh - 54px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+  .drawer.open { transform: translateX(0); }
+  .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+  .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+  .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: rgba(201,168,76,0.10); }
+  .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+
+  main { padding-top: 70px; max-width: 900px; margin: 0 auto; }
+  h1 { font-family: 'Bebas Neue', sans-serif; font-size: 34px; letter-spacing: 4px; color: var(--text); margin-bottom: 4px; }
+  h1 em { color: var(--gold); font-style: normal; }
+  .sub { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 18px; }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 10px 18px; cursor: pointer; }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.secondary { background: none; border: 1px solid var(--border-bright); color: var(--gold); }
+
+  .summary { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); margin-bottom: 18px; }
+  .sum-cell { background: var(--surface); padding: 12px 8px; text-align: center; }
+  .sum-v { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; line-height: 1; }
+  .sum-v.ok { color: var(--green); }
+  .sum-v.err { color: var(--red); }
+  .sum-v.warn { color: var(--gold); }
+  .sum-l { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
+
+  .group { margin-bottom: 20px; }
+  .group-head { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 3px; color: var(--text); margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .group-head em { color: var(--gold); font-style: normal; }
+  .group-desc { font-size: 11.5px; color: var(--text-dim); font-weight: 300; margin-bottom: 10px; line-height: 1.5; }
+
+  .test { background: var(--surface); border: 1px solid var(--border); margin-bottom: 8px; padding: 12px 14px; }
+  .test.pending { border-left: 3px solid var(--text-dim); }
+  .test.ok { border-left: 3px solid var(--green); }
+  .test.fail { border-left: 3px solid var(--red); }
+  .test.warn { border-left: 3px solid var(--gold); }
+  .test-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+  .test-label { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); }
+  .test-result { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 10px; border: 1px solid; min-width: 60px; text-align: center; }
+  .test-result.pending { border-color: var(--text-dim); color: var(--text-dim); }
+  .test-result.ok { border-color: rgba(39,174,96,0.5); color: var(--green); }
+  .test-result.fail { border-color: rgba(231,76,60,0.5); color: var(--red); }
+  .test-result.warn { border-color: rgba(201,168,76,0.5); color: var(--gold); }
+  .test-url { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--text-mid); word-break: break-all; line-height: 1.5; margin-bottom: 6px; }
+  .test-detail { font-size: 11.5px; color: var(--text-dim); line-height: 1.55; font-weight: 300; }
+  .test-detail b { color: var(--text-mid); font-weight: 600; }
+  .test-used-by { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold-dim); margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(201,168,76,0.06); }
+
+  .log { background: var(--bg4); border: 1px solid var(--border); padding: 12px 14px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-mid); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(120px); background: var(--bg4); border: 1px solid var(--border-bright); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; padding: 11px 20px; z-index: 200; transition: transform 0.3s; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
 </head>
 <body>
-  <h1>ESPN ENDPOINT TEST</h1>
 
-  <div class="test" id="t1">
-    <div class="label">Test 1 · Teams (roster engine URL)</div>
-    <div class="url">/apis/site/v2/sports/football/nfl/teams?limit=1000</div>
-    <div class="result pending">pending…</div>
+<nav>
+  <a href="index.html" class="logo">
+    <div class="logo-mark">ED</div>
+    <div>
+      <div class="logo-text">EDGE</div>
+      <div class="logo-sub">ESPN Test</div>
+    </div>
+  </a>
+  <button class="hamburger" id="ham" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+</nav>
+
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-section">Core</div>
+  <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+  <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+  <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+  <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+  <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+  <div class="drawer-section">Intelligence</div>
+  <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+  <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+  <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+  <div class="drawer-section">Records</div>
+  <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+  <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+  <a href="history.html"><span class="ico">☰</span> Pick History</a>
+  <a href="performance.html"><span class="ico">◑</span> Performance &amp; ROI</a>
+  <div class="drawer-section">Control</div>
+  <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+  <a href="settings.html"><span class="ico">◈</span> Settings</a>
+  <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+  <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
+  <a href="test-espn.html" class="active"><span class="ico">⌬</span> ESPN Test</a>
+</div>
+
+<main>
+  <h1>ESPN <em>ENDPOINT TEST</em></h1>
+  <div class="sub">Every ESPN URL the current engines call · grouped by the file that will break if the endpoint does</div>
+
+  <div class="toolbar">
+    <button class="btn" id="runBtn" onclick="runAll()">▶ Run Tests</button>
+    <button class="btn secondary" onclick="copyReport()">⧉ Copy Report</button>
   </div>
 
-  <div class="test" id="t2">
-    <div class="label">Test 2 · Teams (no limit param)</div>
-    <div class="url">/apis/site/v2/sports/football/nfl/teams</div>
-    <div class="result pending">pending…</div>
+  <div class="summary" id="summary" style="display:none;">
+    <div class="sum-cell"><div class="sum-v ok" id="sumOk">0</div><div class="sum-l">Passed</div></div>
+    <div class="sum-cell"><div class="sum-v warn" id="sumWarn">0</div><div class="sum-l">Warnings</div></div>
+    <div class="sum-cell"><div class="sum-v err" id="sumFail">0</div><div class="sum-l">Failed</div></div>
   </div>
 
-  <div class="test" id="t3">
-    <div class="label">Test 3 · Scoreboard (control)</div>
-    <div class="url">/apis/site/v2/sports/football/nfl/scoreboard</div>
-    <div class="result pending">pending…</div>
-  </div>
+  <div id="tests"></div>
 
-  <div class="test" id="t4">
-    <div class="label">Test 4 · Roster for team 12</div>
-    <div class="url">/apis/site/v2/sports/football/nfl/teams/12/roster</div>
-    <div class="result pending">pending…</div>
+  <div class="group">
+    <div class="group-head">RAW <em>LOG</em></div>
+    <div class="log" id="log">Ready.</div>
   </div>
+</main>
 
-  <script>
-    async function runTest(id, url, picker) {
-      const el = document.querySelector('#' + id + ' .result');
-      try {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) {
-          el.className = 'result fail';
-          el.textContent = 'HTTP ' + res.status + ' ' + res.statusText;
-          return;
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── NAV ──
+  const ham = document.getElementById('ham');
+  const drawer = document.getElementById('drawer');
+  const overlay = document.getElementById('overlay');
+  function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+  ham.addEventListener('click', toggleDrawer);
+  overlay.addEventListener('click', toggleDrawer);
+  drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+    ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+  }));
+
+  // ── STATE ──
+  const results = [];
+  const log = m => {
+    const el = document.getElementById('log');
+    el.textContent += m + '\n';
+    el.scrollTop = el.scrollHeight;
+  };
+  const clearLog = () => { document.getElementById('log').textContent = ''; };
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show';
+    setTimeout(() => t.className = 'toast', 2000);
+  }
+
+  // ============================================================
+  // TEST DEFINITIONS
+  //
+  // Each test is a small record. `group` decides section
+  // placement, `usedBy` names the engine that calls it. If a URL
+  // is expected to fail (ESPN changes something, CORS blocks a
+  // path), `expectFail` marks it so the report shows warn rather
+  // than fail.
+  // ============================================================
+
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function year() { return new Date().getFullYear(); }
+  function daysAgo(n) {
+    const d = new Date(Date.now() - n * 86400000);
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  const TEST_GROUPS = [
+    {
+      id: 'scoreboard-year',
+      title: 'SCOREBOARD · <em>SINGLE-YEAR</em>',
+      desc: 'The format the current engines use. A whole season in one call. This is what power-engine, ats-tracker, context-builder and trends-engine all call today. If any of these fail, ratings and rest days starve.',
+      tests: [
+        { label: 'NFL · this year', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${year()}&limit=1000`, usedBy: 'power-engine, ats-tracker, context-builder, trends-engine', parse: d => `${(d.events || []).length} events` },
+        { label: 'NBA · this year', url: () => `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${year()}&limit=1000`, usedBy: 'power-engine, ats-tracker', parse: d => `${(d.events || []).length} events` },
+        { label: 'MLB · this year', url: () => `https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates=${year()}&limit=1000`, usedBy: 'power-engine, ats-tracker', parse: d => `${(d.events || []).length} events` },
+        { label: 'NHL · this year', url: () => `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=${year()}&limit=1000`, usedBy: 'power-engine, ats-tracker', parse: d => `${(d.events || []).length} events` },
+        { label: 'NCAAF · this year · groups=80', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${year()}&groups=80&limit=900`, usedBy: 'power-engine (college needs the FBS group filter)', parse: d => `${(d.events || []).length} events` },
+        { label: 'NCAAB · this year · groups=50', url: () => `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${year()}&groups=50&limit=900`, usedBy: 'power-engine (D-I group filter)', parse: d => `${(d.events || []).length} events` },
+        { label: 'MLS · this year · range', url: () => `https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard?dates=${year()}0101-${year()}1231&limit=1000`, usedBy: 'power-engine, ats-tracker (soccer wants a range, not a year)', parse: d => `${(d.events || []).length} events` },
+      ],
+    },
+
+    {
+      id: 'scoreboard-range',
+      title: 'SCOREBOARD · <em>RANGE FORMAT</em>',
+      desc: 'The old format the engines used to call. It returns HTTP 400 for any window outside the current season — which is what silently starved rest days and season lookback. Kept here as a documented failure, not as something to fix.',
+      tests: [
+        { label: 'NFL · last 14 days', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${daysAgo(14)}-${today()}&limit=1000`, usedBy: 'the old code path', expectFail: true, parse: d => `${(d.events || []).length} events` },
+        { label: 'NFL · last 14 days with limit first', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?limit=1000&dates=${daysAgo(14)}-${today()}`, usedBy: 'variant — same endpoint, different arg order', expectFail: true, parse: d => `${(d.events || []).length} events` },
+      ],
+    },
+
+    {
+      id: 'teams',
+      title: 'TEAMS · <em>CORS-BLOCKED</em>',
+      desc: 'ESPN removed CORS headers on /teams. The roster engine works around this by reading the team list from power_ratings instead. Left in the test so a silent change is visible.',
+      tests: [
+        { label: 'NFL teams', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=1000`, usedBy: 'nothing now — roster-engine reads power_ratings', expectFail: true, parse: d => `${(d.sports?.[0]?.leagues?.[0]?.teams || []).length} teams` },
+        { label: 'NFL teams · no limit', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams`, usedBy: 'nothing now', expectFail: true, parse: d => `${(d.sports?.[0]?.leagues?.[0]?.teams || []).length} teams` },
+      ],
+    },
+
+    {
+      id: 'roster',
+      title: 'ROSTER · <em>PER-TEAM</em>',
+      desc: 'Per-team roster still works. This is what roster-engine.js calls to build the players table.',
+      tests: [
+        { label: 'NFL · Patriots (team 12)', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/12/roster`, usedBy: 'roster-engine.js', parse: d => `${(d.athletes || []).length} athlete buckets` },
+        { label: 'NFL · Patriots · enable=roster', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/12?enable=roster`, usedBy: 'roster-engine.js (fallback shape)', parse: d => `${(d.team?.athletes || []).length} athletes` },
+        { label: 'NBA · Celtics (team 2)', url: () => `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/2/roster`, usedBy: 'roster-engine.js', parse: d => `${(d.athletes || []).length} athlete buckets` },
+      ],
+    },
+
+    {
+      id: 'core-odds',
+      title: 'CORE API · <em>ODDS</em>',
+      desc: 'Per-event odds with open, current and close blocks. ats-tracker.js reads this to fill historical_odds. The open block is what unlocked the four market-movement situations.',
+      tests: [
+        {
+          label: 'NFL event odds',
+          dynamic: async (refs) => {
+            const id = await findRecentNflEvent();
+            if (!id) return null;
+            return `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/events/${id}/competitions/${id}/odds`;
+          },
+          usedBy: 'ats-tracker.js (parseOddsItem)',
+          parse: d => `${(d.items || []).length} provider items · open block ${(d.items || []).some(i => i.open) ? 'present' : 'absent'}`,
+        },
+      ],
+    },
+
+    {
+      id: 'boxscore',
+      title: 'BOX SCORE · <em>SUMMARY</em>',
+      desc: 'Per-event summary with the full player stat table. box-score-fetcher.js reads this to fill player_game_stats. The stats come back as a positional array zipped against a keys array — that is what v1.2 of the fetcher fixed.',
+      tests: [
+        {
+          label: 'NFL event summary',
+          dynamic: async (refs) => {
+            const id = await findRecentNflEvent();
+            if (!id) return null;
+            return `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${id}`;
+          },
+          usedBy: 'box-score-fetcher.js',
+          parse: d => {
+            const box = d.boxscore?.players || [];
+            const cats = box.reduce((n, t) => n + (t.statistics?.length || 0), 0);
+            return `${box.length} team blocks · ${cats} stat categories`;
+          },
+        },
+      ],
+    },
+
+    {
+      id: 'injuries',
+      title: 'INJURIES · <em>LEAGUE + PER-TEAM</em>',
+      desc: 'The league-wide injury endpoint is on the web API and is unreliable. injury-fragmentation.js tries it first, then falls back to the per-team core API. Both are tested here.',
+      tests: [
+        { label: 'NFL · league-wide (web api)', url: () => `https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/injuries`, usedBy: 'injury-fragmentation.js (first attempt)', expectFail: true, parse: d => {
+          const list = Array.isArray(d.injuries) ? d.injuries : Array.isArray(d.items) ? d.items : [];
+          return `${list.length} teams with injuries`;
+        } },
+        { label: 'NFL · league-wide (site api)', url: () => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries`, usedBy: 'injury-fragmentation.js (second attempt)', expectFail: true, parse: d => {
+          const list = Array.isArray(d.injuries) ? d.injuries : Array.isArray(d.items) ? d.items : [];
+          return `${list.length} teams with injuries`;
+        } },
+        { label: 'NFL · Patriots per-team (core api)', url: () => `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/12/injuries?limit=100`, usedBy: 'injury-fragmentation.js (final fallback)', parse: d => `${(d.items || []).length} injury entries` },
+      ],
+    },
+  ];
+
+  // Recent event lookup for the dynamic tests. Fetched once and
+  // cached so the core-odds and box-score tests share one call.
+  let _recentNflEventCache = null;
+  async function findRecentNflEvent() {
+    if (_recentNflEventCache !== null) return _recentNflEventCache;
+
+    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${year()}&limit=1000`;
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) { _recentNflEventCache = null; return null; }
+      const data = await res.json();
+      const events = (data.events || [])
+        .filter(e => e.competitions?.[0]?.status?.type?.completed === true)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      _recentNflEventCache = events[0]?.id || null;
+      log(`  → recent NFL event: ${_recentNflEventCache || 'none found'}`);
+    } catch {
+      _recentNflEventCache = null;
+    }
+    return _recentNflEventCache;
+  }
+
+  // ============================================================
+  // RUN
+  // ============================================================
+
+  async function runAll() {
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    btn.textContent = 'RUNNING…';
+    clearLog();
+    results.length = 0;
+
+    log(`ESPN test · ${new Date().toISOString()}`);
+
+    // Render skeleton so the operator sees what's running.
+    renderSkeleton();
+
+    for (const group of TEST_GROUPS) {
+      log(`\n── ${group.id} ──`);
+      for (let i = 0; i < group.tests.length; i++) {
+        const test = group.tests[i];
+        const key = `${group.id}-${i}`;
+
+        let url = null;
+        try {
+          url = test.dynamic ? await test.dynamic() : test.url();
+        } catch (e) {
+          log(`  ${test.label}: could not build URL — ${e.message}`);
         }
-        let data;
-        try { data = await res.json(); }
-        catch (e) {
-          el.className = 'result fail';
-          el.textContent = 'not JSON: ' + e.message;
-          return;
+
+        if (!url) {
+          setResult(key, {
+            status: 'warn',
+            detail: 'Skipped — a prerequisite fetch failed (no event ID to test against).',
+            url: '(dynamic)',
+          });
+          continue;
         }
-        const picked = picker(data);
-        el.className = 'result ok';
-        el.textContent = '✓ ' + picked;
-      } catch (e) {
-        el.className = 'result fail';
-        el.textContent = '✗ ' + (e.message || String(e));
-        const d = document.createElement('div');
-        d.className = 'detail';
-        d.textContent = 'error.name = ' + (e.name || '?');
-        el.parentNode.appendChild(d);
+
+        log(`  ${test.label}`);
+        const outcome = await runOne(url, test);
+        results.push({ group: group.title.replace(/<[^>]+>/g, ''), label: test.label, usedBy: test.usedBy, ...outcome });
+        setResult(key, outcome);
       }
     }
 
-    runTest('t1',
-      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=1000',
-      d => ((d?.sports?.[0]?.leagues?.[0]?.teams || []).length) + ' teams');
+    renderSummary();
+    btn.disabled = false;
+    btn.textContent = '▶ Run Tests';
+    log(`\nDone · ${new Date().toLocaleTimeString()}`);
+  }
 
-    runTest('t2',
-      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams',
-      d => ((d?.sports?.[0]?.leagues?.[0]?.teams || []).length) + ' teams');
+  async function runOne(url, test) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        const expectFail = test.expectFail === true;
+        log(`    HTTP ${res.status}`);
+        return {
+          status: expectFail ? 'warn' : 'fail',
+          detail: `HTTP ${res.status} ${res.statusText}${expectFail ? ' — expected. This endpoint is documented as not callable.' : ''}`,
+          url,
+        };
+      }
 
-    runTest('t3',
-      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
-      d => ((d?.events || []).length) + ' events');
+      let data;
+      try { data = await res.json(); }
+      catch (e) {
+        log(`    not JSON`);
+        return { status: 'fail', detail: `Response was not JSON — ${e.message}`, url };
+      }
 
-    runTest('t4',
-      'https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/12/roster',
-      d => ((d?.athletes || []).length) + ' athlete entries');
-  </script>
+      const parsed = test.parse ? test.parse(data) : 'HTTP 200';
+      log(`    ok · ${parsed}`);
+
+      return {
+        status: test.expectFail === true ? 'warn' : 'ok',
+        detail: test.expectFail === true
+          ? `${parsed} — but this endpoint is expected to be unreachable.`
+          : parsed,
+        url,
+      };
+    } catch (e) {
+      log(`    ${e.name}: ${e.message}`);
+      return {
+        status: test.expectFail === true ? 'warn' : 'fail',
+        detail: `${e.name || 'Error'}: ${e.message}${test.expectFail ? ' — expected. This endpoint is documented as CORS-blocked or removed.' : ''}`,
+        url,
+      };
+    }
+  }
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+
+  function renderSkeleton() {
+    const container = document.getElementById('tests');
+    container.innerHTML = TEST_GROUPS.map(group => `
+      <div class="group">
+        <div class="group-head">${group.title}</div>
+        <div class="group-desc">${group.desc}</div>
+        ${group.tests.map((test, i) => {
+          const key = `${group.id}-${i}`;
+          return `
+            <div class="test pending" id="test-${key}">
+              <div class="test-row">
+                <span class="test-label">${test.label}</span>
+                <span class="test-result pending" id="result-${key}">pending…</span>
+              </div>
+              <div class="test-url" id="url-${key}">—</div>
+              <div class="test-detail" id="detail-${key}">Waiting…</div>
+              ${test.usedBy ? `<div class="test-used-by">Used by: ${test.usedBy}</div>` : ''}
+            </div>`;
+        }).join('')}
+      </div>
+    `).join('');
+
+    // Fill in URLs for the static tests so they're visible even
+    // before the fetch runs.
+    TEST_GROUPS.forEach(group => {
+      group.tests.forEach((test, i) => {
+        if (!test.dynamic && test.url) {
+          try {
+            const u = test.url();
+            const el = document.getElementById(`url-${group.id}-${i}`);
+            if (el) el.textContent = u;
+          } catch {}
+        }
+      });
+    });
+  }
+
+  function setResult(key, outcome) {
+    const card = document.getElementById(`test-${key}`);
+    const badge = document.getElementById(`result-${key}`);
+    const detail = document.getElementById(`detail-${key}`);
+    const urlEl = document.getElementById(`url-${key}`);
+    if (!card || !badge || !detail) return;
+
+    card.className = `test ${outcome.status}`;
+    badge.className = `test-result ${outcome.status}`;
+    badge.textContent = outcome.status === 'ok' ? 'PASS'
+                     : outcome.status === 'warn' ? 'EXPECTED'
+                     : outcome.status === 'fail' ? 'FAIL'
+                     : 'SKIP';
+
+    if (urlEl && outcome.url) urlEl.textContent = outcome.url;
+    detail.textContent = outcome.detail || '';
+  }
+
+  function renderSummary() {
+    const ok = results.filter(r => r.status === 'ok').length;
+    const warn = results.filter(r => r.status === 'warn').length;
+    const fail = results.filter(r => r.status === 'fail').length;
+
+    document.getElementById('sumOk').textContent = ok;
+    document.getElementById('sumWarn').textContent = warn;
+    document.getElementById('sumFail').textContent = fail;
+    document.getElementById('summary').style.display = 'grid';
+  }
+
+  // ============================================================
+  // COPY
+  // ============================================================
+
+  function copyReport() {
+    if (!results.length) { showToast('Run the tests first'); return; }
+
+    const grouped = {};
+    results.forEach(r => {
+      if (!grouped[r.group]) grouped[r.group] = [];
+      grouped[r.group].push(r);
+    });
+
+    const lines = ['EDGE ESPN ENDPOINT REPORT', new Date().toISOString(), ''];
+
+    Object.entries(grouped).forEach(([group, items]) => {
+      lines.push(`── ${group} ──`);
+      items.forEach(r => {
+        const tag = r.status === 'ok' ? '✓' : r.status === 'warn' ? '!' : '✗';
+        lines.push(`  ${tag} ${r.label}`);
+        lines.push(`      url: ${r.url}`);
+        lines.push(`      ${r.detail}`);
+        if (r.usedBy) lines.push(`      used by: ${r.usedBy}`);
+        lines.push('');
+      });
+    });
+
+    const text = lines.join('\n');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => showToast(`Copied ${results.length} results`))
+        .catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('Copied'); }
+    catch { showToast('Copy failed'); }
+    document.body.removeChild(ta);
+  }
+
+  // Auto-run on load — the page has no other purpose.
+  runAll();
+</script>
+
 </body>
 </html>
