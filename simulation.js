@@ -1,61 +1,56 @@
 // ============================================================
-// EDGE — SIMULATION BETTING ENGINE v2.0
+// EDGE — SIMULATION BETTING ENGINE v2.1
 //
 // Runs the live pipeline with fake money. Produces a separate
 // ledger from the real one, tracks its own bankroll, and grades
-// its own bets. Nothing here changes how the pipeline picks —
-// it consumes what the orchestrator produced and decides which
-// of those picks are worth paper-trading.
+// its own bets.
 //
-// v2.0 changes:
+// v2.1 changes:
 //
-//   · No more EDGE_ENGINE. Simulation used to call
-//     EDGE_ENGINE.run(), which was supposed to live in engine.js.
-//     That file was never finished — it defines twelve of the
-//     twenty-five advertised algorithms and exports no run()
-//     method — so every simulation threw on the first line.
-//     Simulation now calls EDGE_ORCHESTRATOR.run(), which is the
-//     same pipeline the real ledger uses. Sim and real agree on
-//     what the picks are. They only differ on what happens after.
+//   · Dates are local, not UTC. An 8pm Eastern tip-off was being
+//     logged as the next calendar day under the old code, so
+//     sim-grader's date match against the DB row failed and the
+//     bet stayed pending forever.
 //
+//   · pick_type, line and odds agree with the shape the
+//     orchestrator's autoPlaceSimBets writes. pick_type is
+//     'ATS' or 'ML', line is the spread as a number-string,
+//     odds is -110 for spread and the actual price for ML. Two
+//     placement paths, one schema, one grader.
+//
+//   · Local sim state now keys each bet by its DB id when the
+//     orchestrator placed it. The old match on game_id +
+//     pick_label + date still runs as a fallback, but the id
+//     path is exact.
+//
+//   · BUILD stamp exported.
+//
+// v2.0 changes (retained):
+//   · Simulation calls EDGE_ORCHESTRATOR.run() — engine.js was
+//     never finished and does not export run().
 //   · Claude selection routes through EDGE_CLAUDE.selectFromSlate.
-//     The old code held its own Anthropic API key handling, its
-//     own model id, its own prompt, its own JSON parsing. That is
-//     three places to fix when a model id changes, and the file
-//     had already fallen a model generation behind. Now it hands
-//     the slate to the same selector the app already uses and
-//     filters the response to sim-specific rules.
-//
-//   · Auto-place is suppressed during the sim run. The
-//     orchestrator auto-places sim bets when the active portfolio
-//     is 'sim'. If the user's portfolio is already sim, both
-//     sim.js and orchestrator would place the same bet. The sim
-//     run temporarily flips the portfolio to 'real' + manual, calls
-//     the orchestrator, restores the originals in a finally block,
-//     then places its own bets with its own selection logic.
-//
-//   · Matchup strings are populated. The old ledger line read
-//     pick.market_snapshot.home / .away, which do not exist on
-//     physics output — so every sim bet logged " vs ". The game
-//     index the sim run already has in hand supplies the names.
-//
-//   · Bankroll and unit sizing match the app. Reads
-//     edge_sim_bankroll, edge_sim_unit_size, edge_sim_daily_cap,
-//     same keys the orchestrator writes when it auto-places.
-//     The two paths cannot disagree on what a sim unit is worth.
-//
-// The state shape is unchanged. edge_sim_state still holds the
-// running record, the log, the streaks, and the last_run stamp.
+//   · Auto-place is suppressed during the sim run.
+//   · Matchup strings are populated from the game index.
 // ============================================================
 
 const EDGE_SIM = (() => {
 
-  const BUILD = 'sim-20260924-01';
+  const BUILD = 'sim-20260925-01';
 
   const KEY = {
     supabaseUrl: () => localStorage.getItem('edge_supabase_url'),
     supabaseKey: () => localStorage.getItem('edge_supabase_key'),
   };
+
+  const DEFAULT_SPREAD_PRICE = -110;
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
 
   // ── SIMULATION STATE ──
 
@@ -105,18 +100,6 @@ const EDGE_SIM = (() => {
 
   // ============================================================
   // ── CLAUDE PICK SELECTION ──
-  //
-  // Delegates to EDGE_CLAUDE.selectFromSlate, which handles auth,
-  // proxy routing, model id, batching, and JSON parsing. Sim's
-  // job is only to hand the selector the sim-specific rules —
-  // current bankroll, daily cap remaining, losing streak — by way
-  // of a floor and a confidence ceiling, then take the selections
-  // that come back.
-  //
-  // The fallback, when no Claude key is configured, is a
-  // confidence filter. It exists so the sim still runs on a
-  // deterministic slate — it is not pretending to be the
-  // selector.
   // ============================================================
 
   async function claudeSelectPicks(picks, simState, gameIndex) {
@@ -130,12 +113,6 @@ const EDGE_SIM = (() => {
       return fallbackSelect(picks, simState);
     }
 
-    // The selector expects the candidate shape the orchestrator
-    // produces: { prior, families, governor, context, trends, h2h }.
-    // Sim was handed the physics picks, not the governor output.
-    // Rebuild the shape from what we have. The picks carry
-    // governor_snapshot, market_snapshot, and reasons — enough for
-    // the selector to reason over.
     const candidates = picks
       .map(p => {
         const g = gameIndex[p.game_id];
@@ -174,10 +151,6 @@ const EDGE_SIM = (() => {
 
     if (!candidates.length) return [];
 
-    // The floor scales with the sim's recent performance. A cold
-    // streak raises the bar. A hot streak does not lower it below
-    // the platform default, because that would be the simulator
-    // chasing its own variance.
     const baseFloor = parseFloat(localStorage.getItem('edge_sim_claude_floor') || '65');
     const streakPenalty = simState.streak <= -3 ? 8 : 0;
     const capPressure = simState.dailyCap > 0
@@ -194,14 +167,9 @@ const EDGE_SIM = (() => {
     }
 
     if (!result.ok || !result.selections || !result.selections.length) {
-      // Not an error. The selector says the slate is not worth
-      // betting. The sim takes that answer.
       return [];
     }
 
-    // Map selections back to sim bet records. Each selection is
-    // {game_id, side, market, confidence, reason, key_factor}.
-    // The pick carries everything else sim needs.
     const byGame = new Map(picks.map(p => [String(p.game_id), p]));
 
     return result.selections
@@ -211,20 +179,24 @@ const EDGE_SIM = (() => {
         const g = gameIndex[pick.game_id];
         if (!g) return null;
 
+        const isML = sel.market === 'moneyline';
+        const odds = isML
+          ? (pick.direction === 'home' ? pick.market_snapshot?.home_ml : pick.market_snapshot?.away_ml) ?? DEFAULT_SPREAD_PRICE
+          : DEFAULT_SPREAD_PRICE;
+
         return {
           pick_id: pick.pick_id,
           game_id: pick.game_id,
           sport: pick.sport,
           matchup: `${g.away_team} @ ${g.home_team}`,
           pick_label: pick.side_label?.team || pick.direction,
-          pick_type: sel.market === 'moneyline' ? 'ML' : 'ATS',
+          pick_type: isML ? 'ML' : 'ATS',
           line: pick.market_snapshot?.spread ?? null,
-          odds: sel.market === 'moneyline'
-            ? (pick.direction === 'home' ? pick.market_snapshot?.home_ml : pick.market_snapshot?.away_ml)
-            : -110,
+          odds,
           confidence: sel.confidence,
           edge: pick.edge,
           units: pick.units,
+          direction: pick.direction,
           reason: sel.reason || pick.reasons?.[0] || '',
           key_factor: sel.key_factor || null,
           source: 'claude',
@@ -233,10 +205,6 @@ const EDGE_SIM = (() => {
       .filter(Boolean);
   }
 
-  // Deterministic fallback when Claude is not configured.
-  // Confidence floor of 65 matches the app's auto-threshold
-  // default, and the take is capped at five so a fat slate
-  // cannot empty the sim bankroll in one run.
   function fallbackSelect(picks, simState) {
     const eligible = picks
       .filter(p => (p.confidence || 0) >= 65)
@@ -248,14 +216,15 @@ const EDGE_SIM = (() => {
       pick_id: p.pick_id,
       game_id: p.game_id,
       sport: p.sport,
-      matchup: null,           // filled by caller from gameIndex
+      matchup: null,
       pick_label: p.side_label?.team || p.direction,
       pick_type: 'ATS',
       line: p.market_snapshot?.spread ?? null,
-      odds: -110,
+      odds: DEFAULT_SPREAD_PRICE,
       confidence: p.confidence,
       edge: p.edge,
       units: p.units,
+      direction: p.direction,
       reason: p.reasons?.[0] || '',
       source: 'fallback',
     }));
@@ -263,8 +232,6 @@ const EDGE_SIM = (() => {
 
   // ============================================================
   // ── PLACE SIM BET ──
-  // Enforces the sim's caps in one place. Returns null when the
-  // bet is refused, otherwise the ledger entry that was appended.
   // ============================================================
 
   function placeSimBet(candidate, simState) {
@@ -277,17 +244,21 @@ const EDGE_SIM = (() => {
     if (amount > bankroll * 0.05) return null;
     if (amount > bankroll) return null;
 
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const localTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
     const bet = {
       id:         Date.now() + Math.random(),
       sim:        true,
-      date:       new Date().toISOString().split('T')[0],
-      time:       new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date:       localDate,
+      time:       localTime,
       sport:      candidate.sport,
       matchup:    candidate.matchup,
       pick_label: candidate.pick_label,
-      pick_type:  candidate.pick_type,
-      line:       candidate.line,
-      odds:       candidate.odds || -110,
+      pick_type:  candidate.pick_type || 'ATS',
+      line:       candidate.line != null ? String(candidate.line) : '',
+      odds:       candidate.odds || DEFAULT_SPREAD_PRICE,
       confidence: candidate.confidence,
       edge:       candidate.edge,
       units,
@@ -296,6 +267,7 @@ const EDGE_SIM = (() => {
       result:     null,
       pnl:        null,
       game_id:    candidate.game_id,
+      direction:  candidate.direction,
       reason:     candidate.reason,
       source:     candidate.source || 'fallback',
     };
@@ -312,10 +284,6 @@ const EDGE_SIM = (() => {
 
   // ============================================================
   // ── GRADE SIM BET ──
-  // Bankroll math: place already subtracted the stake. Grading
-  // adds back the stake plus the net win. A loss adds the stake
-  // back plus a negative stake, which is zero — the stake is
-  // already gone. A push adds the stake back with no P&L.
   // ============================================================
 
   function gradeSimBet(betId, result, simState) {
@@ -323,7 +291,7 @@ const EDGE_SIM = (() => {
     if (!bet || bet.result) return simState;
 
     bet.result = result;
-    const odds = bet.odds || -110;
+    const odds = bet.odds || DEFAULT_SPREAD_PRICE;
     let pnl = 0;
 
     if (result === 'W') {
@@ -381,7 +349,7 @@ const EDGE_SIM = (() => {
           matchup: b.matchup,
           pick_label: b.pick_label,
           pick_type: b.pick_type,
-          line: b.line != null ? String(b.line) : '',
+          line: b.line,
           odds: b.odds,
           confidence: b.confidence,
           edge: b.edge,
@@ -419,16 +387,6 @@ const EDGE_SIM = (() => {
 
   // ============================================================
   // ── MAIN SIMULATION RUN ──
-  //
-  // The orchestration dance:
-  //   1. Flip the active portfolio to 'real' + manual so the
-  //      orchestrator's own auto-place does not fire.
-  //   2. Call EDGE_ORCHESTRATOR.run() — that produces the picks
-  //      and persists them to shadow_picks, same as any other run.
-  //   3. Restore the portfolio in a finally block.
-  //   4. Ask the selector which picks to paper-trade.
-  //   5. Place sim bets, enforce caps, update state.
-  //   6. Write to bet_log with mode='sim'.
   // ============================================================
 
   async function runSimulation(options = {}) {
@@ -443,7 +401,6 @@ const EDGE_SIM = (() => {
 
     const simState = getSimState();
 
-    // ── Source the games ──
     let games;
     try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); }
     catch { games = []; }
@@ -457,7 +414,6 @@ const EDGE_SIM = (() => {
     const gameIndex = {};
     games.forEach(g => { gameIndex[g.id] = g; });
 
-    // ── Suppress orchestrator auto-place ──
     const savedPortfolio = localStorage.getItem('edge_active_portfolio') || 'real';
     const savedBettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
 
@@ -487,8 +443,6 @@ const EDGE_SIM = (() => {
       if (typeof onError === 'function') onError(e.message);
       return { ok: false, error: e.message };
     } finally {
-      // Restore no matter what. A crash during the pipeline must
-      // not leave the user's real portfolio silently flipped.
       localStorage.setItem('edge_active_portfolio', savedPortfolio);
       localStorage.setItem('edge_betting_mode', savedBettingMode);
     }
@@ -502,7 +456,6 @@ const EDGE_SIM = (() => {
       return { ok: true, simState, selectedPicks: [], betsPlaced: [], report };
     }
 
-    // ── Ask the selector which to trade ──
     log('Selecting which picks to paper-trade…');
     let selected = [];
     try {
@@ -512,9 +465,6 @@ const EDGE_SIM = (() => {
       selected = fallbackSelect(picks, simState);
     }
 
-    // Fill in matchup from the game index for any candidate that
-    // did not have it. The selector path leaves it null because
-    // it returns selections, not bets.
     selected.forEach(s => {
       if (!s.matchup) {
         const g = gameIndex[s.game_id];
@@ -524,7 +474,6 @@ const EDGE_SIM = (() => {
 
     log(`Selected ${selected.length} pick${selected.length === 1 ? '' : 's'} for the sim`);
 
-    // ── Place sim bets ──
     const betsPlaced = [];
     for (const candidate of selected) {
       const bet = placeSimBet(candidate, simState);
@@ -540,8 +489,6 @@ const EDGE_SIM = (() => {
     simState.active = true;
     saveSimState(simState);
 
-    // Mirror the state keys orchestrator's auto-place reads, so
-    // the two placement paths are consistent on next run.
     localStorage.setItem('edge_sim_bankroll', String(simState.bankroll));
     localStorage.setItem('edge_sim_daily_used', String(simState.dailyUsed));
     localStorage.setItem('edge_sim_bets_used', String(simState.betsToday));
@@ -595,20 +542,7 @@ const EDGE_SIM = (() => {
   }
 
   // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
-
-  function logEdgeError(where, err) {
-    try {
-      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
-      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
-      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
-    } catch {}
-  }
-
-  // ============================================================
   // ── PUBLIC API ──
-  // Unchanged shape. Every existing caller keeps working.
   // ============================================================
 
   return {
