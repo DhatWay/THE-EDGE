@@ -1,42 +1,44 @@
 // ============================================================
-// EDGE — ATS + H2H TRACKER v2.4
+// EDGE — ATS + H2H TRACKER v3.0
 //
 // Odds sources, in priority order:
 //   1. historical_odds in Supabase       (cached from earlier runs)
 //   2. ESPN core API per-event odds      (close → current → open)
 //   3. line_history                      (games seen live)
 //
-// v2.4 — open_spread is now captured. The four line-movement
-// situations (rlm_against_home, rlm_against_away,
-// line_moved_2plus_toward_home, line_moved_2plus_toward_away)
-// depend on knowing where the number opened, and every
-// historical_odds row was previously written with only the
-// closing spread. ESPN's core API sends the open block on the
-// same response the close comes from — parseOddsItem was
-// returning on the first phase that had a spread and
-// discarding the rest.
+// v3.0 changes:
 //
-//   · parseOddsItem now parses every phase independently.
-//     close → spread, open → open_spread. No fallback for open;
-//     a missing open stays null rather than fabricating a number.
-//   · Multi-book: prefers the item that carries both a close
-//     and an open over one that only has a close.
-//   · Schema probe. historical_odds may not have open_spread
-//     yet. If the column is missing the write omits it, the
-//     log prints the exact ALTER, and everything else keeps
-//     working. Add the column before re-running to populate.
-//   · Refetch logic. Games with a cached spread but no cached
-//     open are queued on the next run so the column fills in.
+//   · Scores are now written with every historical_odds row.
+//     parseEvent already reads homeScore and awayScore off the
+//     ESPN event. They were being discarded before the write.
+//     score-backfill.js becomes a fallback for the rare row that
+//     arrived before this change, not the primary path.
 //
-// v2.3 — fetch uses ?dates=YYYY (single year). College endpoints
-// need a groups filter (80 FBS / 50 D-I) or they return nothing.
-// Soccer wants a range rather than a year. Writes now retry on
-// transient fetch failures instead of dropping the chunk.
+//   · line_history merge now resolves Odds API ids to ESPN ids
+//     through game-id-map.js. The two tables were keyed on
+//     different id systems, so the merge silently found
+//     nothing. With the resolver, a game seen live in
+//     Matchups can seed the spread for the ESPN row that
+//     ats-tracker writes.
+//
+//   · Fetches route through power-engine's fetchGamesBetween
+//     when available. That function already chunks the season
+//     into day windows and has a day-by-day fallback, which
+//     sidesteps the 1,000-event cap on a single ESPN
+//     response. The local fallback remains for pages that load
+//     this file without power-engine; limit is bumped to 2,000
+//     so the truncation is less severe even then.
+//
+//   · seasonLabel matches power-engine's convention. This file
+//     previously wrote NFL as "2026-27" while power-engine and
+//     trends-engine wrote "2026". Cross-year sports now carry
+//     the year they started, single-year sports carry the
+//     calendar year, and WNBA no longer splits across two.
 // ============================================================
 
 const EDGE_ATS = (() => {
 
-  const BUILD = 'ats-20260923-01';
+  const BUILD = 'ats-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -118,7 +120,7 @@ const EDGE_ATS = (() => {
     const log = makeLogger(onProgress);
     const summary = {
       sports: {},
-      totals: { teams: 0, matchups: 0, odds_resolved: 0, opens_resolved: 0 },
+      totals: { teams: 0, matchups: 0, odds_resolved: 0, opens_resolved: 0, scores_written: 0 },
     };
 
     for (const sport of sports) {
@@ -130,6 +132,7 @@ const EDGE_ATS = (() => {
         summary.totals.matchups += result.matchups_written || 0;
         summary.totals.odds_resolved += result.odds_resolved || 0;
         summary.totals.opens_resolved += result.opens_resolved || 0;
+        summary.totals.scores_written += result.scores_written || 0;
       } catch (e) {
         log(`${sport} failed: ${e.message}`);
         summary.sports[sport] = { error: e.message };
@@ -165,7 +168,7 @@ const EDGE_ATS = (() => {
     log(`  ${games.length} completed games`);
 
     if (!games.length) {
-      return { teams_written: 0, matchups_written: 0, odds_resolved: 0, opens_resolved: 0, note: 'No results' };
+      return { teams_written: 0, matchups_written: 0, odds_resolved: 0, opens_resolved: 0, scores_written: 0, note: 'No results' };
     }
 
     log('  loading cached odds');
@@ -174,12 +177,6 @@ const EDGE_ATS = (() => {
     const withOpen   = Object.values(oddsIndex).filter(r => r.open_spread != null).length;
     log(`  ${withSpread} cached spreads · ${withOpen} cached opens`);
 
-    // Games to (re)look-up. Priority:
-    //   1. Never cached.
-    //   2. Cached without a spread.
-    //   3. Cached with a spread but missing an open — only when the
-    //      column exists, since there's no point re-fetching a value
-    //      we can't store.
     const missing = games.filter(g => {
       const cached = oddsIndex[g.id];
       if (!cached) return true;
@@ -191,6 +188,7 @@ const EDGE_ATS = (() => {
     const toLookup = missing.slice(0, MAX_ODDS_LOOKUPS_PER_RUN);
     let resolved = 0;
     let opensResolved = 0;
+    let scoresWritten = 0;
 
     if (toLookup.length) {
       log(`  resolving ${toLookup.length} of ${missing.length} from ESPN`);
@@ -203,6 +201,13 @@ const EDGE_ATS = (() => {
         oddsIndex[g.id] = odds;
         resolved++;
         if (odds.open_spread != null) opensResolved++;
+
+        // Scores travel with the row. parseEvent already pulled
+        // them off the ESPN event; they were being discarded
+        // before the write, which is why score-backfill had to
+        // guess at them by name and date.
+        const hasScore = isFinite(g.homeScore) && isFinite(g.awayScore);
+        if (hasScore) scoresWritten++;
 
         const row = {
           game_id: g.id,
@@ -218,13 +223,17 @@ const EDGE_ATS = (() => {
           updated_at: new Date().toISOString(),
         };
         if (canStoreOpen) row.open_spread = odds.open_spread ?? null;
+        if (hasScore) {
+          row.home_score = g.homeScore;
+          row.away_score = g.awayScore;
+        }
 
         fresh.push(row);
       });
 
       if (fresh.length) {
         await upsert(`${url}/rest/v1/historical_odds?on_conflict=game_id`, fresh, key, log, 'historical_odds');
-        log(`  cached ${fresh.length} lines · ${opensResolved} with an open`);
+        log(`  cached ${fresh.length} lines · ${opensResolved} with an open · ${scoresWritten} with a score`);
       }
       if (missing.length > toLookup.length) {
         log(`  ${missing.length - toLookup.length} still unresolved — run again to continue`);
@@ -237,7 +246,7 @@ const EDGE_ATS = (() => {
     if (!priced.length) {
       return {
         teams_written: 0, matchups_written: 0,
-        odds_resolved: resolved, opens_resolved: opensResolved,
+        odds_resolved: resolved, opens_resolved: opensResolved, scores_written: scoresWritten,
         note: 'No spreads resolved',
       };
     }
@@ -287,6 +296,7 @@ const EDGE_ATS = (() => {
       matchups_written: matchupRows.length,
       odds_resolved: resolved,
       opens_resolved: opensResolved,
+      scores_written: scoresWritten,
       games_graded: priced.length,
       games_unpriced: games.length - priced.length,
       open_spread_available: canStoreOpen,
@@ -295,9 +305,6 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── SCHEMA PROBE ──
-  // open_spread is optional. When it is missing, writes must omit
-  // it or PostgREST rejects the entire batch — including the
-  // spread, total and ML that were working before.
   // ============================================================
 
   async function hasOpenSpreadColumn(url, key) {
@@ -345,11 +352,6 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── CORE API ODDS ──
-  //
-  // ESPN sends one item per provider per event. Each item carries
-  // three phase blocks — open, current, close — with the line as
-  // it stood at each point. Which blocks are populated varies by
-  // sport and by how close to kickoff the fetch happened.
   // ============================================================
 
   async function resolveGameOdds(cfg, eventId) {
@@ -362,8 +364,6 @@ const EDGE_ATS = (() => {
       const items = data.items || [];
       if (!items.length) return null;
 
-      // Score each item: close is required for grading, open is what
-      // this version adds. Prefer an item that carries both.
       let best = null;
       let bestScore = -1;
 
@@ -379,8 +379,6 @@ const EDGE_ATS = (() => {
           best = parsed;
           bestScore = score;
         }
-        // Early exit: an item that has both a close and an open
-        // is as good as it gets.
         if (parsed.phase === 'close' && parsed.open_spread != null) return parsed;
       }
 
@@ -408,8 +406,6 @@ const EDGE_ATS = (() => {
       parsed[phase] = p;
     }
 
-    // Flat fields, seen on some events. Only used when no phase
-    // block carried a spread.
     if (!parsed.close && !parsed.current && !parsed.open) {
       const flat = numOrNull(item.spread);
       if (flat == null) return null;
@@ -424,11 +420,7 @@ const EDGE_ATS = (() => {
       };
     }
 
-    // Closing line: prefer close, fall back to current, then open.
     const closeBlock = parsed.close || parsed.current || parsed.open;
-
-    // Opening line: only the open block. No fallback — inventing an
-    // open from a close would poison the movement rules silently.
     const openBlock = parsed.open || null;
 
     return {
@@ -476,6 +468,13 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── CACHED ODDS ──
+  //
+  // historical_odds rows are keyed on ESPN event id. line_history
+  // rows are keyed on The Odds API's event id. To merge the two,
+  // each line_history id is resolved to its ESPN id through
+  // game-id-map.js before it joins the index. Without the
+  // resolver, the merge found nothing and every game looked
+  // unpriced.
   // ============================================================
 
   async function loadCachedOdds(sport, url, key, canReadOpen) {
@@ -499,25 +498,53 @@ const EDGE_ATS = (() => {
       }
     } catch (e) { logEdgeError('ats.loadCachedOdds.historical.' + sport, e); }
 
+    // line_history fallback. Resolve every id in one pass so the
+    // per-row merges do not call the resolver individually.
     try {
       const res = await fetch(
-        `${url}/rest/v1/line_history?sport=eq.${sport}&select=game_id,spread,total,ml,created_at&order=created_at.asc&limit=50000`,
+        `${url}/rest/v1/line_history?sport=eq.${sport}` +
+        `&select=game_id,spread,total,ml,created_at&order=created_at.asc&limit=50000`,
         { headers }
       );
       if (res.ok) {
         const rows = await res.json();
+
+        const oddsIds = Array.from(new Set(rows.map(r => r.game_id).filter(Boolean)));
+        const resolved = await resolveAll(oddsIds);
+
         rows.forEach(r => {
           if (r.spread == null) return;
-          if (out[r.game_id]?.spread != null) return;
-          out[r.game_id] = {
+          const espnId = resolved[r.game_id];
+          if (!espnId) return;
+          if (out[espnId]?.spread != null) return;
+          out[espnId] = {
             spread: r.spread,
             total: r.total ?? null,
             home_ml: r.ml ?? null,
             open_spread: null,
+            _source: 'line_history',
           };
         });
       }
     } catch (e) { logEdgeError('ats.loadCachedOdds.lineHistory.' + sport, e); }
+
+    return out;
+  }
+
+  // Bulk resolve. Parallel, bounded. Falls back to null for any
+  // id the resolver has no link for, so a partially populated
+  // map still seeds the games it knows about.
+  async function resolveAll(oddsIds) {
+    const out = {};
+    if (!oddsIds.length) return out;
+    if (!window.EDGE_GAME_ID_MAP) return out;
+
+    await parallelMap(oddsIds, 6, async id => {
+      try {
+        const espnId = await window.EDGE_GAME_ID_MAP.resolveFromOddsId(id);
+        if (espnId) out[id] = espnId;
+      } catch {}
+    });
 
     return out;
   }
@@ -769,19 +796,26 @@ const EDGE_ATS = (() => {
   // ============================================================
   // ── FETCH ──
   //
-  // ESPN's range format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400
-  // for anything outside the current season. The single-year format
-  // ?dates=YYYY works and returns that season's games in one call.
-  //
-  // College endpoints additionally need a groups filter — 80 is FBS
-  // football, 50 is Division I basketball — or they return an empty
-  // event list even for a valid year.
-  //
-  // Soccer does not honour ?dates=YYYY at all; it needs a range, and
-  // its season fits inside a calendar year, so a full-year range works.
+  // Power-engine's fetchGamesBetween chunks the season into day
+  // windows and has a day-by-day fallback, which sidesteps the
+  // 1,000-event cap on a single ESPN year request. When that
+  // function is available, this file uses it. The local fetch
+  // below remains for pages that load ats-tracker without
+  // power-engine, and bumps the limit to 2,000 so truncation is
+  // at least less severe when it is hit.
   // ============================================================
 
   async function fetchRangeChunked(path, start, end, log, sport) {
+    if (window.EDGE_POWER && typeof window.EDGE_POWER.fetchGamesBetween === 'function') {
+      try {
+        const events = await window.EDGE_POWER.fetchGamesBetween(sport, start, end, { raw: true });
+        if (log) log(`  fetched ${events.length} events via power-engine`);
+        return events;
+      } catch (e) {
+        logEdgeError('ats.fetchRangeChunked.powerEngine.' + sport, e);
+      }
+    }
+
     const years = [];
     for (let y = start.getFullYear(); y <= end.getFullYear(); y++) years.push(y);
 
@@ -812,7 +846,7 @@ const EDGE_ATS = (() => {
       : String(year);
 
     const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard` +
-                `?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=1000`;
+                `?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=2000`;
 
     try {
       const res = await fetch(url, { cache: 'no-store' });
@@ -827,11 +861,6 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── WRITE ──
-  //
-  // A single failed fetch used to drop an entire chunk of rows. Now
-  // each chunk retries with backoff. A 409 gets one more attempt with
-  // merge-duplicates set explicitly, in case the first request's
-  // Prefer header was lost in transit.
   // ============================================================
 
   async function upsert(endpoint, rows, key, log, tableName) {
@@ -883,23 +912,26 @@ const EDGE_ATS = (() => {
 
   // ============================================================
   // ── SEASON LABEL ──
+  //
+  // Matches power-engine's convention so team_ats.season_label,
+  // power_ratings rows for the same window, and trends rows all
+  // read the same string. Cross-year sports carry the year they
+  // started. WNBA, MLB and MLS play inside a calendar year and
+  // carry the calendar year, which stops a single WNBA season
+  // from splitting across two labels.
   // ============================================================
 
   function seasonLabel(sport, date) {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
-    const cross = (startMonth) => (m >= startMonth
-      ? `${y}-${String(y + 1).slice(2)}`
-      : `${y - 1}-${String(y).slice(2)}`);
 
-    switch (sport) {
-      case 'NBA':
-      case 'NHL':   return cross(9);
-      case 'NCAAB': return cross(9);
-      case 'NFL':   return cross(3);
-      case 'NCAAF': return cross(3);
-      default:      return String(y);
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
+      return String(m >= 9 ? y : y - 1);
     }
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      return String(m >= 3 ? y : y - 1);
+    }
+    return String(y);
   }
 
   // ============================================================
