@@ -1,12 +1,46 @@
 // ============================================================
-// EDGE — SIM GRADER v1.0
+// EDGE — SIM GRADER v2.0
 //
-// Turns pending paper bets in bet_log into W/L/P.
+// The sim engine places paper bets and stores them in bet_log
+// with mode='sim' and status='pending'. This module is what
+// turns those pending rows into W/L/P.
+//
+// v2.0 changes:
+//
+//   · Resolves the game id. bet_log.game_id is The Odds API's
+//     event id. historical_odds.game_id is ESPN's event id.
+//     They are unrelated strings. The old code queried
+//     historical_odds by the bet's id and always found nothing,
+//     so no sim bet ever graded. The lookup now goes through
+//     EDGE_GAME_ID_MAP.resolveFromOddsId() first.
+//
+//   · Handles the old empty-line rows. Auto-placed bets before
+//     the orchestrator v3.2 change wrote line: '' and used the
+//     moneyline as the price for either side. Number('') is 0,
+//     so an old row would have graded as pick'em. Those rows
+//     are now reported as legacy_format and skipped rather than
+//     mis-graded.
+//
+//   · Reports every unresolved id per run rather than swallowing
+//     it. If a game_id has no link in game_id_map yet, the row
+//     stays pending and the count shows up in the summary.
+//
+// Workflow:
+//   1. Read pending sim bets from bet_log.
+//   2. Resolve each game_id via game-id-map.js.
+//   3. Load final scores from historical_odds by the ESPN id.
+//   4. Grade each bet against the side it took.
+//   5. PATCH the row with result, pnl, graded_at, status='graded'.
+//   6. Update the local sim state so the betting page reflects
+//      the same record.
+//
+// Idempotent. A row already marked graded is skipped, so a run
+// twice a day does not double-count.
 // ============================================================
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20260924-01';
+  const BUILD = 'simgrade-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -19,7 +53,13 @@ const EDGE_SIM_GRADER = (() => {
     } catch {}
   }
 
+  // How far back to look for pending bets. Older than a month and
+  // they are stale — either the game was never scheduled, or the
+  // score was never written. Reported as unresolved rather than
+  // left silently in the pending queue forever.
   const LOOKBACK_DAYS = 30;
+
+  const DEFAULT_SPREAD_PRICE = -110;
 
   return {
     BUILD,
@@ -32,6 +72,10 @@ const EDGE_SIM_GRADER = (() => {
   add column if not exists graded_at timestamptz;`,
   };
 
+  // ============================================================
+  // ── PROBE ──
+  // ============================================================
+
   async function probe() {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     const status = {
@@ -40,6 +84,7 @@ const EDGE_SIM_GRADER = (() => {
       result_col: false,
       pnl_col: false,
       graded_at_col: false,
+      game_id_map: false,
     };
     if (!status.connected) return status;
 
@@ -59,8 +104,17 @@ const EDGE_SIM_GRADER = (() => {
       } catch {}
     }
 
+    try {
+      const r = await fetch(`${url}/rest/v1/game_id_map?select=id&limit=1`, { headers });
+      status.game_id_map = r.ok;
+    } catch {}
+
     return status;
   }
+
+  // ============================================================
+  // ── MAIN ──
+  // ============================================================
 
   async function run(options = {}) {
     const {
@@ -85,37 +139,82 @@ const EDGE_SIM_GRADER = (() => {
       log(SCHEMA_SQL);
       return { ok: false, error: 'columns missing', sql: SCHEMA_SQL };
     }
+    if (!schema.game_id_map) {
+      log('game_id_map table is missing — sim bets cannot resolve their score');
+      log('Run EDGE_GAME_ID_MAP.schemaSql() output in the Supabase editor');
+      return { ok: false, error: 'game_id_map missing' };
+    }
+    if (typeof window.EDGE_GAME_ID_MAP === 'undefined') {
+      log('game-id-map.js module not loaded');
+      return { ok: false, error: 'EDGE_GAME_ID_MAP not loaded' };
+    }
 
+    // ── 1. Load pending bets ──
     const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
     const pending = await loadPending(mode, since, url, key);
     log(`${pending.length} pending ${mode} bets from the last ${LOOKBACK_DAYS} days`);
 
     if (!pending.length) {
-      return { ok: true, graded: 0, unresolved: 0, pending: 0 };
+      return { ok: true, graded: 0, unresolved: 0, legacy: 0, pending: 0 };
     }
 
+    // ── 2. Filter legacy-format rows ──
+    // Rows written before orchestrator v3.2 carry pick_type 'HOME'
+    // or an empty line. They cannot be graded correctly.
+    const gradable = [];
+    let legacy = 0;
+    for (const b of pending) {
+      if (isLegacyFormat(b)) { legacy++; continue; }
+      gradable.push(b);
+    }
+    if (legacy) {
+      log(`  ${legacy} legacy-format rows skipped (written before v3.2 shape)`);
+    }
+
+    // ── 3. Group by game ──
     const byGame = {};
-    pending.forEach(b => {
+    for (const b of gradable) {
       const gid = b.game_id;
       if (!gid) {
         log(`  ${b.pick_label} — no game_id, cannot grade`);
-        return;
+        continue;
       }
       (byGame[gid] = byGame[gid] || []).push(b);
-    });
+    }
 
-    const gameIds = Object.keys(byGame);
-    log(`  ${gameIds.length} unique game${gameIds.length === 1 ? '' : 's'}`);
+    const uniqueGameIds = Object.keys(byGame);
+    log(`  ${uniqueGameIds.length} unique game${uniqueGameIds.length === 1 ? '' : 's'}`);
 
-    const scores = await loadScores(gameIds, url, key);
+    // ── 4. Resolve Odds API ids to ESPN ids ──
+    const idMap = {};
+    let resolvedCount = 0;
+    for (const gid of uniqueGameIds) {
+      try {
+        const espnId = await window.EDGE_GAME_ID_MAP.resolveFromOddsId(gid);
+        if (espnId) { idMap[gid] = espnId; resolvedCount++; }
+      } catch (e) {
+        logEdgeError('simGrader.resolveId', e);
+      }
+    }
+    log(`  ${resolvedCount}/${uniqueGameIds.length} game ids resolved to ESPN`);
+
+    // ── 5. Load final scores ──
+    const espnIds = Object.values(idMap);
+    const scores = await loadScores(espnIds, url, key);
     log(`  ${Object.keys(scores).length} games have a final score`);
 
-    let graded = 0, unresolved = 0;
+    // ── 6. Grade each bet ──
+    let graded = 0;
+    let unresolved = 0;
+    let pendingScore = 0;
     const updates = [];
 
     for (const [gid, bets] of Object.entries(byGame)) {
-      const score = scores[gid];
-      if (!score) { unresolved += bets.length; continue; }
+      const espnId = idMap[gid];
+      if (!espnId) { unresolved += bets.length; continue; }
+
+      const score = scores[espnId];
+      if (!score) { pendingScore += bets.length; continue; }
 
       for (const bet of bets) {
         const outcome = gradeOne(bet, score);
@@ -134,11 +233,15 @@ const EDGE_SIM_GRADER = (() => {
       }
     }
 
-    log(`  ${graded} graded · ${unresolved} unresolved`);
+    log(`  ${graded} graded · ${unresolved} unresolved · ${pendingScore} awaiting score`);
 
+    // ── 7. Persist ──
     if (dryRun) {
       log('Dry run — no rows written');
-      return { ok: true, graded, unresolved, pending: pending.length, dryRun: true };
+      return {
+        ok: true, graded, unresolved, legacy,
+        pending_score: pendingScore, pending: pending.length, dryRun: true,
+      };
     }
 
     if (updates.length) {
@@ -150,10 +253,43 @@ const EDGE_SIM_GRADER = (() => {
       ok: true,
       graded,
       unresolved,
+      legacy,
+      pending_score: pendingScore,
       pending: pending.length,
       written: updates.length,
     };
   }
+
+  // ============================================================
+  // ── LEGACY FORMAT ──
+  //
+  // Auto-placed bets before orchestrator v3.2 wrote:
+  //   pick_type: 'HOME'
+  //   line: ''
+  //   odds: the home moneyline for either side
+  //
+  // Number('') is 0, so an ATS grade would compute against a
+  // spread of zero. Those rows cannot be graded correctly and
+  // are skipped rather than corrupted.
+  // ============================================================
+
+  function isLegacyFormat(bet) {
+    if (bet.pick_type === 'HOME' || bet.pick_type === 'AWAY') return true;
+    if (bet.pick_type == null) return true;
+
+    // ATS / ML / TOTAL with an empty line, when the pick_type
+    // requires one, is also legacy.
+    if (bet.pick_type === 'ATS' || bet.pick_type === 'TOTAL') {
+      if (bet.line == null) return true;
+      const lineStr = String(bet.line).trim();
+      if (lineStr === '') return true;
+    }
+    return false;
+  }
+
+  // ============================================================
+  // ── LOAD PENDING ──
+  // ============================================================
 
   async function loadPending(mode, since, url, key) {
     const out = [];
@@ -180,13 +316,17 @@ const EDGE_SIM_GRADER = (() => {
     return out;
   }
 
-  async function loadScores(gameIds, url, key) {
+  // ============================================================
+  // ── LOAD FINAL SCORES ──
+  // ============================================================
+
+  async function loadScores(espnIds, url, key) {
     const out = {};
-    if (!gameIds.length) return out;
+    if (!espnIds.length) return out;
 
     const chunkSize = 200;
-    for (let i = 0; i < gameIds.length; i += chunkSize) {
-      const chunk = gameIds.slice(i, i + chunkSize);
+    for (let i = 0; i < espnIds.length; i += chunkSize) {
+      const chunk = espnIds.slice(i, i + chunkSize);
       const inList = chunk.map(id => `"${id}"`).join(',');
 
       try {
@@ -198,13 +338,13 @@ const EDGE_SIM_GRADER = (() => {
         if (!res.ok) continue;
         const rows = await res.json();
         rows.forEach(r => {
-          out[r.game_id] = {
+          out[String(r.game_id)] = {
             home: r.home,
             away: r.away,
-            home_score: r.home_score,
-            away_score: r.away_score,
-            spread: r.spread,
-            total: r.total,
+            home_score: Number(r.home_score),
+            away_score: Number(r.away_score),
+            spread: r.spread != null ? Number(r.spread) : null,
+            total: r.total != null ? Number(r.total) : null,
           };
         });
       } catch (e) {
@@ -215,6 +355,18 @@ const EDGE_SIM_GRADER = (() => {
     return out;
   }
 
+  // ============================================================
+  // ── GRADE ONE ──
+  //
+  // pick_label is the team name (physics builds it from
+  // side_label.team). To grade, match it against home or away,
+  // then apply the pick_type.
+  //
+  //   ATS: pick team's cover margin against the bet's line.
+  //   ML:  pick team won outright.
+  //   Total: over/under against combined score.
+  // ============================================================
+
   function gradeOne(bet, score) {
     const type = (bet.pick_type || 'ATS').toUpperCase();
     const label = String(bet.pick_label || '').trim();
@@ -224,6 +376,7 @@ const EDGE_SIM_GRADER = (() => {
     const away = String(score.away || '');
     const homeScore = Number(score.home_score);
     const awayScore = Number(score.away_score);
+    if (!isFinite(homeScore) || !isFinite(awayScore)) return null;
 
     let side = null;
     if (label === home) side = 'home';
@@ -238,7 +391,7 @@ const EDGE_SIM_GRADER = (() => {
 
     const margin = homeScore - awayScore;
     const combined = homeScore + awayScore;
-    const odds = Number(bet.odds) || -110;
+    const odds = Number(bet.odds) || DEFAULT_SPREAD_PRICE;
     const winMultiplier = odds > 0 ? (odds / 100) : (100 / Math.abs(odds));
     const stake = Number(bet.amount) || 0;
 
@@ -262,6 +415,7 @@ const EDGE_SIM_GRADER = (() => {
         : { result: 'L', pnl: round(-stake, 2) };
     }
 
+    // ATS
     const spread = Number(bet.line);
     if (!isFinite(spread)) return null;
 
@@ -274,6 +428,10 @@ const EDGE_SIM_GRADER = (() => {
       ? { result: 'W', pnl: round(stake * winMultiplier, 2) }
       : { result: 'L', pnl: round(-stake, 2) };
   }
+
+  // ============================================================
+  // ── LOCAL SIM STATE MIRROR ──
+  // ============================================================
 
   function tryUpdateLocalSimState(dbBet, outcome) {
     try {
@@ -324,6 +482,10 @@ const EDGE_SIM_GRADER = (() => {
     }
   }
 
+  // ============================================================
+  // ── WRITE GRADES ──
+  // ============================================================
+
   async function writeGrades(updates, url, key, log) {
     let written = 0;
     const headers = {
@@ -358,6 +520,10 @@ const EDGE_SIM_GRADER = (() => {
 
     return written;
   }
+
+  // ============================================================
+  // ── UTILITIES ──
+  // ============================================================
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
