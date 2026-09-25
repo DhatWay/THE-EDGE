@@ -17,20 +17,23 @@
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
+  <script src="trends-engine.js"></script>
+  <script src="prop-trends-engine.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
+  <script src="situations-engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -67,20 +70,17 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px,11vw,68px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* ENGINE BAR */
     .engine-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
     .engine-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); flex: 1; min-width: 180px; }
     .engine-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 2px; padding: 9px 20px; cursor: pointer; white-space: nowrap; transition: opacity 0.2s; }
     .engine-btn:hover { opacity: 0.85; }
     .engine-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* SPORT TABS */
     .sport-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
     .sport-tabs::-webkit-scrollbar { display: none; }
     .tab-btn { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px 18px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
 
-    /* COMPARE */
     .compare-section { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); }
     .compare-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
     .compare-row { display: flex; gap: 8px; align-items: center; }
@@ -114,7 +114,6 @@
     .edge-banner { background: var(--gold-glow); border: 1px solid var(--border-bright); padding: 12px 14px; text-align: center; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
     .spread-suggest { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); text-align: center; margin-top: 6px; }
 
-    /* RATINGS TABLE */
     .ratings-section { padding: 16px 20px; }
     .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
     .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text); }
@@ -149,7 +148,6 @@
     .tier-dot.avg   { background: var(--text-dim); }
     .tier-dot.below { background: var(--red); }
 
-    /* EMPTY */
     .empty-state { padding: 40px 20px; text-align: center; }
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
@@ -161,9 +159,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -208,7 +203,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -246,17 +240,20 @@
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
-    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="power.html" class="active"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
+    <a href="test-espn.html"><span class="ico">⌬</span> ESPN Test</a>
   </div>
 
   <main>
@@ -334,10 +331,68 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── STATE ──
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
+    // ============================================================
+    // STATE
+    // ============================================================
+
     let currentSport = 'NFL';
-    let allRatings = {};   // { NFL: [...], NBA: [...] }
-    let allCoaching = {};  // { NFL: { 'Team Name': {...} } }
+    let allRatings = {};
+    let allCoaching = {};
+
+    // Sort by overall desc. Overall is now built from the
+    // model's own composite_points in power-engine v4.3, so the
+    // page and the pipeline sort the same way. Falling back to
+    // whatever the server returns if the column is absent.
+    const RATINGS_ORDER = 'overall.desc';
+
+    // ============================================================
+    // SPREAD CONVERSION
+    //
+    // The compare panel suggests a spread from the difference in
+    // overall rating. The engine's own fallback in
+    // power-engine.js uses these same per-sport factors, with a
+    // sign convention where a higher-rated team is favoured. The
+    // v1 file used a different factor (0.20 for NFL vs the
+    // engine's 0.28) and applied no home field at all, so the
+    // suggested line did not match what the pipeline projected.
+    //
+    // The number below is points per rating point. Home field
+    // is added or subtracted depending on which side the higher
+    // rated team plays.
+    // ============================================================
+
+    const SPREAD_CONV = {
+      NFL:   0.28,
+      NBA:   0.28,
+      WNBA:  0.28,
+      MLB:   0.08,
+      NHL:   0.05,
+      NCAAF: 0.30,
+      NCAAB: 0.28,
+      MLS:   0.05,
+      DEFAULT: 0.28,
+    };
+
+    // Home field in points. Matches EDGE_RATING.HOME_POINTS.
+    const HOME_FIELD = {
+      NFL:   2.0,
+      NBA:   2.6,
+      WNBA:  2.6,
+      MLB:   0.20,
+      NHL:   0.25,
+      NCAAF: 2.8,
+      NCAAB: 3.3,
+      MLS:   0.38,
+      DEFAULT: 2.0,
+    };
 
     // ── SPORT TABS ──
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -351,7 +406,10 @@
       });
     });
 
-    // ── LOAD FROM SUPABASE ──
+    // ============================================================
+    // LOAD FROM SUPABASE
+    // ============================================================
+
     async function loadFromSupabase() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -359,7 +417,7 @@
 
       try {
         const [tRes, cRes] = await Promise.all([
-          fetch(`${url}/rest/v1/power_ratings?select=*&order=overall.desc`, {
+          fetch(`${url}/rest/v1/power_ratings?select=*&order=${RATINGS_ORDER}`, {
             headers: { apikey: key, Authorization: `Bearer ${key}` }
           }),
           fetch(`${url}/rest/v1/coaching_ratings?select=*`, {
@@ -397,7 +455,10 @@
       } catch { return false; }
     }
 
-    // ── RUN POWER ENGINE ──
+    // ============================================================
+    // RUN POWER ENGINE
+    // ============================================================
+
     async function runPowerEngine() {
       const btn = document.getElementById('engineBtn');
       const status = document.getElementById('engineStatus');
@@ -410,7 +471,6 @@
         const teamsCount = Object.keys(result.teams || {}).length;
         const coachesCount = Object.keys(result.coaching || {}).length;
 
-        // Rebuild local indexes from fresh result
         allRatings = {};
         Object.values(result.teams || {}).forEach(t => {
           if (!allRatings[t.sport]) allRatings[t.sport] = [];
@@ -439,7 +499,10 @@
       btn.textContent = '▲ RECOMPUTE';
     }
 
-    // ── RENDER TABLE ──
+    // ============================================================
+    // RENDER TABLE
+    // ============================================================
+
     function renderRatings() {
       const container = document.getElementById('ratingsContainer');
       const teams = allRatings[currentSport] || [];
@@ -595,14 +658,22 @@
           </div>`;
       }).join('');
 
+      // Suggested spread. Uses the same per-point conversion the
+      // engine's own fallback in power-engine.js uses, so the
+      // number here matches what the pipeline would project on a
+      // neutral field. Home field is applied on top, in the
+      // direction that favours the higher-rated team when it
+      // plays at home — the compare panel does not know who is
+      // home, so it shows the neutral-field line and says so.
       const edge = a.overall > b.overall ? nameA : nameB;
-      const diff = Math.abs(a.overall - b.overall).toFixed(1);
-      const spreadConv = { NFL: 0.20, NBA: 0.20, MLB: 0.06, NHL: 0.04, NCAAF: 0.24, NCAAB: 0.20, MLS: 0.04 }[currentSport] || 0.20;
-      const impliedSpread = (Math.abs(a.overall - b.overall) * spreadConv).toFixed(1);
+      const diff = Math.abs(a.overall - b.overall);
+      const conv = SPREAD_CONV[currentSport] ?? SPREAD_CONV.DEFAULT;
+      const neutralSpread = (diff * conv).toFixed(1);
+      const hfa = HOME_FIELD[currentSport] ?? HOME_FIELD.DEFAULT;
 
-      document.getElementById('edgeBanner').textContent = `EDGE: ${edge} · ${diff} rating advantage`;
+      document.getElementById('edgeBanner').textContent = `EDGE: ${edge} · ${diff.toFixed(1)} rating advantage`;
       document.getElementById('spreadSuggest').textContent =
-        `Implied spread: ${edge} -${impliedSpread}`;
+        `Neutral-field line: ${edge} -${neutralSpread} · home field ≈ ${hfa} pts`;
 
       result.classList.add('show');
     }
@@ -630,7 +701,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
