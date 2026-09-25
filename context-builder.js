@@ -1,48 +1,52 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v4.1
+// EDGE — CONTEXT BUILDER v5.0
 //
-// Supplies every piece of game context the situations engine,
-// the algorithms, and the governor need:
-//   · line history (open spread, current, public/sharp pct)
-//   · rest days per team
-//   · travel miles and timezone shift per game
-//   · weather at kickoff
-//   · injuries per game (via injury-fragmentation)
-//   · ATS form per team
-//   · head-to-head history per matchup
+// Supplies line history, rest, travel, weather, injuries,
+// ATS form and head-to-head for a slate.
 //
-// v4.1 changes:
-//   · Weather cache. Open-Meteo is called once per (location ×
-//     calendar day) and the raw hourly response is stored for
-//     12 hours. Every game at the same stadium on the same day
-//     shares one fetch instead of firing one per game. On a
-//     busy MLB slate that is roughly 15 calls reduced to 3.
-//   · Schedule cache. The whole-season ESPN scoreboard is a
-//     multi-second fetch per sport. It does not change within a
-//     day, so the reduced event list — date, home, away — is
-//     cached for 24 hours per (sport × year). Rest days are
-//     still recomputed fresh each run; only the raw schedule
-//     is cached.
-//   · Session memo. A pipeline run followed by the analysis
-//     page on the same game re-uses the same built context
-//     when the inputs have not changed. Cleared on navigation.
-//   · Cache hits and misses are reported on the returned
-//     object as ctx._cache, so the diagnostic can say whether
-//     the second run of the day actually hit the cache.
-//   · clearCache() exported. Settings or diagnostic can call it
-//     to force a full refresh.
+// v5.0 changes:
 //
-// v4.0 fixes the ESPN schedule fetch — it was using the
-// ?dates=YYYYMMDD-YYYYMMDD range format, which returns HTTP 400
-// for any window outside the current season. Switched to
-// ?dates=YYYY (single year), which works and returns a whole
-// season in one call. This is what was silently starving rest
-// days for every sport.
+//   · Team names are resolved through team-aliases.js before
+//     any ATS or head-to-head lookup. The old code queried
+//     team_ats and matchup_ats by the game's own team name —
+//     which is The Odds API's spelling — against rows written
+//     by ats-tracker with ESPN's spelling. Any team spelled
+//     differently got no ATS or H2H data. Every lookup now
+//     goes through EDGE_TEAMS.normalize.
+//
+//   · ATS and H2H are loaded once per sport, indexed locally,
+//     and matched against normalized names. The old code
+//     queried with team_name=in.(...) using raw names; the
+//     new code fetches the sport's whole table (a few hundred
+//     rows) and joins in memory.
+//
+//   · The schedule fetch goes day by day over the last 60
+//     days, not by year with limit=1000. A full MLB year is
+//     2,430 games; the old fetch truncated at 1,000 and lost
+//     more than half the season. Rest days, travel type and
+//     road-trip length were computed on a partial schedule.
+//     60 single-day calls, cacheable per (sport, date), cover
+//     exactly the window the rest calculation needs.
+//
+//   · The 60-day window no longer starts at Jan 1. A January
+//     game now correctly sees December games behind it. The
+//     old year-boundary logic lost every December game from
+//     January's perspective.
+//
+//   · Travel uses a resolver. The stadium table is expanded
+//     to cover WNBA, MLS and a representative set of college
+//     teams, and match now goes through a normalized lookup
+//     so "LA Clippers" and "Los Angeles Clippers" land on the
+//     same coordinate.
+//
+//   · Weather cache and schedule cache are kept. The schedule
+//     cache is now keyed per (path, date) instead of per
+//     (path, year) since the fetch is per-day.
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
 
-  const BUILD = 'ctx-20260924-01';
+  const BUILD = 'ctx-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -59,28 +63,16 @@ const EDGE_CONTEXT = (() => {
   };
 
   const REST_LOOKBACK_DAYS = 60;
+  const SCHEDULE_CONCURRENCY = 6;
 
-  // Weather does not meaningfully change within half a day for a
-  // given stadium, and the 16-day forecast is available from one
-  // call. Twelve hours is short enough to pick up overnight model
-  // updates and long enough that a slate processed four times in
-  // a morning fetches weather once.
   const WEATHER_TTL_MS = 12 * 60 * 60 * 1000;
   const WEATHER_CACHE_KEY = 'edge_weather_cache_v1';
   const WEATHER_CACHE_MAX = 400;
 
-  // A finished season's schedule is fixed. A live season's schedule
-  // only adds completed games; it does not remove or change any.
-  // Twenty-four hours of staleness at worst means one day behind on
-  // a game that just finished, which does not affect rest-day math
-  // for a game that is still upcoming.
   const SCHEDULE_TTL_MS = 24 * 60 * 60 * 1000;
-  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v1';
-  const SCHEDULE_CACHE_MAX = 40;
+  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v2';
+  const SCHEDULE_CACHE_MAX = 600;
 
-  // Per-session memo. A page that calls buildContext twice for the
-  // same slate within a few minutes should not re-fetch anything.
-  // Not persisted; cleared when the tab closes.
   const SESSION_TTL_MS = 5 * 60 * 1000;
   const sessionMemo = new Map();
 
@@ -92,7 +84,17 @@ const EDGE_CONTEXT = (() => {
     } catch {}
   }
 
+  // ============================================================
+  // ── STADIUM COORDINATES ──
+  //
+  // Canonical names. resolveCoord() normalizes the incoming
+  // team name and matches against a normalized index of these
+  // keys, so "LA Clippers" and "Los Angeles Clippers" both
+  // find the same row.
+  // ============================================================
+
   const TEAM_CITIES = {
+    // NFL
     'Arizona Cardinals': [33.5276, -112.2626],
     'Atlanta Falcons': [33.7554, -84.4008],
     'Baltimore Ravens': [39.2780, -76.6227],
@@ -125,6 +127,8 @@ const EDGE_CONTEXT = (() => {
     'Tampa Bay Buccaneers': [27.9759, -82.5033],
     'Tennessee Titans': [36.1665, -86.7713],
     'Washington Commanders': [38.9077, -77.0728],
+
+    // NBA
     'Atlanta Hawks': [33.7573, -84.3963],
     'Boston Celtics': [42.3662, -71.0621],
     'Brooklyn Nets': [40.6826, -73.9754],
@@ -137,7 +141,7 @@ const EDGE_CONTEXT = (() => {
     'Golden State Warriors': [37.7680, -122.3877],
     'Houston Rockets': [29.7508, -95.3621],
     'Indiana Pacers': [39.7638, -86.1555],
-    'LA Clippers': [34.0430, -118.2673],
+    'Los Angeles Clippers': [34.0430, -118.2673],
     'Los Angeles Lakers': [34.0430, -118.2673],
     'Memphis Grizzlies': [35.1382, -90.0506],
     'Miami Heat': [25.7814, -80.1870],
@@ -155,6 +159,23 @@ const EDGE_CONTEXT = (() => {
     'Toronto Raptors': [43.6435, -79.3791],
     'Utah Jazz': [40.7683, -111.9011],
     'Washington Wizards': [38.8981, -77.0209],
+
+    // WNBA
+    'Atlanta Dream': [33.7573, -84.3963],
+    'Chicago Sky': [41.8807, -87.6742],
+    'Connecticut Sun': [41.4904, -72.0912],
+    'Dallas Wings': [32.7473, -97.0945],
+    'Indiana Fever': [39.7638, -86.1555],
+    'Las Vegas Aces': [36.0909, -115.1833],
+    'Los Angeles Sparks': [34.0430, -118.2673],
+    'Minnesota Lynx': [44.9795, -93.2761],
+    'New York Liberty': [40.6826, -73.9754],
+    'Phoenix Mercury': [33.4457, -112.0712],
+    'Seattle Storm': [47.6221, -122.3540],
+    'Washington Mystics': [38.8981, -77.0209],
+    'Golden State Valkyries': [37.7680, -122.3877],
+
+    // MLB
     'Arizona Diamondbacks': [33.4455, -112.0667],
     'Atlanta Braves': [33.8908, -84.4678],
     'Baltimore Orioles': [39.2840, -76.6217],
@@ -185,6 +206,8 @@ const EDGE_CONTEXT = (() => {
     'Texas Rangers': [32.7474, -97.0825],
     'Toronto Blue Jays': [43.6414, -79.3894],
     'Washington Nationals': [38.8730, -77.0074],
+
+    // NHL
     'Anaheim Ducks': [33.8078, -117.8768],
     'Boston Bruins': [42.3662, -71.0621],
     'Buffalo Sabres': [42.8750, -78.8765],
@@ -217,7 +240,78 @@ const EDGE_CONTEXT = (() => {
     'Vegas Golden Knights': [36.1029, -115.1781],
     'Washington Capitals': [38.8981, -77.0209],
     'Winnipeg Jets': [49.8927, -97.1437],
+
+    // MLS
+    'Atlanta United FC': [33.7554, -84.4008],
+    'Austin FC': [30.2672, -97.7431],
+    'Charlotte FC': [35.2258, -80.8528],
+    'Chicago Fire FC': [41.8623, -87.6167],
+    'FC Cincinnati': [39.0954, -84.5160],
+    'Colorado Rapids': [39.8055, -104.9716],
+    'Columbus Crew': [39.9692, -83.0060],
+    'FC Dallas': [33.1523, -96.8378],
+    'D.C. United': [38.9077, -77.0728],
+    'Houston Dynamo FC': [29.7508, -95.3621],
+    'Sporting Kansas City': [39.1217, -94.8231],
+    'LA Galaxy': [33.8644, -118.2611],
+    'Los Angeles FC': [34.0127, -118.2848],
+    'Inter Miami CF': [25.9580, -80.2389],
+    'Minnesota United FC': [44.9737, -93.2575],
+    'CF Montreal': [45.5613, -73.5780],
+    'Nashville SC': [36.1665, -86.7713],
+    'New England Revolution': [42.0909, -71.2643],
+    'New York City FC': [40.8296, -73.9262],
+    'New York Red Bulls': [40.7369, -74.1503],
+    'Orlando City SC': [28.5392, -81.3839],
+    'Philadelphia Union': [39.8318, -75.3777],
+    'Portland Timbers': [45.5215, -122.6917],
+    'Real Salt Lake': [40.5829, -111.8933],
+    'San Jose Earthquakes': [37.3506, -121.9269],
+    'Seattle Sounders FC': [47.5952, -122.3316],
+    'St. Louis City SC': [38.6323, -90.2009],
+    'Toronto FC': [43.6333, -79.4186],
+    'Vancouver Whitecaps FC': [49.2778, -123.1087],
   };
+
+  // Alias map for teams whose canonical entry differs from
+  // what an upstream might send. Keyed by normalized form,
+  // value is the canonical key in TEAM_CITIES.
+  const CITY_ALIASES = {
+    'laclippers': 'Los Angeles Clippers',
+    'lalakers': 'Los Angeles Lakers',
+    'utahhockeyclub': 'Utah Hockey Club',
+    'arizonacoyotes': 'Utah Hockey Club',
+    'oaklandathletics': 'Athletics',
+    'lasvegasathletics': 'Athletics',
+    'stlouisrams': 'Los Angeles Rams',
+    'sandiegochargers': 'Los Angeles Chargers',
+    'oaklandraiders': 'Las Vegas Raiders',
+    'washingtoredskins': 'Washington Commanders',
+    'washingtonfootballteam': 'Washington Commanders',
+  };
+
+  // Normalized city index built once on first use.
+  let _cityIndex = null;
+  function cityIndex() {
+    if (_cityIndex) return _cityIndex;
+    _cityIndex = {};
+    const strip = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    Object.entries(TEAM_CITIES).forEach(([name, coord]) => {
+      _cityIndex[strip(name)] = { name, coord };
+    });
+    Object.entries(CITY_ALIASES).forEach(([alias, canonical]) => {
+      const c = TEAM_CITIES[canonical];
+      if (c) _cityIndex[alias] = { name: canonical, coord: c };
+    });
+    return _cityIndex;
+  }
+
+  function resolveCoord(teamName) {
+    if (!teamName) return null;
+    const key = String(teamName).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const hit = cityIndex()[key];
+    return hit ? hit.coord : null;
+  }
 
   const DOMED_HOMES = new Set([
     'Arizona Cardinals', 'Atlanta Falcons', 'Dallas Cowboys', 'Detroit Lions',
@@ -225,6 +319,10 @@ const EDGE_CONTEXT = (() => {
     'Los Angeles Rams', 'Minnesota Vikings', 'New Orleans Saints',
     'Arizona Diamondbacks', 'Houston Astros', 'Miami Marlins', 'Milwaukee Brewers',
     'Seattle Mariners', 'Texas Rangers', 'Toronto Blue Jays', 'Tampa Bay Rays',
+    'Atlanta Dream', 'Chicago Sky', 'Connecticut Sun', 'Dallas Wings',
+    'Indiana Fever', 'Las Vegas Aces', 'Los Angeles Sparks', 'Minnesota Lynx',
+    'New York Liberty', 'Phoenix Mercury', 'Seattle Storm', 'Washington Mystics',
+    'Golden State Valkyries',
   ]);
 
   return {
@@ -258,11 +356,6 @@ const EDGE_CONTEXT = (() => {
 
     if (!Array.isArray(games) || !games.length) return ctx;
 
-    // Session memo: if the exact same slate was built a few minutes
-    // ago in this session, return the cached object. The key is a
-    // sorted list of game ids plus the current minute, so two
-    // different slates never collide but a re-run inside the TTL
-    // does.
     const memoKey = memoKeyFor(games);
     const memoEntry = sessionMemo.get(memoKey);
     if (memoEntry && Date.now() - memoEntry.t < SESSION_TTL_MS) {
@@ -271,7 +364,6 @@ const EDGE_CONTEXT = (() => {
       return replayed;
     }
 
-    // Independent loads — fire them in parallel.
     const [lineHistory, schedule, weather, injuries, trends] = await Promise.all([
       loadLineHistory(games).catch(() => ({})),
       loadScheduleContext(games).catch(() => ({})),
@@ -290,25 +382,27 @@ const EDGE_CONTEXT = (() => {
     ctx.atsByTeam = trends.atsByTeam || {};
     ctx.h2hByGame = trends.h2hByGame || {};
 
-    // Travel is computed locally from team coordinates.
+    // Travel. resolveCoord handles aliases and normalized
+    // matches, so 'LA Clippers' and 'Los Angeles Clippers' both
+    // find the same coordinate.
+    let travelMisses = 0;
     games.forEach(g => {
       const home = g.home_team || g.home;
       const away = g.away_team || g.away;
-      const hc = TEAM_CITIES[home];
-      const ac = TEAM_CITIES[away];
-      if (!hc || !ac) return;
+      const hc = resolveCoord(home);
+      const ac = resolveCoord(away);
+      if (!hc || !ac) { travelMisses++; return; }
       ctx.travelByGame[g.id] = {
         miles: Math.round(haversine(hc, ac)),
         timezones: estimateTimezoneShift(ac, hc),
       };
     });
 
-    // Report cache behaviour so the diagnostic can see whether the
-    // schedule and weather reads hit or missed this run.
     ctx._cache = {
       session_hit: false,
       weather: weather.stats || { hits: 0, misses: 0 },
       schedule: schedule.stats || { hits: 0, misses: 0 },
+      travel_misses: travelMisses,
     };
 
     sessionMemo.set(memoKey, { t: Date.now(), ctx: cloneContext(ctx) });
@@ -325,15 +419,9 @@ const EDGE_CONTEXT = (() => {
     return ids.join('|');
   }
 
-  // Deep-ish clone. The context has no functions or prototypes,
-  // only plain objects, arrays, strings and numbers — structured
-  // clone would work but this avoids the async overhead.
   function cloneContext(ctx) {
-    try {
-      return JSON.parse(JSON.stringify(ctx));
-    } catch {
-      return ctx;
-    }
+    try { return JSON.parse(JSON.stringify(ctx)); }
+    catch { return ctx; }
   }
 
   // ============================================================
@@ -396,13 +484,15 @@ const EDGE_CONTEXT = (() => {
   // ============================================================
   // ── SCHEDULE (rest days) ──
   //
-  // Uses ?dates=YYYY (single year). The range format returns 400
-  // for anything outside the current season.
+  // Fetches every day in the last REST_LOOKBACK_DAYS by
+  // single-date query. A full-season fetch capped at limit=1000
+  // truncated MLB (2,430 games), NBA (1,300), NHL (1,300) and
+  // NCAAB (5,000+) — rest days and road-trip length were
+  // computed on a partial schedule for exactly those sports.
   //
-  // The reduced event list — date, home, away — is what this
-  // module needs, and it is what gets cached. Rest computation is
-  // still run fresh every call, since the cutoff moves and the
-  // list is cheap to iterate once it is in memory.
+  // 60 single-day calls per sport, cached per (path, date).
+  // The window is anchored to today, not to January 1, so a
+  // January game sees December games behind it.
   // ============================================================
 
   async function loadScheduleContext(games) {
@@ -420,25 +510,27 @@ const EDGE_CONTEXT = (() => {
     if (!sports.length) return out;
 
     const now = new Date();
-    const startCutoff = new Date(now.getTime() - REST_LOOKBACK_DAYS * 86400000);
-    const year = now.getFullYear();
+    const dates = [];
+    for (let i = 0; i < REST_LOOKBACK_DAYS; i++) {
+      dates.push(new Date(now.getTime() - i * 86400000));
+    }
 
+    // Build the schedule by fetching each (sport, date) once.
     const schedules = {};
-
     await Promise.all(sports.map(async sport => {
       const path = ESPN_MAP[sport];
-      const result = await getSeasonSchedule(path, year, sport);
-      if (result.hit) out.stats.hits++;
-      else out.stats.misses++;
+      const perDate = await Promise.all(dates.map(d =>
+        getDaySchedule(path, d, sport).then(r => {
+          if (r.hit) out.stats.hits++;
+          else out.stats.misses++;
+          return r.events;
+        })
+      ));
 
-      // Filter to the lookback window and sort ascending. This is
-      // cheap on the reduced form — a few hundred entries at most.
-      const list = result.events.filter(e => {
-        const t = new Date(e.date).getTime();
-        return isFinite(t) && t >= startCutoff.getTime() && t <= now.getTime();
-      }).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-      schedules[sport] = list;
+      const flat = [];
+      perDate.forEach(events => { flat.push(...events); });
+      flat.sort((a, b) => new Date(a.date) - new Date(b.date));
+      schedules[sport] = flat;
     }));
 
     games.forEach(g => {
@@ -451,8 +543,14 @@ const EDGE_CONTEXT = (() => {
         if (!team) return;
         const key = `${sport}:${team}`;
 
+        // Resolve the game's team name against the schedule's
+        // own team names, so Odds API spelling matches ESPN
+        // spelling. Direct comparison failed for every team
+        // whose name varies between the two sources.
+        const teamNorm = normalizeTeam(sport, team);
         const prior = schedule
-          .filter(e => new Date(e.date) < when && (e.home === team || e.away === team))
+          .filter(e => new Date(e.date) < when)
+          .filter(e => normalizeTeam(sport, e.home) === teamNorm || normalizeTeam(sport, e.away) === teamNorm)
           .slice(-5);
 
         if (!prior.length) return;
@@ -464,7 +562,7 @@ const EDGE_CONTEXT = (() => {
         out.restByTeam[key] = rest;
         out.practiceDaysByTeam[key] = Math.max(0, rest - 1);
 
-        const wasHome = last.home === team;
+        const wasHome = normalizeTeam(sport, last.home) === teamNorm;
         const isHome = side === 'home';
         out.travelTypeByTeam[key] = wasHome
           ? (isHome ? 'home_to_home' : 'home_to_away')
@@ -472,7 +570,7 @@ const EDGE_CONTEXT = (() => {
 
         let roadTrip = 0;
         for (let i = prior.length - 1; i >= 0; i--) {
-          if (prior[i].home === team) break;
+          if (normalizeTeam(sport, prior[i].home) === teamNorm) break;
           roadTrip++;
         }
         out.roadTripLengthByTeam[key] = roadTrip + (isHome ? 0 : 1);
@@ -482,70 +580,61 @@ const EDGE_CONTEXT = (() => {
     return out;
   }
 
-  // Reduced schedule shape: { date, home, away }.
-  // Cache lives in localStorage under SCHEDULE_CACHE_KEY.
-  async function getSeasonSchedule(path, year, sport) {
-    const key = `${path}:${year}`;
+  // Fetch one day's events for one sport. Cache per (path, date).
+  async function getDaySchedule(path, date, sport) {
+    const dateStr = fmtDate(date);
+    const cacheKey = `${path}:${dateStr}`;
     const cache = readCache(SCHEDULE_CACHE_KEY);
-    const entry = cache[key];
+    const entry = cache[cacheKey];
 
     if (entry && (Date.now() - entry.t) < SCHEDULE_TTL_MS) {
       return { events: entry.events, hit: true };
     }
 
-    const events = await fetchSeasonEvents(path, year, sport);
-    const reduced = events.map(e => {
-      const comp = e.competitions?.[0];
-      if (!comp) return null;
-      if (comp.status?.type?.completed !== true) return null;
-      const home = comp.competitors?.find(c => c.homeAway === 'home');
-      const away = comp.competitors?.find(c => c.homeAway === 'away');
-      if (!home || !away) return null;
-      const h = home.team?.displayName;
-      const a = away.team?.displayName;
-      if (!h || !a) return null;
-      return { date: e.date, home: h, away: a };
-    }).filter(Boolean);
-
-    cache[key] = { t: Date.now(), events: reduced };
+    const events = await fetchEspnDay(path, dateStr, sport);
+    cache[cacheKey] = { t: Date.now(), events };
     trimCache(cache, SCHEDULE_CACHE_MAX);
     writeCache(SCHEDULE_CACHE_KEY, cache);
 
-    return { events: reduced, hit: false };
+    return { events, hit: false };
   }
 
-  async function fetchSeasonEvents(path, year, sport) {
-    const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
+  async function fetchEspnDay(path, dateStr, sport) {
     const group = /college-football/.test(path) ? 80
                 : /college-basketball/.test(path) ? 50
                 : null;
 
-    // Soccer wants a range rather than a year.
-    const dateParam = sport === 'MLS'
-      ? `${year}0101-${year}1231`
-      : String(year);
-
-    const url = `${base}?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=1000`;
+    const compact = dateStr.replace(/-/g, '');
+    let url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${compact}&limit=200`;
+    if (group) url += `&groups=${group}`;
 
     try {
       const res = await fetch(url, { cache: 'no-store' });
+      if (res.headers.get('x-edge-offline') === '1') return [];
       if (!res.ok) return [];
       const data = await res.json();
-      return data.events || [];
+      const out = [];
+      (data.events || []).forEach(e => {
+        const comp = e.competitions?.[0];
+        if (!comp) return;
+        if (comp.status?.type?.completed !== true) return;
+        const h = comp.competitors?.find(c => c.homeAway === 'home');
+        const a = comp.competitors?.find(c => c.homeAway === 'away');
+        if (!h || !a) return;
+        const hn = h.team?.displayName;
+        const an = a.team?.displayName;
+        if (!hn || !an) return;
+        out.push({ date: e.date, home: hn, away: an });
+      });
+      return out;
     } catch (e) {
-      logEdgeError('context.fetchSeason.' + path, e);
+      logEdgeError('context.fetchEspnDay.' + path + '.' + dateStr, e);
       return [];
     }
   }
 
   // ============================================================
   // ── WEATHER ──
-  //
-  // One fetch per (rounded lat/lon × calendar day). Two games at
-  // the same stadium on the same day share the response. Cache
-  // holds the raw hourly arrays — extraction to this game's hour
-  // happens on read, so a cached response serves a different
-  // kickoff time on a later run without a re-fetch.
   // ============================================================
 
   async function loadWeather(games) {
@@ -556,7 +645,7 @@ const EDGE_CONTEXT = (() => {
       if (['NBA', 'NHL', 'NCAAB', 'WNBA'].includes(sport)) return false;
       const home = g.home_team || g.home;
       if (DOMED_HOMES.has(home)) return false;
-      if (!TEAM_CITIES[home]) return false;
+      if (!resolveCoord(home)) return false;
       const when = new Date(g.commence_time || g.time);
       if (isNaN(when)) return false;
       const daysOut = (when - Date.now()) / 86400000;
@@ -571,12 +660,10 @@ const EDGE_CONTEXT = (() => {
       'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m',
     ].join(',');
 
-    // Group by location + day so each unique fetch serves every game
-    // at that stadium on that date.
     const groups = new Map();
     targets.forEach(g => {
       const home = g.home_team || g.home;
-      const [lat, lon] = TEAM_CITIES[home];
+      const [lat, lon] = resolveCoord(home);
       const when = new Date(g.commence_time || g.time);
       const dayKey = `${when.getUTCFullYear()}-${String(when.getUTCMonth() + 1).padStart(2, '0')}-${String(when.getUTCDate()).padStart(2, '0')}`;
       const cacheKey = `${lat.toFixed(2)},${lon.toFixed(2)}@${dayKey}`;
@@ -641,8 +728,6 @@ const EDGE_CONTEXT = (() => {
       const gap = Math.abs(new Date(times[i] + 'Z') - when);
       if (gap < bestGap) { bestGap = gap; bestIdx = i; }
     }
-    // Beyond six hours of drift, the nearest forecast hour is not
-    // representative of kickoff.
     if (bestGap > 6 * 3600000) return null;
 
     const num = (v, d = 0) => typeof v === 'number' ? Math.round(v * Math.pow(10, d)) / Math.pow(10, d) : null;
@@ -688,6 +773,13 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── ATS + H2H ──
+  //
+  // Both tables are keyed on ESPN names. Games carry The Odds
+  // API spelling. The lookup is normalized on both sides via
+  // EDGE_TEAMS.normalize, and the row is stored against the
+  // game's own name so downstream code — algorithms.js,
+  // situations-engine.js — reads it without having to know
+  // which spelling the row uses.
   // ============================================================
 
   async function loadTrends(games) {
@@ -696,59 +788,99 @@ const EDGE_CONTEXT = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return out;
 
-    const teamsBySport = {};
+    const gamesBySport = {};
     games.forEach(g => {
       const sport = g._sport || g.sport;
-      const home = g.home_team || g.home;
-      const away = g.away_team || g.away;
       if (!sport) return;
-      if (!teamsBySport[sport]) teamsBySport[sport] = new Set();
-      if (home) teamsBySport[sport].add(home);
-      if (away) teamsBySport[sport].add(away);
+      if (!gamesBySport[sport]) gamesBySport[sport] = [];
+      gamesBySport[sport].push(g);
     });
 
-    for (const sport of Object.keys(teamsBySport)) {
-      const teams = Array.from(teamsBySport[sport]);
-      if (!teams.length) continue;
-      const inList = teams.map(t => `"${t}"`).join(',');
-      try {
-        const res = await fetch(
-          `${url}/rest/v1/team_ats?sport=eq.${sport}&team_name=in.(${inList})&select=*`,
-          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-        );
-        if (res.ok) {
-          (await res.json()).forEach(r => {
-            out.atsByTeam[`${sport}:${r.team_name}`] = r;
-          });
-        }
-      } catch (e) { logEdgeError('context.ats.' + sport, e); }
-    }
+    for (const sport of Object.keys(gamesBySport)) {
+      const sportGames = gamesBySport[sport];
 
-    for (const sport of Object.keys(teamsBySport)) {
-      const teams = Array.from(teamsBySport[sport]);
-      if (!teams.length) continue;
-      const inList = teams.map(t => `"${t}"`).join(',');
-      try {
-        const res = await fetch(
-          `${url}/rest/v1/matchup_ats?sport=eq.${sport}&or=(team_a.in.(${inList}),team_b.in.(${inList}))&select=*`,
-          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-        );
-        if (res.ok) {
-          const rows = await res.json();
-          games.forEach(g => {
-            const s = g._sport || g.sport;
-            if (s !== sport) return;
-            const home = g.home_team || g.home;
-            const away = g.away_team || g.away;
-            const [a, b] = [home, away].sort();
-            const match = rows.find(r => r.team_a === a && r.team_b === b);
-            if (match) out.h2hByGame[g.id] = match;
-          });
+      // ── ATS ──
+      // Fetch the whole sport's table. Small — a few hundred
+      // rows — and reliable.
+      const atsRows = await fetchAll(
+        `${url}/rest/v1/team_ats?sport=eq.${sport}&select=*&limit=1000`,
+        key
+      );
+
+      const atsIndex = {};
+      atsRows.forEach(r => {
+        const k = normalizeTeam(sport, r.team_name);
+        if (k) atsIndex[k] = r;
+      });
+
+      sportGames.forEach(g => {
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        if (home) {
+          const k = `${sport}:${home}`;
+          const row = atsIndex[normalizeTeam(sport, home)];
+          if (row) out.atsByTeam[k] = row;
         }
-      } catch (e) { logEdgeError('context.h2h.' + sport, e); }
+        if (away) {
+          const k = `${sport}:${away}`;
+          const row = atsIndex[normalizeTeam(sport, away)];
+          if (row) out.atsByTeam[k] = row;
+        }
+      });
+
+      // ── H2H ──
+      // Same pattern: fetch the sport's table, build a
+      // normalized pair index, resolve each game against it.
+      const h2hRows = await fetchAll(
+        `${url}/rest/v1/matchup_ats?sport=eq.${sport}&select=*&limit=5000`,
+        key
+      );
+
+      const h2hIndex = {};
+      h2hRows.forEach(r => {
+        const a = normalizeTeam(sport, r.team_a);
+        const b = normalizeTeam(sport, r.team_b);
+        if (!a || !b) return;
+        const [x, y] = [a, b].sort();
+        h2hIndex[`${sport}:${x}|${y}`] = r;
+      });
+
+      sportGames.forEach(g => {
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        if (!home || !away) return;
+        const a = normalizeTeam(sport, home);
+        const b = normalizeTeam(sport, away);
+        if (!a || !b) return;
+        const [x, y] = [a, b].sort();
+        const match = h2hIndex[`${sport}:${x}|${y}`];
+        if (match) out.h2hByGame[g.id] = match;
+      });
     }
 
     return out;
+  }
+
+  async function fetchAll(url, key) {
+    try {
+      const res = await fetch(url, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      return res.ok ? await res.json() : [];
+    } catch (e) {
+      logEdgeError('context.fetchAll', e);
+      return [];
+    }
+  }
+
+  // Uses team-aliases.js when loaded. The fallback strips
+  // punctuation and lowercases — less precise, but exact-match
+  // games still resolve.
+  function normalizeTeam(sport, name) {
+    if (!name) return '';
+    if (window.EDGE_TEAMS && typeof window.EDGE_TEAMS.normalize === 'function') {
+      try { return window.EDGE_TEAMS.normalize(name, sport); }
+      catch {}
+    }
+    return String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
   // ============================================================
@@ -756,18 +888,14 @@ const EDGE_CONTEXT = (() => {
   // ============================================================
 
   function readCache(storageKey) {
-    try {
-      return JSON.parse(localStorage.getItem(storageKey) || '{}');
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
+    catch { return {}; }
   }
 
   function writeCache(storageKey, cache) {
     try {
       localStorage.setItem(storageKey, JSON.stringify(cache));
     } catch (e) {
-      // Quota exceeded. Drop the oldest half and try once more.
       try {
         const keys = Object.keys(cache);
         if (keys.length > 8) {
@@ -783,7 +911,6 @@ const EDGE_CONTEXT = (() => {
   function trimCache(cache, max) {
     const keys = Object.keys(cache);
     if (keys.length <= max) return;
-    // Drop the least recently written entries.
     keys.sort((a, b) => (cache[b].t || 0) - (cache[a].t || 0));
     keys.slice(max).forEach(k => { delete cache[k]; });
   }
@@ -792,8 +919,6 @@ const EDGE_CONTEXT = (() => {
   // ── PUBLIC CACHE MANAGEMENT ──
   // ============================================================
 
-  // Full clear. Nothing that has already been computed is stored
-  // anywhere that survives this call.
   function clearCache() {
     try { localStorage.removeItem(WEATHER_CACHE_KEY); } catch {}
     try { localStorage.removeItem(SCHEDULE_CACHE_KEY); } catch {}
@@ -801,7 +926,6 @@ const EDGE_CONTEXT = (() => {
     return { cleared: true };
   }
 
-  // Inspect the caches without modifying them.
   function cacheStats() {
     const weather = readCache(WEATHER_CACHE_KEY);
     const schedule = readCache(SCHEDULE_CACHE_KEY);
@@ -835,8 +959,8 @@ const EDGE_CONTEXT = (() => {
   }
 
   function computeTravelMiles(fromCity, toCity) {
-    const a = TEAM_CITIES[fromCity];
-    const b = TEAM_CITIES[toCity];
+    const a = resolveCoord(fromCity);
+    const b = resolveCoord(toCity);
     if (!a || !b) return null;
     return Math.round(haversine(a, b));
   }
@@ -854,6 +978,13 @@ const EDGE_CONTEXT = (() => {
 
   function estimateTimezoneShift(awayCoord, homeCoord) {
     return Math.round((homeCoord[1] - awayCoord[1]) / 15);
+  }
+
+  function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
 })();
