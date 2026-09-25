@@ -1,74 +1,79 @@
 // ============================================================
-// EDGE — LEARNING LOOP v2.0
+// EDGE — LEARNING LOOP v3.0
 // Weekly self-correction. Reads shadow_picks outcomes,
 // updates algorithm_weights so the governor trusts what works.
 // Deterministic. No Claude. Pure math.
 //
-// v2.0 changes:
+// v3.0 changes:
 //
-//   · buildCalibration writes the structured shape the governor
-//     reads. The old code wrote { "65": 58.2 }, a rate with no
-//     sample size. Governor v3.1 treats that as a legacy entry
-//     and applies a fixed 0.25 pull. Writing { "65": { rate,
-//     samples } } lets the pull scale with how many picks the
-//     bucket is actually backed by, so a 500-sample bucket moves
-//     confidence a lot and a 12-sample bucket barely moves it.
+//   · persistWeights uses an upsert. The old code PATCHed
+//     algorithm_weights filtered on family and sport. If the
+//     row did not exist — which is the case on every fresh
+//     install, and for any sport that has never been learned
+//     before — the PATCH matched nothing and returned 204,
+//     which looks like success but writes nothing. Every
+//     weight change was silently discarded. Now the code POSTs
+//     with on_conflict=sport,family and merge-duplicates, so
+//     first write inserts, subsequent writes update.
 //
-//   · Buckets below MIN_BUCKET_SAMPLES are not written at all.
-//     The old code substituted parseInt(bucket) - 3 for a rate
-//     when a bucket had fewer than 10 picks — i.e. it fabricated
-//     a calibration number from the bucket label. A bucket with
-//     insufficient data now produces no entry, and the governor
-//     reads "no entry" as "leave the model's confidence alone."
+//   · captureCLV resolves the Odds API game_id to an ESPN id
+//     via game-id-map.js before reading the closing spread.
+//     The two id systems were unrelated, so the closing-line
+//     query returned nothing and every pick fell through to
+//     the line_history fallback — which stores the line at
+//     whenever the user last opened Matchups or Lines, not the
+//     actual close.
 //
-//   · persistCalibration writes with merge-duplicates. The old
-//     code PATCHed settings?id=eq.1. If row 1 did not exist —
-//     which is the case on a fresh project — the PATCH matched
-//     zero rows and returned 204, which looks like success but
-//     writes nothing. The new code POSTs with
-//     resolution=merge-duplicates, so first save inserts,
-//     subsequent saves update, and the response actually
-//     reflects whether the row landed. If the settings table
-//     lacks the governor_calibration column, the write is
-//     attempted, fails cleanly, and localStorage still carries
-//     the calibration. See the header note in persistCalibration
-//     for the SQL to add the column.
+//   · captureCLV only grades picks whose game has started.
+//     Before kickoff there is no closing line yet, so an
+//     unstarted pick has nothing to grade against. The old
+//     code wrote whatever line_history held at the moment the
+//     page happened to run, which is why CLV numbers were
+//     meaningless and never updated.
 //
-//   · Removed a dead line in computeSportFamilyStats. It defined
-//     a local `key` arrow function that was never called.
+//   · CLV is a one-shot write. Once a pick has a clv value it
+//     is not touched again, so the close is captured exactly
+//     once and does not drift.
 //
-//   · captureCLV guards on the closing_spread column. It used to
-//     PATCH a column that does not exist on every shadow_picks
-//     row, and the failures were swallowed. Now each row's write
-//     is checked, and the return reports which rows landed. If
-//     the column is missing the whole call reports it once
-//     rather than 2,000 times.
+// v2.0 changes (retained):
+//   · buildCalibration writes the structured { rate, samples }
+//     shape the governor reads.
+//   · Buckets below MIN_BUCKET_SAMPLES are omitted rather than
+//     fabricated.
+//   · persistCalibration writes with merge-duplicates.
 // ============================================================
 
 const EDGE_LEARNING = (() => {
 
-  const BUILD = 'learn-20260924-01';
+  const BUILD = 'learn-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
   // ── TUNING ──
-  const MIN_SAMPLE_SIZE = 20;        // need at least this many graded picks per family/sport before adjusting
+  const MIN_SAMPLE_SIZE = 20;
   const WEIGHT_MIN = 1.0;
   const WEIGHT_MAX = 10.0;
-  const WEIGHT_STEP = 0.15;          // per adjustment cycle
-  const ROLLING_WINDOW_DAYS = 60;    // only look at last 60 days of picks
-  const MIN_ROI_TO_REWARD = 0.02;    // +2% ROI threshold to bump a weight
-  const MAX_ROI_TO_PUNISH = -0.02;   // -2% ROI threshold to drop a weight
+  const WEIGHT_STEP = 0.15;
+  const ROLLING_WINDOW_DAYS = 60;
+  const MIN_ROI_TO_REWARD = 0.02;
+  const MAX_ROI_TO_PUNISH = -0.02;
 
-  // ── CALIBRATION BUCKETS ──
   const CALIBRATION_BUCKETS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-
-  // A bucket needs this many graded picks before its observed
-  // hit rate is worth reporting. Below this, no entry is written
-  // and the governor leaves the model's confidence unchanged for
-  // picks that land in that bucket.
   const MIN_BUCKET_SAMPLES = 10;
+
+  return {
+    BUILD,
+    run,
+    captureCLV,
+    runIfDue,
+    computeFamilyStats,
+    computeSportFamilyStats,
+    buildCalibration,
+    MIN_SAMPLE_SIZE,
+    MIN_BUCKET_SAMPLES,
+    ROLLING_WINDOW_DAYS,
+  };
 
   // ============================================================
   // ── MAIN ENTRY ──
@@ -108,37 +113,29 @@ const EDGE_LEARNING = (() => {
 
       log(`Analyzing ${picks.length} picks`);
 
-      // ── 1. Per-family performance ──
       log('Computing per-family performance');
       const familyStats = computeFamilyStats(picks);
 
-      // ── 2. Per-sport-family performance ──
       log('Computing per-sport-family performance');
       const sportFamilyStats = computeSportFamilyStats(picks);
 
-      // ── 3. Load current weights ──
       log('Loading current weights');
       const currentWeights = await loadWeights();
 
-      // ── 4. Compute new weights ──
       log('Computing new weights');
       const updates = computeWeightUpdates(sportFamilyStats, currentWeights);
 
-      // ── 5. Calibration table ──
       log('Building calibration table');
       const calibration = buildCalibration(picks);
       summary.calibration_buckets = Object.keys(calibration).length;
 
-      // ── 6. Persist ──
       if (!dryRun) {
         log('Persisting weight updates');
-        await persistWeights(updates);
+        const w = await persistWeights(updates);
+        if (w.inserted || w.updated) {
+          log(`  ${w.inserted} inserted · ${w.updated} updated · ${w.failed} failed`);
+        }
 
-        // Write calibration to localStorage first. The governor
-        // reads it from there, so this is what actually takes
-        // effect on the next pipeline run. The Supabase write is
-        // a sync/cross-device copy; it failing does not stop the
-        // local calibration from working.
         try {
           localStorage.setItem('edge_governor_calibration', JSON.stringify(calibration));
         } catch (e) { logEdgeError('learning.calibrationLocal', e); }
@@ -147,7 +144,7 @@ const EDGE_LEARNING = (() => {
         if (!remote.ok) {
           log(`Calibration sync failed: ${remote.reason}`);
         } else {
-          log(`Calibration synced (${calibration.length || Object.keys(calibration).length} buckets)`);
+          log(`Calibration synced (${remote.buckets} buckets)`);
         }
 
         await persistShadowCalibration(calibration);
@@ -159,8 +156,6 @@ const EDGE_LEARNING = (() => {
       summary.updates = updates;
       summary.calibration = calibration;
 
-      // Cache calibration for the governor to read immediately
-      // and force a reload so the current session picks it up.
       if (typeof window.EDGE_GOVERNOR !== 'undefined'
           && typeof window.EDGE_GOVERNOR.reloadCalibration === 'function') {
         try { window.EDGE_GOVERNOR.reloadCalibration(); }
@@ -241,7 +236,7 @@ const EDGE_LEARNING = (() => {
   }
 
   function computeSportFamilyStats(picks) {
-    const out = {}; // key: `${sport}|${family}`
+    const out = {};
 
     picks.forEach(p => {
       const sport = p.sport || 'UNKNOWN';
@@ -278,9 +273,6 @@ const EDGE_LEARNING = (() => {
   }
 
   function familyVotedWithPick(familyEntry, pick) {
-    // Did the family vote agree with the physics pick direction?
-    // physics direction is stored as 'home' | 'away'; family vote is 'yes' | 'no' | 'neu'
-    // Yes = agreed with home team; No = agreed with away team
     if (familyEntry.vote === 'neu') return null;
     if (!pick.direction) return null;
     if (familyEntry.vote === 'yes') return pick.direction === 'home';
@@ -319,7 +311,6 @@ const EDGE_LEARNING = (() => {
       const currentDynamic = current?.dynamic_weight ?? current?.base_weight ?? 7.0;
       const currentBase    = current?.base_weight ?? 7.0;
 
-      // Not enough sample → leave weight alone
       if (total < MIN_SAMPLE_SIZE) {
         updates.push({
           key, sport, family,
@@ -373,17 +364,6 @@ const EDGE_LEARNING = (() => {
 
   // ============================================================
   // ── CALIBRATION ──
-  //
-  // Maps the governor's raw confidence to the hit rate actually
-  // observed for picks in that confidence bucket. Governor v3.1
-  // reads this as { "65": { rate: 58.2, samples: 340 } } and
-  // applies a sample-weighted pull — a bucket backed by 300 picks
-  // moves the model's confidence a lot, one backed by 15 barely
-  // moves it.
-  //
-  // A bucket with fewer than MIN_BUCKET_SAMPLES picks is not
-  // written. The old code fabricated a rate from the bucket label
-  // in that case. Fabricated calibration is worse than none.
   // ============================================================
 
   function buildCalibration(picks) {
@@ -419,62 +399,74 @@ const EDGE_LEARNING = (() => {
 
   // ============================================================
   // ── PERSIST: WEIGHTS ──
+  //
+  // Upsert, not PATCH. The old code PATCHed and silently did
+  // nothing when the row did not exist — which is every row on
+  // a fresh install and any row for a sport the loop has not
+  // touched. POST with on_conflict=sport,family and
+  // merge-duplicates inserts on first write and updates after.
   // ============================================================
 
   async function persistWeights(updates) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
-    if (!url || !key) return;
+    const result = { inserted: 0, updated: 0, failed: 0 };
+
+    if (!url || !key) return result;
 
     const changed = updates.filter(u => u.changed);
-    if (!changed.length) return;
+    if (!changed.length) return result;
 
-    for (const u of changed) {
-      try {
-        await fetch(
-          `${url}/rest/v1/algorithm_weights?family=eq.${encodeURIComponent(u.family)}&sport=eq.${encodeURIComponent(u.sport)}`,
-          {
-            method: 'PATCH',
-            headers: {
-              apikey: key,
-              Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              dynamic_weight: u.new_weight,
-              wins: u.stats.wins,
-              losses: u.stats.losses,
-              pushes: u.stats.pushes,
-              roi: u.stats.roi,
-              last_updated: new Date().toISOString(),
-            }),
-          }
-        );
-      } catch (e) {
-        logEdgeError('learning.persistWeights.' + u.sport + '.' + u.family, e);
+    const rows = changed.map(u => ({
+      sport: u.sport,
+      family: u.family,
+      base_weight: u.base_weight,
+      dynamic_weight: u.new_weight,
+      wins: u.stats.wins,
+      losses: u.stats.losses,
+      pushes: u.stats.pushes,
+      roi: u.stats.roi,
+      last_updated: new Date().toISOString(),
+    }));
+
+    try {
+      const res = await fetch(`${url}/rest/v1/algorithm_weights?on_conflict=sport,family`, {
+        method: 'POST',
+        headers: {
+          apikey: key, Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=representation',
+        },
+        body: JSON.stringify(rows),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        logEdgeError('learning.persistWeights', new Error(`HTTP ${res.status} ${txt.slice(0, 160)}`));
+        result.failed = rows.length;
+        return result;
       }
+
+      // return=representation tells us which rows landed. The
+      // count of rows back is what we credit as written; we do
+      // not distinguish insert from update because PostgREST
+      // does not report it.
+      try {
+        const echoed = await res.json();
+        result.updated = Array.isArray(echoed) ? echoed.length : rows.length;
+      } catch {
+        result.updated = rows.length;
+      }
+    } catch (e) {
+      logEdgeError('learning.persistWeights.network', e);
+      result.failed = rows.length;
     }
+
+    return result;
   }
 
   // ============================================================
   // ── PERSIST: CALIBRATION ──
-  //
-  // Writes to localStorage first, which is what the governor
-  // reads. Then attempts a Supabase copy for cross-device sync.
-  //
-  // The sync requires the settings table to have a jsonb column
-  // called governor_calibration. If it does not, the write fails
-  // cleanly and this returns ok:false with a reason. The local
-  // calibration still works.
-  //
-  // To add the column:
-  //   alter table public.settings
-  //     add column if not exists governor_calibration jsonb;
-  //
-  // The old code PATCHed settings?id=eq.1, which matched zero rows
-  // when the settings row had never been created — meaning a
-  // fresh project's first calibration write silently did nothing
-  // while returning HTTP 204, which looks like success.
   // ============================================================
 
   async function persistCalibration(calibration) {
@@ -519,10 +511,6 @@ const EDGE_LEARNING = (() => {
     }
   }
 
-  // Caches dynamic weights into localStorage so the governor
-  // reads them without a network round-trip on the next run.
-  // Named persistShadowCalibration historically; the name stuck
-  // because the function has always done the same thing.
   async function persistShadowCalibration() {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -546,27 +534,7 @@ const EDGE_LEARNING = (() => {
   }
 
   // ============================================================
-  // ── UTILITIES ──
-  // ============================================================
-
-  function makeLogger(onProgress) {
-    return (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
-  }
-
-  function logEdgeError(where, err) {
-    try {
-      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
-      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
-      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
-    } catch {}
-  }
-
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
-
-  // ============================================================
   // ── AUTO SCHEDULE ──
-  // Runs weekly. Checks last run timestamp; if >6 days, runs now.
   // ============================================================
 
   async function runIfDue(options = {}) {
@@ -590,11 +558,14 @@ const EDGE_LEARNING = (() => {
   // finding real value, and it is knowable long before enough
   // results accumulate to judge win rate.
   //
-  // v2.0 guards the closing_spread column. The old code wrote it
-  // on every pick; if the column did not exist, PostgREST
-  // returned 400 on each write and the failures were swallowed.
-  // Now the column is probed once and the whole call reports it
-  // if missing, rather than 2,000 times.
+  // The close is what ats-tracker.js wrote to historical_odds
+  // when it fetched the ESPN core API odds. parseOddsItem in
+  // that file prioritises the close block, so
+  // historical_odds.spread is the closing number.
+  //
+  // shadow_picks.game_id is the Odds API's event id. The ESPN
+  // event id is a different string. game-id-map.js is what
+  // bridges them.
   // ============================================================
 
   async function captureCLV(options = {}) {
@@ -605,9 +576,12 @@ const EDGE_LEARNING = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return { ok: false, error: 'Supabase not connected' };
 
+    if (typeof window.EDGE_GAME_ID_MAP === 'undefined') {
+      return { ok: false, error: 'game-id-map.js not loaded — CLV cannot resolve ids' };
+    }
+
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-    // Probe the shadow_picks closing_spread column once.
     let hasClosingColumn = false;
     try {
       const probe = await fetch(`${url}/rest/v1/shadow_picks?select=closing_spread&limit=1`, { headers });
@@ -619,7 +593,7 @@ const EDGE_LEARNING = (() => {
     let picks = [];
     try {
       const res = await fetch(
-        `${url}/rest/v1/shadow_picks?select=id,game_id,sport,direction,market_spread,clv,created_at` +
+        `${url}/rest/v1/shadow_picks?select=id,game_id,sport,direction,market_spread,clv,commence_time,created_at` +
         `&clv=is.null&created_at=gte.${since}&limit=2000`,
         { headers });
       if (!res.ok) return { ok: false, error: `shadow_picks HTTP ${res.status}` };
@@ -627,43 +601,70 @@ const EDGE_LEARNING = (() => {
     } catch (e) { return { ok: false, error: e.message }; }
 
     if (!picks.length) return { ok: true, updated: 0, note: 'No picks awaiting CLV' };
-    log(`${picks.length} picks awaiting a closing line`);
 
-    // Closing numbers, from the same cache the ATS tracker fills.
-    const ids = picks.map(p => p.game_id).filter(Boolean);
-    const closing = {};
-    try {
-      const inList = ids.map(i => `"${i}"`).join(',');
-      const res = await fetch(
-        `${url}/rest/v1/historical_odds?select=game_id,spread&game_id=in.(${inList})&limit=5000`,
-        { headers });
-      if (res.ok) (await res.json()).forEach(r => { if (r.spread != null) closing[r.game_id] = r.spread; });
-    } catch {}
+    // Only grade picks whose game has started. Before kickoff
+    // there is no closing line to compare against.
+    const now = Date.now();
+    const started = picks.filter(p => {
+      if (!p.commence_time) return false;
+      const t = new Date(p.commence_time).getTime();
+      return isFinite(t) && t <= now;
+    });
 
-    // Fall back to the last line_history row for anything still missing.
-    const missing = ids.filter(i => closing[i] == null);
-    if (missing.length) {
+    log(`${picks.length} picks awaiting CLV · ${started.length} have started`);
+
+    if (!started.length) {
+      return { ok: true, updated: 0, note: 'No started games to grade' };
+    }
+
+    // Resolve the Odds API id on each pick to its ESPN id.
+    const espnIdByOddsId = {};
+    let resolved = 0;
+    for (const p of started) {
       try {
-        const inList = missing.map(i => `"${i}"`).join(',');
-        const res = await fetch(
-          `${url}/rest/v1/line_history?select=game_id,spread,created_at&game_id=in.(${inList})` +
-          `&order=created_at.asc&limit=20000`,
-          { headers });
-        if (res.ok) (await res.json()).forEach(r => {
-          if (r.spread != null) closing[r.game_id] = r.spread;   // last write wins
-        });
+        const espnId = await window.EDGE_GAME_ID_MAP.resolveFromOddsId(p.game_id);
+        if (espnId) { espnIdByOddsId[p.game_id] = espnId; resolved++; }
       } catch {}
     }
 
+    log(`  ${resolved}/${started.length} game ids resolved to ESPN`);
+
+    if (!resolved) {
+      return { ok: true, updated: 0, resolved: 0, note: 'No ids resolved — run game-id-map populate' };
+    }
+
+    // Load the closing spread from historical_odds, keyed by
+    // the ESPN id.
+    const espnIds = Object.values(espnIdByOddsId);
+    const closing = {};
+    const chunkSize = 200;
+    for (let i = 0; i < espnIds.length; i += chunkSize) {
+      const chunk = espnIds.slice(i, i + chunkSize);
+      const inList = chunk.map(id => `"${id}"`).join(',');
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/historical_odds?select=game_id,spread&game_id=in.(${inList})&spread=not.is.null&limit=5000`,
+          { headers });
+        if (res.ok) (await res.json()).forEach(r => { closing[String(r.game_id)] = r.spread; });
+      } catch {}
+    }
+
+    log(`  ${Object.keys(closing).length} closing lines available`);
+
     let updated = 0;
     let failed = 0;
+    let noClose = 0;
 
-    for (const p of picks) {
-      const close = closing[p.game_id];
-      if (close == null || p.market_spread == null) continue;
+    for (const p of started) {
+      const espnId = espnIdByOddsId[p.game_id];
+      if (!espnId) continue;
 
-      // CLV is positive when the number moved toward the side you took.
-      // Backing the home team at -3 and watching it close -4.5 is +1.5.
+      const close = closing[espnId];
+      if (close == null || p.market_spread == null) { noClose++; continue; }
+
+      // CLV is positive when the number moved toward the side
+      // you took. Backing the home team at -3 and watching it
+      // close -4.5 is +1.5.
       const bet = p.direction === 'home' ? p.market_spread : -p.market_spread;
       const closed = p.direction === 'home' ? close : -close;
       const clv = round(bet - closed, 2);
@@ -682,41 +683,52 @@ const EDGE_LEARNING = (() => {
       } catch { failed++; }
     }
 
-    log(`CLV written for ${updated} picks`);
+    log(`  CLV written for ${updated} picks · ${noClose} awaiting a close · ${failed} failed`);
 
-    const withClv = picks.filter(p => closing[p.game_id] != null);
-    const beat = withClv.filter(p => {
+    const beaten = started.filter(p => {
+      const espnId = espnIdByOddsId[p.game_id];
+      const close = espnId ? closing[espnId] : null;
+      if (close == null || p.market_spread == null) return false;
       const bet = p.direction === 'home' ? p.market_spread : -p.market_spread;
-      const closed = p.direction === 'home' ? closing[p.game_id] : -closing[p.game_id];
+      const closed = p.direction === 'home' ? close : -close;
       return bet - closed > 0;
+    }).length;
+
+    const gradedCount = started.filter(p => {
+      const espnId = espnIdByOddsId[p.game_id];
+      return espnId && closing[espnId] != null;
     }).length;
 
     return {
       ok: true,
       updated,
       failed,
+      no_close: noClose,
+      resolved: resolved,
       closing_column: hasClosingColumn,
-      beat_close: beat,
-      beat_rate: withClv.length ? round(beat / withClv.length, 4) : null,
+      beat_close: beaten,
+      beat_rate: gradedCount > 0 ? round(beaten / gradedCount, 4) : null,
     };
   }
 
   // ============================================================
-  // ── PUBLIC API ──
+  // ── UTILITIES ──
   // ============================================================
 
-  return {
-    BUILD,
-    run,
-    captureCLV,
-    runIfDue,
-    computeFamilyStats,
-    computeSportFamilyStats,
-    buildCalibration,
-    MIN_SAMPLE_SIZE,
-    MIN_BUCKET_SAMPLES,
-    ROLLING_WINDOW_DAYS,
-  };
+  function makeLogger(onProgress) {
+    return (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
+  }
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
+
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+  function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
 })();
 
