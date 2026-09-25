@@ -1,13 +1,63 @@
 // ============================================================
-// EDGE — POWER RATINGS ENGINE v4.2
-// Regular season only · chunked fetch (no silent truncation)
-// Opponent-adjusted SRS · sequential Elo · draws handled
-// v4.2 — WNBA added · duplicated isAllStarSide line removed
+// EDGE — POWER RATINGS ENGINE v4.3
+//
+// v4.3 changes:
+//
+//   · replaceTable no longer deletes other sports' rows. The
+//     v4.2 code ran `?updated_at=neq.<stamp>` at the end of
+//     every sport's write. That deleted every power_ratings row
+//     not touched by the current run — which wipes every sport
+//     that was out of season or failed its fetch. Same fix on
+//     the 409 recovery path: only the current sport is cleared.
+//
+//   · Season labels match ats-tracker v3.0 and learning's
+//     convention. Cross-year sports (NBA, NHL, NCAAB, NFL,
+//     NCAAF) carry the year the season started. Single-year
+//     sports (MLB, MLS, WNBA) carry the calendar year. WNBA no
+//     longer splits across two labels.
+//
+//   · Postseason games are excluded. The header has always
+//     said regular season only. `type === 1` filters preseason;
+//     `type === 3` is postseason and was being counted. Both
+//     are now filtered.
+//
+//   · SRS and Elo are computed for real. `computeSRS` and
+//     `computeElo` exist in this file and were being bypassed
+//     when rating-core loaded — the columns ended up holding
+//     Massey in `srs` and Glicko in `elo`. Both are now
+//     computed alongside the rating-core outputs, so `srs`
+//     holds SRS and `elo` holds Elo. Massey and Glicko go in
+//     their own columns.
+//
+//   · overall is built from the model's own ranking composite.
+//     The old formula — pyth 0.45, offense 0.20, defense 0.20,
+//     mov 0.15 — was a mix of season averages with no schedule
+//     adjustment. Picks run on attack/defense projections and
+//     Glicko; the page sorted by `overall` and disagreed. Now
+//     `overall` weights the composite_points that rating-core
+//     produces alongside the attack/defense projection. The
+//     page and the model sort the same way.
+//
+//   · Minimum games threshold. The old all-star filter relied
+//     on `medianGames >= 8` and let teams with one or two games
+//     sit in the rankings early in a season. A hard floor of 3
+//     games replaces it — below that a rating is noise.
+//
+//   · Team rating objects now carry `_coach_adj`. The prior in
+//     computeGamePrior reads it to shift the model spread for
+//     coaching, but nothing set it — coaching never moved the
+//     line. It is now computed from the coach's overall rating
+//     scaled against the coach's own max_adjustment, in points.
+//
+//   · Service worker offline responses are detected. The SW
+//     returns `{X-Edge-Offline: 1, body: []}` on a failed
+//     fetch. A fetch that sees that header reports zero games
+//     as a fetch failure rather than as "no games today".
 // ============================================================
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260921-1200';
+  const BUILD = 'pe-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -68,6 +118,12 @@ const EDGE_POWER = (() => {
 
   const MAX_LOOKBACK_DAYS = 400;
 
+  // Below this a rating is noise. Early-season NCAAF was
+  // carrying FCS opponents on one or two games each because
+  // the all-star filter checked against the median and the
+  // median was also one or two.
+  const MIN_GAMES_FOR_RATING = 3;
+
   const _espnShape = { chosen: null, dayFallback: false };
 
   const _calibration = { loaded: false, bySport: {} };
@@ -91,11 +147,13 @@ const EDGE_POWER = (() => {
     parseEvents,
     isSportInSeason,
     seasonStart,
+    seasonLabel,
     loadCarryover,
     saveCarryover,
     SPORT_CONFIG,
     ESPN_MAP,
     SEASON_WINDOWS,
+    MIN_GAMES_FOR_RATING,
   };
 
   // ============================================================
@@ -122,6 +180,22 @@ const EDGE_POWER = (() => {
 
     const floor = new Date(now.getTime() - MAX_LOOKBACK_DAYS * 86400000);
     return candidate < floor ? floor : candidate;
+  }
+
+  // Matches ats-tracker v3.0 and the rest of the pipeline.
+  // Cross-year sports carry the year they started. Single-year
+  // sports carry the calendar year.
+  function seasonLabel(sport, date = new Date()) {
+    const m = date.getMonth() + 1;
+    const y = date.getFullYear();
+
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
+      return String(m >= 9 ? y : y - 1);
+    }
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      return String(m >= 3 ? y : y - 1);
+    }
+    return String(y);
   }
 
   // ============================================================
@@ -192,14 +266,17 @@ const EDGE_POWER = (() => {
           emit(`${sport}: rating-core.js not loaded — falling back to in-file SRS/Elo`);
         }
 
-        const srsMap = core ? {} : computeSRS(sport, teamMap);
-        const eloMap = core ? {} : computeElo(sport, chronological);
+        // SRS and Elo are always computed here, not just when
+        // rating-core is absent. The columns carry the real
+        // numbers now rather than Massey and Glicko.
+        const srsMap = computeSRS(sport, teamMap);
+        const eloMap = computeElo(sport, chronological);
 
         const gameCounts = Array.from(teamMap.values()).map(s => s.games).sort((a, b) => a - b);
         const median = gameCounts[Math.floor(gameCounts.length / 2)] || 1;
 
         for (const [teamName, state] of teamMap) {
-          if (state.games < 1) continue;
+          if (state.games < MIN_GAMES_FOR_RATING) continue;
           if (isAllStarSide(teamName, state.games, median)) {
             emit(`${sport}: excluding ${teamName} (${state.games} games — all-star side)`);
             continue;
@@ -222,6 +299,16 @@ const EDGE_POWER = (() => {
           const coach = buildCoaching(sport, teamName, state);
           if (coach) results.coaching[`${sport}:${teamName}`] = coach;
         }
+
+        // Set _coach_adj on every team now that coaching is
+        // built. computeGamePrior reads it to shift the model
+        // spread. Without this, coaching never moved the line.
+        Object.entries(results.coaching).forEach(([key, coach]) => {
+          if (!key.startsWith(sport + ':')) return;
+          const team = results.teams[key];
+          if (!team) return;
+          team._coach_adj = coachAdjustmentPoints(sport, coach);
+        });
       } catch (err) {
         results.errors.push({ sport, error: err.message });
       }
@@ -271,9 +358,12 @@ const EDGE_POWER = (() => {
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
+  // Preseason (type 1) and postseason (type 3) are both
+  // excluded. The header has always said regular season only.
   function isRatableEvent(e) {
     const type = e.season?.type ?? e.competitions?.[0]?.season?.type;
     if (type === 1) return false;
+    if (type === 3) return false;
 
     const comp = e.competitions?.[0];
     if (!comp) return false;
@@ -305,7 +395,17 @@ const EDGE_POWER = (() => {
       for (let i = 0; i < order.length; i++) {
         try {
           const res = await fetch(order[i](start, end), { cache: 'no-store' });
+
+          // The service worker returns a 200 with an offline
+          // header on a failed fetch. A body of [] from that
+          // path is not "no games today" — it is a fetch that
+          // did not reach ESPN. Discard it so the day-by-day
+          // fallback runs and the caller sees a real answer.
+          if (res.headers.get('x-edge-offline') === '1') {
+            throw new Error('service worker offline response');
+          }
           if (!res.ok) continue;
+
           const data = await res.json();
           const events = data.events || [];
           if (events.length) {
@@ -322,6 +422,9 @@ const EDGE_POWER = (() => {
 
   function isAllStarSide(name, games, medianGames) {
     if (ALL_STAR_NAMES.test(name)) return true;
+    // Very-few-games exclusions only when the league is settled
+    // enough that a median exists. MIN_GAMES_FOR_RATING handles
+    // the rest.
     return medianGames >= 8 && games <= Math.max(2, medianGames * 0.15);
   }
 
@@ -350,6 +453,7 @@ const EDGE_POWER = (() => {
     await parallelDays(days, 6, async (day) => {
       try {
         const res = await fetch(`${base}?dates=${day}${suffix}`, { cache: 'no-store' });
+        if (res.headers.get('x-edge-offline') === '1') return;
         if (!res.ok) return;
         const data = await res.json();
         (data.events || []).forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
@@ -539,6 +643,11 @@ const EDGE_POWER = (() => {
 
   // ============================================================
   // ── RATING ──
+  //
+  // overall is now built from the model's own ranking composite
+  // when rating-core is loaded, so the page and the model sort
+  // the same way. Without rating-core, it falls back to the
+  // pythagorean-heavy formula that was used before.
   // ============================================================
 
   function buildRating(sport, teamName, state, adjusted = {}) {
@@ -574,13 +683,35 @@ const EDGE_POWER = (() => {
     });
     formScore = clamp(formScore * realWeight, -20, 20);
 
-    const overall = round(
-      (pyth * 100 * 0.45) +
-      (offense * 0.20) +
-      (defense * 0.20) +
-      (mov * 0.15),
-      1
-    );
+    // Composite points: the model's own ranking composite from
+    // rating-core, scaled so it sits on the same 0-100 axis the
+    // page expects. A team with 0 composite points above an
+    // average team lands at 50. A team with +14 lands near 78.
+    const compositePoints = adjusted.blended?.composite_points;
+
+    let overall;
+    if (compositePoints != null) {
+      // Blend the model's composite with attack/defense.
+      // The weight on composite is higher because that is
+      // what the picks run on.
+      const compositeScaled = clamp(50 + compositePoints * 2, 0, 100);
+      overall = round(
+        (compositeScaled * 0.55) +
+        (offense * 0.20) +
+        (defense * 0.20) +
+        (mov * 0.05),
+        1
+      );
+    } else {
+      // rating-core absent. Fall back to the old shape.
+      overall = round(
+        (pyth * 100 * 0.45) +
+        (offense * 0.20) +
+        (defense * 0.20) +
+        (mov * 0.15),
+        1
+      );
+    }
 
     const hasDraws = DRAWS_POSSIBLE.has(sport) && state.draws > 0;
     const rec = hasDraws
@@ -602,14 +733,18 @@ const EDGE_POWER = (() => {
       offense: round(offense, 1),
       defense: round(defense, 1),
       pythagorean: round(pyth, 4),
-      srs: adjusted.massey ?? adjusted.srs ?? round(avgMOV, 2),
-      elo: adjusted.glicko ? Math.round(adjusted.glicko.rating) : (adjusted.elo ?? 1500),
 
+      // srs and elo are now the real values, not Massey and
+      // Glicko wearing those names.
+      srs: adjusted.srs ?? round(avgMOV, 2),
+      elo: adjusted.elo ?? 1500,
+
+      // Massey and Glicko are in their own columns.
+      massey: adjusted.massey ?? null,
       glicko_rating: adjusted.glicko ? adjusted.glicko.rating : null,
       glicko_rd: adjusted.glicko ? adjusted.glicko.rd : null,
       glicko_vol: adjusted.glicko ? adjusted.glicko.vol : null,
       glicko_conservative: adjusted.glicko ? adjusted.glicko.conservative : null,
-      massey: adjusted.massey ?? null,
       colley: adjusted.colley ?? null,
       composite_points: adjusted.blended ? adjusted.blended.composite_points : null,
       rating_certainty: adjusted.blended ? adjusted.blended.certainty : null,
@@ -623,6 +758,7 @@ const EDGE_POWER = (() => {
       away_record: awayRec,
       last5_form: round(formScore, 2),
       games_played: games,
+      _coach_adj: 0,
       raw_stats: {
         avgPF: round(avgPF, 2),
         avgPA: round(avgPA, 2),
@@ -655,6 +791,17 @@ const EDGE_POWER = (() => {
       raw_stats: { closeGames: state.closeGames, closeWins: state.closeWins, halves: 0 },
       max_adjustment: cfg.maxAdj,
     };
+  }
+
+  // Coach adjustment in points. A coach at 75 with maxAdj 3.5
+  // shifts the model by +1.75. A coach at 25 shifts by -1.75.
+  // Average coach, zero shift.
+  function coachAdjustmentPoints(sport, coach) {
+    if (!coach || coach.overall == null) return 0;
+    const cfg = COACHING_WEIGHTS[sport] || COACHING_WEIGHTS.DEFAULT;
+    const max = coach.max_adjustment ?? cfg.maxAdj;
+    const deviation = (coach.overall - 50) / 50;   // -1 to +1
+    return round(deviation * max, 2);
   }
 
   async function computeTeamRating(sport, teamName, teamId, espnEvents) {
@@ -757,8 +904,16 @@ const EDGE_POWER = (() => {
       }
     }
 
-    const coachAdj = homeStats._coach_adj ?? 0;
-    const coachAdjAway = awayStats._coach_adj ?? 0;
+    // Coaching. homeStats._coach_adj is set by
+    // computeAllTeamRatings from the coach's overall rating.
+    // Also fall back to reading _coach directly, so a caller
+    // that builds its own stats object still gets the shift.
+    const coachAdj = homeStats._coach_adj ?? (
+      homeStats._coach ? coachAdjustmentPoints(sport, homeStats._coach) : 0
+    );
+    const coachAdjAway = awayStats._coach_adj ?? (
+      awayStats._coach ? coachAdjustmentPoints(sport, awayStats._coach) : 0
+    );
     const coachDelta = coachAdj - coachAdjAway;
 
     const totalModelSpread = round(
@@ -800,6 +955,11 @@ const EDGE_POWER = (() => {
       home_power: homeStats,
       away_power: awayStats,
       defense_matchup: defenseMatchup,
+      coaching: {
+        home_adjustment: coachAdj,
+        away_adjustment: coachAdjAway,
+        delta: round(coachDelta, 2),
+      },
       model_spread: totalModelSpread,
       projection,
 
@@ -904,7 +1064,7 @@ const EDGE_POWER = (() => {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     if (!url || !key) return null;
 
-    const season = seasonLabelFor(sport, new Date());
+    const season = seasonLabel(sport, new Date());
     try {
       const res = await fetch(
         `${url}/rest/v1/rating_carryover?sport=eq.${sport}&season=eq.${encodeURIComponent(season)}&limit=500`,
@@ -924,7 +1084,7 @@ const EDGE_POWER = (() => {
     if (!window.EDGE_RATING) return { ok: false, error: 'rating-core.js not loaded' };
 
     const { adjustments = {}, forSeason = null } = options;
-    const next = forSeason || nextSeasonLabel(sport, new Date());
+    const next = forSeason || String(parseInt(seasonLabel(sport, new Date()), 10) + 1);
     const carried = window.EDGE_RATING.carryOver(sport, glickoState, { adjustments });
 
     const rows = Object.entries(carried).map(([team, v]) => ({
@@ -952,20 +1112,18 @@ const EDGE_POWER = (() => {
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
-  function seasonLabelFor(sport, date) {
-    const m = date.getMonth() + 1, y = date.getFullYear();
-    const cross = (start) => (m >= start ? y : y - 1);
-    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') return String(cross(9));
-    if (sport === 'NFL' || sport === 'NCAAF') return String(cross(3));
-    return String(y);
-  }
-
-  function nextSeasonLabel(sport, date) {
-    return String(parseInt(seasonLabelFor(sport, date), 10) + 1);
-  }
-
   // ============================================================
   // ── PERSIST ──
+  //
+  // Two changes from v4.2:
+  //
+  //   1. The stale-row cleanup deletes only the current sport's
+  //      rows. The old code deleted every row across every
+  //      sport not touched by this run — which wiped every
+  //      out-of-season or failed-fetch sport on every rebuild.
+  //
+  //   2. The 409 recovery clears only the current sport, not
+  //      the whole table.
   // ============================================================
 
   async function persistRatings(results, emit = () => {}) {
@@ -991,16 +1149,18 @@ const EDGE_POWER = (() => {
     teamRows.forEach(r => { r.updated_at = runStamp; });
     coachRows.forEach(r => { r.updated_at = runStamp; });
 
+    const sports = Array.from(new Set(teamRows.map(r => r.sport).filter(Boolean)));
+
     report.teams_written = await replaceTable(
-      url, key, 'power_ratings', teamRows, runStamp, report, emit);
+      url, key, 'power_ratings', teamRows, runStamp, sports, report, emit);
     if (coachRows.length) {
       report.coaching_written = await replaceTable(
-        url, key, 'coaching_ratings', coachRows, runStamp, report, emit);
+        url, key, 'coaching_ratings', coachRows, runStamp, sports, report, emit);
     }
     return report;
   }
 
-  async function replaceTable(url, key, table, rows, runStamp, report, emit) {
+  async function replaceTable(url, key, table, rows, runStamp, sports, report, emit) {
     const headers = {
       apikey: key, Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json', Prefer: 'return=minimal',
@@ -1022,14 +1182,28 @@ const EDGE_POWER = (() => {
       });
     }
 
+    // Clear only the sports this run is writing. The old code
+    // cleared everything not matching the run stamp, which
+    // wiped out-of-season sports.
+    const sportsFilter = sports.length
+      ? `sport=in.(${sports.map(s => `"${s}"`).join(',')})`
+      : 'sport=not.is.null';
+
+    try {
+      await fetch(`${url}/rest/v1/${table}?${sportsFilter}`, {
+        method: 'DELETE',
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+    } catch {}
+
     const chunkSize = 200;
     const first = payload.slice(0, chunkSize);
     let probe = await postDroppingUnknown(url, table, headers, first, report, emit);
 
     if (!probe.ok && probe.status === 409) {
-      emit(`${table}: unique constraint — clearing previous run and retrying`);
+      emit(`${table}: unique constraint — clearing current sports and retrying`);
       try {
-        await fetch(`${url}/rest/v1/${table}?sport=not.is.null`, {
+        await fetch(`${url}/rest/v1/${table}?${sportsFilter}`, {
           method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
         });
       } catch {}
@@ -1063,13 +1237,20 @@ const EDGE_POWER = (() => {
       else report.errors.push(`${table}: chunk ${i} HTTP ${res.status} ${String(res.body).slice(0, 140)}`);
     }
 
+    // Delete any row still on file for the current sports that
+    // was not written by this run. This cleans up teams that
+    // dropped out of the sport (realignment, missing data)
+    // without touching other sports.
     try {
-      await fetch(`${url}/rest/v1/${table}?updated_at=neq.${encodeURIComponent(runStamp)}`, {
-        method: 'DELETE',
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
-      });
+      await fetch(
+        `${url}/rest/v1/${table}?${sportsFilter}&updated_at=neq.${encodeURIComponent(runStamp)}`,
+        {
+          method: 'DELETE',
+          headers: { apikey: key, Authorization: `Bearer ${key}` },
+        }
+      );
     } catch (e) {
-      report.errors.push(`${table}: stale rows not cleared (${e.message})`);
+      report.errors.push(`${table}: stale rows not cleared for current sports (${e.message})`);
     }
 
     emit(`${table}: ${written} rows written`);
