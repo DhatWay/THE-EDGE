@@ -11,7 +11,7 @@
 <meta name="theme-color" content="#C9A84C" />
 <meta name="mobile-web-app-capable" content="yes" />
 <link rel="apple-touch-icon" href="icon-192.png" />
-  <script src="power-engine.js"></script>
+ <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
@@ -24,15 +24,17 @@
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
-  <script src="box-score-fetcher.js"></script>  
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
+  <script src="situations-engine.js"></script>
+  <script src="backfill.js"></script>
+<script src="game-id-map.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -111,7 +113,6 @@
   .row.thin { opacity: 0.55; }
   .row.dropped { opacity: 0.4; border-left: 2px solid var(--red); }
   .row.kept { border-left: 2px solid var(--green); }
-  .row .tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; text-align: center; }
 
   .game-row { display: grid; grid-template-columns: 60px 1fr 60px 70px 60px 50px; gap: 6px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 3px; align-items: center; font-size: 11px; }
   .game-row.head { background: var(--bg4); font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); padding: 5px 8px; margin-bottom: 5px; }
@@ -230,20 +231,14 @@ const WARMUP_DAYS = 400;
 
 const STEP_DAYS = { NFL: 7, NCAAF: 7, NBA: 7, NCAAB: 7, NHL: 7, MLB: 7, MLS: 14, WNBA: 7 };
 
-// Weight thresholds live in situation-results.js. These local aliases
-// mirror them so the report can render tags without a network round-trip.
 const W_MIN_SAMPLES = EDGE_SITUATION_RESULTS.MIN_SAMPLES;
 const W_HIT_STRONG  = EDGE_SITUATION_RESULTS.STRONG_HIT;
 const W_HIT_NEUTRAL = EDGE_SITUATION_RESULTS.NEUTRAL_HIT;
-const W_STRONG      = EDGE_SITUATION_RESULTS.W_STRONG;
-const W_NEUTRAL     = EDGE_SITUATION_RESULTS.W_NEUTRAL;
-const W_WEAK        = EDGE_SITUATION_RESULTS.W_WEAK;
 
 const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
 const clearLog = () => { document.getElementById('log').textContent = ''; };
 const out = h => { document.getElementById('output').innerHTML = h; };
 
-// Default date range: last 60 days
 (function() {
   const to = new Date();
   const from = new Date(to.getTime() - 60 * 86400000);
@@ -273,8 +268,8 @@ drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
 // STATE
 // ============================================================
 
-let gameResults = [];          // one row per graded pick
-let situationRows = [];        // one row per (game × fired situation), graded
+let gameResults = [];
+let situationRows = [];
 let familyStats = {};
 let confStats = {};
 let currentRunId = null;
@@ -371,13 +366,35 @@ async function run() {
     }
 
     // ── 2. Warm-up history ──
+    // End of the warmup is the day before the window starts.
+    // The v1.x code ended it on the window's first day, so games
+    // on the opening date landed in both the warmup and the
+    // window — they were graded twice, once as history and once
+    // as a target, and their teams got zero rest days because
+    // the same game appeared as its own predecessor.
     log('Loading warm-up history…');
-    const warmFrom = new Date(new Date(fromDate).getTime() - WARMUP_DAYS * 86400000)
-      .toISOString().slice(0, 10);
-    const warmup = await loadScoredGames(sport, warmFrom, fromDate, 6000, url, key);
+    const windowStart = new Date(fromDate);
+    const warmFromDate = new Date(windowStart.getTime() - WARMUP_DAYS * 86400000);
+    const warmToDate = new Date(windowStart.getTime() - 86400000);
+    const warmFrom = warmFromDate.toISOString().slice(0, 10);
+    const warmTo = warmToDate.toISOString().slice(0, 10);
+    const warmup = await loadScoredGames(sport, warmFrom, warmTo, 6000, url, key);
     log(`  ${warmup.length} games before the window, for rating only`);
 
     const coaching = await loadCoachingForSport(sport, url, key);
+
+    // ── 2b. Carryover ──
+    // If rating_carryover holds a seed for the season the window
+    // starts in, use it. The live engine carries the previous
+    // season's Glicko state into week 1; without this the
+    // backtest starts cold and its early steps disagree with the
+    // live pipeline.
+    const carryover = await loadCarryoverForWindow(sport, windowStart, url, key);
+    if (carryover && Object.keys(carryover).length) {
+      log(`  carryover seed: ${Object.keys(carryover).length} teams`);
+    } else {
+      log('  no carryover on file for this window — ratings start cold');
+    }
 
     // ── 3. ATS + H2H ──
     log('Loading ATS form and H2H…');
@@ -385,12 +402,12 @@ async function run() {
     const h2hIndex = await loadH2HForSport(sport, url, key);
     log(`  ${Object.keys(atsIndex).length} ATS rows · ${Object.keys(h2hIndex).length} H2H pairs`);
 
-    // ── 4. Situation weights from prior runs ──
+    // ── 4. Situation weights ──
     const situationWeights = await EDGE_SITUATION_RESULTS.loadWeights(sport);
-    const weightedCount = Object.values(situationWeights).filter(w => w !== W_NEUTRAL).length;
+    const weightedCount = Object.values(situationWeights).filter(w => w !== W_MIN_SAMPLES).length;
     if (weightedCount) log(`  ${weightedCount} situations carry a non-neutral weight from prior runs`);
 
-    // ── 5. Rest and prev-margin context from the combined log ──
+    // ── 5. Rest and prev-margin context ──
     const combined = [...warmup, ...games];
     const restContext = computeRestDays(combined);
     const prevContext = computePrevMargins(combined);
@@ -409,6 +426,7 @@ async function run() {
     log(`  ${steps.length} steps of ${STEP_DAYS[sport] || 7} days`);
 
     let processed = 0, skippedThin = 0;
+    let seeded = false;
 
     for (let si = 0; si < steps.length; si++) {
       const step = steps[si];
@@ -421,7 +439,13 @@ async function run() {
         continue;
       }
 
-      const power = buildPowerFromHistory(sport, history, coaching);
+      // Seed only applies to the first step. After the first
+      // step, the ratings are built from the history itself and
+      // the carryover would double-count.
+      const seed = (si === 0 && !seeded) ? carryover : null;
+      if (seed) seeded = true;
+
+      const power = buildPowerFromHistory(sport, history, coaching, seed);
       if (!power) { processed += step.games.length; continue; }
 
       log(`  step ${si + 1}/${steps.length} · ${step.label} · ` +
@@ -438,6 +462,7 @@ async function run() {
             if (graded.pick) {
               gameResults.push(graded.pick);
               tallyFamilyGraded(graded.pick);
+              tallyConfBucket(graded.pick);
             }
             if (graded.situationRows) {
               graded.situationRows.forEach(r => situationRows.push(r));
@@ -534,6 +559,28 @@ async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
 }
 
 // ============================================================
+// CARRYOVER
+// ============================================================
+
+async function loadCarryoverForWindow(sport, windowStart, url, key) {
+  const season = seasonOf(sport, windowStart);
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/rating_carryover?sport=eq.${sport}&season=eq.${encodeURIComponent(season)}&limit=500`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    if (!rows.length) return null;
+    const seed = {};
+    rows.forEach(r => {
+      seed[r.team_name] = { rating: r.rating, rd: r.rd, vol: r.vol ?? 0.06 };
+    });
+    return seed;
+  } catch { return null; }
+}
+
+// ============================================================
 // CONTEXT FROM GAME LOG
 // ============================================================
 
@@ -615,9 +662,15 @@ function buildSteps(games, stepDays) {
 
 // ============================================================
 // BUILD POWER FROM HISTORY
+//
+// Mirrors power-engine v4.3's shape. overall is now driven by
+// composite_points from rating-core rather than a pythagorean
+// formula, so the backtest's team ranking matches what the live
+// pipeline produces. _coach_adj is set so computeGamePrior
+// applies the same coaching shift it does live.
 // ============================================================
 
-function buildPowerFromHistory(sport, history, coaching) {
+function buildPowerFromHistory(sport, history, coaching, seed) {
   const R = window.EDGE_RATING;
   if (!R || !history.length) return null;
 
@@ -629,7 +682,7 @@ function buildPowerFromHistory(sport, history, coaching) {
 
   if (games.length < MIN_HISTORY) return null;
 
-  const glicko = R.rateGlicko(sport, games);
+  const glicko = R.rateGlicko(sport, games, seed ? { seed } : {});
   const massey = R.massey(sport, games);
   const colley = R.colley(games);
   const blended = R.blend(sport, glicko, massey, colley);
@@ -640,20 +693,29 @@ function buildPowerFromHistory(sport, history, coaching) {
   games.forEach(g => {
     [[g.home, g.homeScore, g.awayScore, true], [g.away, g.awayScore, g.homeScore, false]]
       .forEach(([team, pf, pa, isHome]) => {
-        if (!agg[team]) agg[team] = { gp: 0, pf: 0, pa: 0, w: 0, l: 0, hw: 0, hl: 0, aw: 0, al: 0, margins: [] };
+        if (!agg[team]) agg[team] = { gp: 0, pf: 0, pa: 0, w: 0, l: 0, hw: 0, hl: 0, aw: 0, al: 0, margins: [], closeGames: 0, closeWins: 0 };
         const a = agg[team];
         a.gp++; a.pf += pf; a.pa += pa; a.margins.push(pf - pa);
         if (pf > pa) { a.w++; isHome ? a.hw++ : a.aw++; }
         else if (pf < pa) { a.l++; isHome ? a.hl++ : a.al++; }
+
+        const closeMargin = { NFL: 7, NCAAF: 7, NBA: 5, NCAAB: 5, WNBA: 5, MLB: 1, NHL: 1, MLS: 1 }[sport] ?? 5;
+        if (Math.abs(pf - pa) <= closeMargin) {
+          a.closeGames++;
+          if (pf > pa) a.closeWins++;
+        }
       });
   });
 
   const cfg = (window.EDGE_POWER && window.EDGE_POWER.SPORT_CONFIG && window.EDGE_POWER.SPORT_CONFIG[sport])
     || { pyExp: 2.37, scale: 22, k: 8, avgPF: 22, avgPA: 22 };
   const teams = {};
+  const coachAdjByTeam = {};
+  const MIN_GAMES_FOR_RATING = window.EDGE_POWER?.MIN_GAMES_FOR_RATING ?? 3;
 
   Object.keys(agg).forEach(name => {
     const a = agg[name];
+    if (a.gp < MIN_GAMES_FOR_RATING) return;
     const g = glicko[name];
     if (!g) return;
 
@@ -676,9 +738,39 @@ function buildPowerFromHistory(sport, history, coaching) {
     let form = 0;
     recent.forEach((m, i) => { form += wts[off + i] * (m / cfg.scale) * 3; });
 
+    // Composite-heavy overall, matching power-engine v4.3.
+    const compositePoints = blended[name]?.composite_points ?? null;
+    let overall;
+    if (compositePoints != null) {
+      const compositeScaled = cl(50 + compositePoints * 2);
+      overall = Math.round((
+        (compositeScaled * 0.55) +
+        (offense * 0.20) +
+        (defense * 0.20) +
+        (mov * 0.05)
+      ) * 10) / 10;
+    } else {
+      overall = Math.round((
+        (pyth * 100 * 0.45) +
+        (offense * 0.20) +
+        (defense * 0.20) +
+        (mov * 0.15)
+      ) * 10) / 10;
+    }
+
+    const coachKey = `${sport}:${name}`;
+    const coach = coaching[coachKey] || null;
+    let coachAdj = 0;
+    if (coach && coach.overall != null) {
+      const max = coach.max_adjustment ?? 2.5;
+      const deviation = (coach.overall - 50) / 50;
+      coachAdj = Math.round(deviation * max * 100) / 100;
+    }
+    coachAdjByTeam[name] = coachAdj;
+
     teams[`${sport}:${name}`] = {
       sport, team_name: name,
-      overall: Math.round(((pyth * 100 * 0.45) + (offense * 0.20) + (defense * 0.20) + (mov * 0.15)) * 10) / 10,
+      overall: Math.max(0, Math.min(100, overall)),
       offense: Math.round(offense * 10) / 10,
       defense: Math.round(defense * 10) / 10,
       pythagorean: Math.round(pyth * 10000) / 10000,
@@ -689,7 +781,7 @@ function buildPowerFromHistory(sport, history, coaching) {
       glicko_vol: g.vol,
       massey: massey[name] != null ? massey[name] : null,
       colley: colley[name] != null ? colley[name] : null,
-      composite_points: blended[name] ? blended[name].composite_points : null,
+      composite_points: compositePoints,
       rating_certainty: blended[name] ? blended[name].certainty : null,
       attack: ad[name] ? ad[name].attack : null,
       def_rate: ad[name] ? ad[name].defense : null,
@@ -700,6 +792,8 @@ function buildPowerFromHistory(sport, history, coaching) {
       home_record: `${a.hw}-${a.hl}`,
       away_record: `${a.aw}-${a.al}`,
       last5_form: Math.round(form * realWeight * 100) / 100,
+      _coach_adj: coachAdj,
+      _coach: coach,
     };
   });
 
@@ -798,8 +892,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
   let prior;
   try {
     prior = await EDGE_POWER.computeGamePrior(game, {
-      homeStats: { ...homeStats, _coach: homeCoach },
-      awayStats: { ...awayStats, _coach: awayCoach },
+      homeStats,
+      awayStats,
       market,
       league: power.league || null,
     });
@@ -854,18 +948,25 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
       if (res && res.length) {
         sitResult = res[0];
 
+        // Matches orchestrator v3.1's situationsAsFamily.
+        // Confidence scale is 0.06, and under/over are handled.
         const strength = sitResult.weighted_strength || sitResult.strength || 0;
         const lean = sitResult.weighted_lean || sitResult.lean;
-        const sig = lean === 'home' ? Math.min(strength / 6, 1)
-                  : lean === 'away' ? -Math.min(strength / 6, 1)
-                  : 0;
+
+        let sig = 0;
+        if (lean === 'home') sig = Math.min(strength / 6, 1);
+        else if (lean === 'away') sig = -Math.min(strength / 6, 1);
+        else if (lean === 'under') sig = -Math.min(strength / 8, 0.5);
+        else if (lean === 'over') sig = Math.min(strength / 8, 0.5);
+
         const vote = lean === 'home' ? 'yes' : lean === 'away' ? 'no' : 'neu';
+        const confidence = strength > 0 ? Math.min(0.5 + strength * 0.06, 0.9) : 0.5;
 
         sitFamily = {
           family: 'situations',
           signal: sig,
           vote,
-          confidence: strength > 0 ? Math.min(0.5 + strength * 0.05, 0.9) : 0.5,
+          confidence,
           edge: Math.abs(sig) * 0.08,
           reason: (sitResult.situations || []).slice(0, 3).map(x => x.label).join(' · '),
           subs: sitResult.situations || [],
@@ -1018,19 +1119,35 @@ function tallyFamilyGraded(g) {
   });
 }
 
+function tallyConfBucket(g) {
+  const conf = g.confidence;
+  const bucket = conf >= 75 ? '75+' : conf >= 70 ? '70-74' : conf >= 65 ? '65-69' : conf >= 60 ? '60-64' : conf >= 55 ? '55-59' : '<55';
+  if (!confStats[bucket]) confStats[bucket] = { wins: 0, losses: 0, pushes: 0, games: 0 };
+  confStats[bucket].games++;
+  if (g.result === 'W') confStats[bucket].wins++;
+  else if (g.result === 'L') confStats[bucket].losses++;
+  else confStats[bucket].pushes++;
+}
+
+// ============================================================
+// SEASON LABEL
+//
+// Matches ats-tracker v3.0, power-engine v4.3, trends-engine
+// v2.0, prop-trends-engine v1.2, box-score-fetcher v1.3,
+// roster-engine v1.3, roster-enrichment v3.3.
+// ============================================================
+
 function seasonOf(sport, date) {
   const m = date.getMonth() + 1;
   const y = date.getFullYear();
-  const cross = (startMonth) => (m >= startMonth ? `${y}-${String(y + 1).slice(2)}` : `${y - 1}-${String(y).slice(2)}`);
-  switch (sport) {
-    case 'NBA':
-    case 'NHL':
-    case 'NCAAB':
-    case 'WNBA':  return cross(9);
-    case 'NFL':
-    case 'NCAAF': return cross(3);
-    default:      return String(y);
+
+  if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') {
+    return String(m >= 9 ? y : y - 1);
   }
+  if (sport === 'NFL' || sport === 'NCAAF') {
+    return String(m >= 3 ? y : y - 1);
+  }
+  return String(y);
 }
 
 // ============================================================
@@ -1052,9 +1169,6 @@ async function renderReport(sport) {
   const flatPnl = gameResults.reduce((s, g) => s + (g.result === 'W' ? 0.91 : g.result === 'L' ? -1 : 0), 0);
   const breaksEven = hitRate >= 52.4;
 
-  // Pooled per-situation record, read from situation_performance
-  // via the module. This reflects every run on file for this sport,
-  // not just the current window.
   let pooled = [];
   if (performanceTableAvailable) {
     try { pooled = await EDGE_SITUATION_RESULTS.summarise(sport); }
@@ -1063,7 +1177,6 @@ async function renderReport(sport) {
 
   let html = '';
 
-  // ── Summary ──
   html += `
     <div class="summary">
       <div class="sum-cell"><div class="sum-v gold">${gameResults.length}</div><div class="sum-l">Picks</div></div>
@@ -1074,7 +1187,6 @@ async function renderReport(sport) {
     <div class="sub" style="margin-bottom:20px;">Break-even at -110 juice is 52.4%. ${breaksEven ? 'Above break-even.' : 'Below break-even.'} · ${situationRows.length} situation rows graded this run.</div>
   `;
 
-  // ── Situations (pooled from situation_performance) ──
   if (pooled.length) {
     const kept = pooled.filter(r => r.tag === 'KEEP').length;
     const dropped = pooled.filter(r => r.tag === 'DROP').length;
@@ -1083,9 +1195,9 @@ async function renderReport(sport) {
 
     html += `<div class="section">
       <div class="sec-title">BY <em>SITUATION</em></div>
-      <div class="sec-note">Pooled across every season on file. KEEP = ${(W_HIT_STRONG * 100).toFixed(0)}%+ on ${W_MIN_SAMPLES}+ samples and becomes a ${W_STRONG}× weighted vote. HOLD = neutral. DROP = under ${(W_HIT_NEUTRAL * 100).toFixed(0)}% and down-weighted to ${W_WEAK}×. Em-dash means the sample is still too thin to decide.</div>
+      <div class="sec-note">Pooled across every season on file. ROI is real return at -110 juice. KEEP = ${(W_HIT_STRONG * 100).toFixed(0)}%+ on ${W_MIN_SAMPLES}+ samples. HOLD = neutral. DROP = under ${(W_HIT_NEUTRAL * 100).toFixed(0)}%. Em-dash means the sample is still too thin to decide.</div>
       <div class="sub" style="margin-bottom:10px;">${kept} keep · ${held} hold · ${dropped} drop · ${thin} thin</div>
-      <div class="row head"><span>Rule</span><span>Samples</span><span>Record</span><span>Rate</span><span>Weight</span></div>`;
+      <div class="row head"><span>Rule</span><span>Samples</span><span>Record</span><span>Rate</span><span>ROI</span></div>`;
 
     pooled.forEach(r => {
       const rowClass = r.tag === 'KEEP' ? 'kept'
@@ -1094,9 +1206,9 @@ async function renderReport(sport) {
       const rateClass = r.edge_over_break_even > 0.02 ? 'pos'
                       : r.edge_over_break_even < -0.02 ? 'neg'
                       : 'neu';
-      const weightClass = r.tag === 'KEEP' ? 'green'
-                        : r.tag === 'DROP' ? 'red'
-                        : r.tag === 'HOLD' ? 'gold' : '';
+      const roiClass = r.roi > 0.02 ? 'green'
+                     : r.roi < -0.02 ? 'red'
+                     : 'neu';
       const seasons = r.seasons && r.seasons.length ? r.seasons.join(', ') : '—';
 
       html += `<div class="row ${rowClass}">
@@ -1104,7 +1216,7 @@ async function renderReport(sport) {
         <span class="num neu">${r.samples}</span>
         <span class="num neu">${r.wins}-${r.losses}-${r.pushes}</span>
         <span class="num ${rateClass}">${(r.hit_rate * 100).toFixed(1)}%</span>
-        <span class="num ${weightClass}">${r.tag}</span>
+        <span class="num ${roiClass}">${r.roi > 0 ? '+' : ''}${(r.roi * 100).toFixed(1)}%</span>
       </div>`;
     });
 
@@ -1121,7 +1233,6 @@ async function renderReport(sport) {
     </div>`;
   }
 
-  // ── Families ──
   const famRows = Object.entries(familyStats)
     .map(([k, v]) => ({ family: k, ...v, rate: v.games > 0 ? v.wins / (v.wins + v.losses) : 0 }))
     .filter(r => r.games >= 10)
@@ -1146,7 +1257,6 @@ async function renderReport(sport) {
     html += `</div>`;
   }
 
-  // ── Confidence buckets ──
   const confOrder = ['75+', '70-74', '65-69', '60-64', '55-59', '<55'];
   const confRows = confOrder.filter(k => confStats[k]).map(k => {
     const v = confStats[k];
@@ -1173,7 +1283,6 @@ async function renderReport(sport) {
     html += `</div>`;
   }
 
-  // ── All picks ──
   if (gameResults.length) {
     html += `<div class="section"><div class="sec-title">ALL <em>PICKS</em></div>`;
     html += `<div class="game-row head"><span>Date</span><span>Matchup</span><span>Spread</span><span>Pick</span><span>Score</span><span>Result</span></div>`;
@@ -1191,19 +1300,24 @@ async function renderReport(sport) {
     html += `</div>`;
   }
 
-  // ── Footer note ──
   html += `<div class="footer-note">
-    <b>Known caveats.</b> ATS and head-to-head situations read <code>team_ats</code> and
-    <code>matchup_ats</code>, which are computed over the full 5-season window regardless of where
-    the walk-forward is standing. That is mild look-ahead for those rules and inflates their
-    samples slightly. Fixing it properly means rebuilding those tables at every step, which is
-    a second walk-forward pass — noted, not yet done. Power and rest rules read only games before
-    the step cutoff, so they are clean. Travel, weather, injury and divisional rules are reported
-    untestable because the historical archives for those inputs do not exist in this build.
+    <b>Known caveats.</b> ATS, head-to-head and coaching situations read
+    <code>team_ats</code>, <code>matchup_ats</code> and <code>coaching_ratings</code>, which are
+    computed over the full season window regardless of where the walk-forward is standing.
+    That is mild look-ahead for those families and slightly inflates their samples.
+    Fixing it properly means rebuilding those tables at every step, which is a second
+    walk-forward pass — noted, not yet done. Power, situations, rest and travel rules read
+    only games before the step cutoff, so they are clean. The situations family vote,
+    overall rating composite, and coaching adjustment now match the live orchestrator
+    (v3.1 / power-engine v4.3), so weights learned here transfer. Weather, injuries and
+    travel context are not wired into the backtest yet, so those rules are reported
+    untestable.
   </div>`;
 
   out(html);
 }
+
+function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 </script>
 
 </body>
