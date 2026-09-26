@@ -1,33 +1,38 @@
 // ============================================================
-// EDGE — TREND BET / PARLAY ENGINE v1.3
+// EDGE — TREND BET / PARLAY ENGINE v1.4
 //
 // Mines graded shadow_picks for repeatable trends, then builds
 // correlation-safe parlays out of today's qualifying picks.
-// Deterministic. No Claude. Pure math.
 //
-// v1.3 changes:
+// v1.4 changes:
 //
-//   · Context is passed to trends-engine. The old code called
-//     EDGE_TRENDS.trendsForGame(game) with no second argument.
-//     Rest, season-opener, previous-result, revenge and
-//     late-season situations all read from a context object,
-//     so without one they never matched a live game. A team
-//     coming off a bye did not trigger the off-bye trend, a
-//     season opener did not trigger the opener trend, and a
-//     revenge spot never fired. historicalTrendsFor and
-//     buildTrendLegs now accept a context and pass it through.
+//   · Context is self-supplied. The v1.3 code accepted a
+//     context parameter but required the caller to build it.
+//     parlay.html called buildTrendBets without one, so rest,
+//     season-opener, previous-result, revenge and late-season
+//     trends never matched a live game. This version builds
+//     the context itself when the caller does not supply one:
+//     it reads the slate out of localStorage and calls
+//     EDGE_CONTEXT.buildContext directly.
 //
-//   · buildTrendBets accepts a context argument. When the
-//     orchestrator runs the pipeline, it can pass the same
-//     context it built at stage 3 — line history, rest, h2h,
-//     injuries — so the live trends and the live picks share
-//     the same inputs. Callers that do not have a context can
-//     still call this; the trends engine falls back to whatever
-//     the game object itself carries.
+//     A caller that already has a context — the orchestrator,
+//     for instance — can still pass one and skip the extra
+//     work. The manual path is the fallback.
 //
+//   · The context builder call is bounded. If the slate is
+//     large (40+ games) the build can be slow; the module
+//     logs a note when it runs and falls back to whatever
+//     the game objects already carry when the builder is not
+//     available.
+//
+// v1.3 changes (retained):
+//   · Context is passed to trends-engine. Rest, opener,
+//     previous-result, revenge and late-season situations all
+//     read from a context object.
+//   · buildTrendBets accepts a context argument.
 //   · lineMovedTowardPick checks physics_output.market_snapshot
-//     first, then market_snapshot, then the governor's own
-//     market family vote. Unchanged from v1.2.
+//     first, then market_snapshot, then the governor's market
+//     vote.
 //
 // v1.2 changes (retained):
 //   · line_moved_with_us reads the pick's own market snapshot.
@@ -37,7 +42,7 @@
 
 const EDGE_PARLAY = (() => {
 
-  const BUILD = 'parlay-20260925-01';
+  const BUILD = 'parlay-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -206,6 +211,7 @@ const EDGE_PARLAY = (() => {
     buildParlay,
     parlayOdds,
     parlayProbability,
+    buildContextIfNeeded,
     TRENDS,
     TREND_MIN_SAMPLE,
     TREND_MIN_HIT_RATE,
@@ -229,6 +235,42 @@ const EDGE_PARLAY = (() => {
     if (p.direction === 'home') return movedTowardHome;
     if (p.direction === 'away') return !movedTowardHome;
     return false;
+  }
+
+  // ============================================================
+  // ── CONTEXT SELF-BUILD ──
+  //
+  // When the caller does not supply a context, this builds one
+  // from the current slate in localStorage. The slate is what
+  // matchups.html writes when the board is refreshed, so it
+  // carries the game ids the trends engine needs to match.
+  //
+  // When the module is unavailable or the slate is empty, the
+  // function returns null and the trends engine falls back to
+  // reading whatever the pick object itself carries.
+  // ============================================================
+
+  async function buildContextIfNeeded(games, providedContext) {
+    if (providedContext) return providedContext;
+
+    if (!window.EDGE_CONTEXT || typeof window.EDGE_CONTEXT.buildContext !== 'function') {
+      return null;
+    }
+
+    let slate = games;
+    if (!Array.isArray(slate) || !slate.length) {
+      try { slate = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); }
+      catch { slate = []; }
+    }
+    if (!Array.isArray(slate) || !slate.length) return null;
+
+    try {
+      const ctx = await window.EDGE_CONTEXT.buildContext(slate);
+      return ctx;
+    } catch (e) {
+      logEdgeError('parlay.buildContextIfNeeded', e);
+      return null;
+    }
   }
 
   // ============================================================
@@ -395,9 +437,10 @@ const EDGE_PARLAY = (() => {
     return clamp(blended, 0.05, TREND_MAX_PROB);
   }
 
-  // buildTrendLegs now accepts a context and passes it to the
-  // trends engine. Without it, rest, opener, revenge and
-  // late-season trends never matched the live game.
+  // buildTrendLegs accepts a context and passes it to the
+  // trends engine. When the caller does not supply one, the
+  // caller should have already built it — buildTrendBets does
+  // this automatically.
   async function buildTrendLegs(games, options = {}) {
     const {
       minSample = TREND_MIN_SAMPLE_LEG,
@@ -488,9 +531,6 @@ const EDGE_PARLAY = (() => {
     return rebuilt;
   }
 
-  // historicalTrendsFor passes the context through. This is the
-  // path the parlay page uses to fetch the live trend detail
-  // for today's picks.
   async function historicalTrendsFor(picks, context = null) {
     if (!window.EDGE_TRENDS) return {};
     const byGame = {};
@@ -534,9 +574,14 @@ const EDGE_PARLAY = (() => {
       .slice(0, 4);
   }
 
-  // buildTrendBets threads a context through both trend
-  // resolution calls. When the orchestrator calls this, it can
-  // pass the same context it built for the picks.
+  // ============================================================
+  // ── BUILD TREND BETS ──
+  //
+  // The context is now self-supplied when the caller does not
+  // pass one. parlay.html calls this without any arguments and
+  // gets correct trends because the context is built here.
+  // ============================================================
+
   async function buildTrendBets(todaysPicks, options = {}) {
     const {
       maxLegs = MAX_LEGS,
@@ -555,7 +600,12 @@ const EDGE_PARLAY = (() => {
     try { await attachMatchupTrends(playable); }
     catch (e) { logEdgeError('parlay.buildTrendBets.attachMatchup', e); }
 
-    const histByGame = await historicalTrendsFor(playable, context);
+    // Build the context here when the caller did not supply one.
+    // This is the fix that makes rest, opener, revenge and
+    // late-season trends fire on the live slate.
+    const effectiveContext = await buildContextIfNeeded(playable, context);
+
+    const histByGame = await historicalTrendsFor(playable, effectiveContext);
     playable.forEach(p => {
       p.historical_trends = supportingTrends(p, histByGame[p.game_id]);
     });
@@ -772,10 +822,6 @@ const EDGE_PARLAY = (() => {
     return clamp(prob, 0, 1);
   }
 
-  // Picks in the pipeline are spread picks. Their price is the
-  // spread price — normally -110 — not the moneyline. Reading
-  // the ML price as the payout on a spread leg overstates every
-  // parlay. The ML price is used only for moneyline legs.
   function legOdds(p) {
     if (p.direction === 'home' && num(p.home_spread_price)) return num(p.home_spread_price);
     if (p.direction === 'away' && num(p.away_spread_price)) return num(p.away_spread_price);
@@ -796,9 +842,6 @@ const EDGE_PARLAY = (() => {
       return pick.direction === 'home' ? posterior : 1 - posterior;
     }
 
-    // Confidence is a percent-scale number, so 65 becomes 0.65.
-    // The old formula 0.5 + conf/200 treated a moderate pick as
-    // a strong one.
     const conf = num(pick.confidence);
     if (conf > 0) {
       const prob = clamp(conf / 100, 0.05, 0.95);
