@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — TEAM NAME RESOLVER v1.0
+// EDGE — TEAM NAME RESOLVER v1.1
 //
 // The Odds API, ESPN and the power_ratings table spell the same
 // club three different ways. On a 103-game slate that cost 13
@@ -18,17 +18,23 @@
 //
 // resolveTeam() returns the key that actually exists in the index
 // you pass it, or null. Nothing guesses past a confidence floor.
+//
+// v1.1 changes:
+//   · NHL section added. The Utah Hockey Club was rebranded
+//     from the Arizona Coyotes before the 2024–25 season, and
+//     the Utah Mammoth name was in circulation during the
+//     2025–26 season before being retired. All three names
+//     resolve to a single key so a game listed under any of
+//     them matches the same roster, rating and ATS row.
 // ============================================================
 
 const EDGE_TEAMS = (() => {
 
-  // Club words that carry no identity. Stripped from both sides.
   const NOISE = [
     'fc', 'sc', 'cf', 'afc', 'ac', 'club', 'city',
     'united', 'utd', 'sporting', 'real',
   ];
 
-  // Only for names that normalisation cannot reconcile.
   const EXPLICIT = {
     MLS: {
       'los angeles fc': 'lafc',
@@ -103,9 +109,17 @@ const EDGE_TEAMS = (() => {
       'la lakers': 'los angeles lakers',
       'los angeles lakers': 'los angeles lakers',
     },
+    NHL: {
+      'utah mammoth': 'utah hockey club',
+      'utah hockey club': 'utah hockey club',
+      'utah hc': 'utah hockey club',
+      'arizona coyotes': 'utah hockey club',
+      'phoenix coyotes': 'utah hockey club',
+      'winnipeg jets': 'winnipeg jets',
+      'atlanta thrashers': 'winnipeg jets',
+    },
   };
 
-  // Common college shorthand the Odds API uses.
   const COLLEGE_SHORT = {
     'uconn': 'connecticut',
     'ucf': 'central florida',
@@ -139,8 +153,6 @@ const EDGE_TEAMS = (() => {
     'usf': 'south florida',
   };
 
-  // Mascots stripped so "Georgia Bulldogs" matches "Georgia".
-  // Only applied as a fallback pass, never as the primary key.
   const MASCOT_TAIL = /\s+(mountaineers|golden eagles|ragin cajuns|spartans|bulldogs|tigers|wildcats|eagles|huskies|blazers|49ers|cougars|knights|bison|hurricanes|gamecocks|lobos|hoosiers|gators|dukes|hokies|terrapins|cavaliers|fighting irish|trojans|aggies|cornhuskers|nittany lions|bearcats|rebels|volunteers|razorbacks|commodores|crimson tide|sooners|longhorns|jayhawks|cyclones|mountaineers|horned frogs|red raiders|owls|hawkeyes|badgers|boilermakers|wolverines|buckeyes|nittany|panthers|cardinals|orange|demon deacons|yellow jackets|seminoles|wolfpack|tar heels|blue devils|lions|bears|beavers|ducks|utes|buffaloes|sun devils|rams|broncos|falcons|raiders|aztecs|rainbow warriors|vandals|vikings|zips|bobcats|chippewas|rockets|golden flashes|redhawks|thundering herd|mean green|roadrunners|miners|monarchs|pirates|mustangs|bulls|midshipmen|black knights|minutemen|hilltoppers|racers|governors|colonels)$/i;
 
   return {
@@ -158,9 +170,7 @@ const EDGE_TEAMS = (() => {
     if (!name) return '';
     let s = String(name).toLowerCase().trim();
 
-    // Accents: Montréal → montreal
     s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    // Punctuation
     s = s.replace(/[.'’`]/g, '').replace(/[-_/]/g, ' ');
     s = s.replace(/\s+/g, ' ').trim();
 
@@ -176,7 +186,6 @@ const EDGE_TEAMS = (() => {
       }
     }
 
-    // Strip club noise words, but never the whole name.
     const tokens = s.split(' ').filter(Boolean);
     const kept = tokens.filter(t => !NOISE.includes(t));
     if (kept.length) s = kept.join(' ');
@@ -190,9 +199,6 @@ const EDGE_TEAMS = (() => {
 
   // ============================================================
   // ── INDEX ──
-  // Build a lookup once per run, then resolve against it.
-  // Accepts either an array of rows with team_name, or an object
-  // keyed "SPORT:Team Name" as the orchestrator already uses.
   // ============================================================
 
   function buildIndex(source, sport) {
@@ -225,21 +231,15 @@ const EDGE_TEAMS = (() => {
   function resolveTeam(name, index, sport) {
     if (!name || !index) return null;
 
-    // 1. Exact
     if (index.exact.has(name)) return index.exact.get(name);
 
-    // 2. Normalised
     const n = normalize(name, sport);
     if (index.norm.has(n)) return index.norm.get(n);
 
-    // 3. Mascot stripped both ways
     const bare = stripMascot(n);
     if (index.bare.has(bare)) return index.bare.get(bare);
     if (index.norm.has(bare)) return index.norm.get(bare);
 
-    // 4. Token overlap — only accepted above a clear threshold, so a
-    //    genuinely absent team stays absent rather than matching the
-    //    nearest wrong club.
     const target = new Set(bare.split(' ').filter(t => t.length > 2));
     if (!target.size) return null;
 
@@ -257,7 +257,6 @@ const EDGE_TEAMS = (() => {
     return bestScore >= 0.75 ? best : null;
   }
 
-  // Diagnostics: what matched, what didn't, and why.
   function matchReport(games, index, sport) {
     const report = { total: 0, matched: 0, unmatched: [] };
     games.forEach(g => {
