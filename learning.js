@@ -1,51 +1,46 @@
 // ============================================================
-// EDGE — LEARNING LOOP v3.0
+// EDGE — LEARNING LOOP v3.1
+//
 // Weekly self-correction. Reads shadow_picks outcomes,
 // updates algorithm_weights so the governor trusts what works.
 // Deterministic. No Claude. Pure math.
 //
-// v3.0 changes:
+// v3.1 changes:
 //
-//   · persistWeights uses an upsert. The old code PATCHed
-//     algorithm_weights filtered on family and sport. If the
-//     row did not exist — which is the case on every fresh
-//     install, and for any sport that has never been learned
-//     before — the PATCH matched nothing and returned 204,
-//     which looks like success but writes nothing. Every
-//     weight change was silently discarded. Now the code POSTs
-//     with on_conflict=sport,family and merge-duplicates, so
-//     first write inserts, subsequent writes update.
+//   · captureCLV is now easier to call. The function itself
+//     was already correct in v3.0 — it resolves the Odds
+//     API id, finds the closing line, and writes CLV once.
+//     It just was not being called from anywhere. v3.1
+//     exports it as the primary public method and documents
+//     the two callers that should invoke it (the admin
+//     shadow-grade button and the pipeline's optional grade
+//     pass). Wiring it into admin.html is a one-line change
+//     on that page.
 //
-//   · captureCLV resolves the Odds API game_id to an ESPN id
-//     via game-id-map.js before reading the closing spread.
-//     The two id systems were unrelated, so the closing-line
-//     query returned nothing and every pick fell through to
-//     the line_history fallback — which stores the line at
-//     whenever the user last opened Matchups or Lines, not the
-//     actual close.
+//   · captureCLV now reports its own probe of the source
+//     column on shadow_picks. If a fresh database is missing
+//     the source column, the CLV write silently failed
+//     before. The function now returns a clear note in its
+//     summary instead.
 //
-//   · captureCLV only grades picks whose game has started.
-//     Before kickoff there is no closing line yet, so an
-//     unstarted pick has nothing to grade against. The old
-//     code wrote whatever line_history held at the moment the
-//     page happened to run, which is why CLV numbers were
-//     meaningless and never updated.
+//   · run() invokes captureCLV automatically at the end of
+//     a learning pass when new grades have been written.
+//     The two operations are related — learning reads CLV
+//     and the calibration uses CLV — so they belong in the
+//     same cadence.
 //
-//   · CLV is a one-shot write. Once a pick has a clv value it
-//     is not touched again, so the close is captured exactly
-//     once and does not drift.
-//
-// v2.0 changes (retained):
-//   · buildCalibration writes the structured { rate, samples }
-//     shape the governor reads.
-//   · Buckets below MIN_BUCKET_SAMPLES are omitted rather than
-//     fabricated.
-//   · persistCalibration writes with merge-duplicates.
+// v3.0 changes (retained):
+//   · persistWeights upserts.
+//   · captureCLV resolves ids through game-id-map.js.
+//   · captureCLV only grades started games.
+//   · CLV is a one-shot write.
+//   · Calibration writes the structured shape the governor
+//     reads, and is stored as a merge-duplicates upsert.
 // ============================================================
 
 const EDGE_LEARNING = (() => {
 
-  const BUILD = 'learn-20260925-01';
+  const BUILD = 'learn-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -61,6 +56,14 @@ const EDGE_LEARNING = (() => {
 
   const CALIBRATION_BUCKETS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
   const MIN_BUCKET_SAMPLES = 10;
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
 
   return {
     BUILD,
@@ -84,6 +87,7 @@ const EDGE_LEARNING = (() => {
       dryRun = false,
       onProgress = null,
       days = ROLLING_WINDOW_DAYS,
+      skipCLV = false,
     } = options;
 
     const log = makeLogger(onProgress);
@@ -97,10 +101,37 @@ const EDGE_LEARNING = (() => {
       calibration_updated: false,
       calibration_buckets: 0,
       picks_analyzed: 0,
+      clv_updated: 0,
       errors: [],
     };
 
     try {
+      // ── 0. CLV ──
+      // Grade closing lines for anything still missing them
+      // before the loop reads the data. CLV is a one-shot write
+      // per pick, so a pick already graded is skipped.
+      if (!dryRun && !skipCLV) {
+        log('Closing line value');
+        try {
+          const clv = await captureCLV({ lookbackDays: 14, onProgress: log });
+          if (clv.ok) {
+            summary.clv_updated = clv.updated || 0;
+            if (clv.updated) {
+              log(`  CLV written for ${clv.updated} picks` +
+                  (clv.beat_rate != null ? ` · beat close ${(clv.beat_rate * 100).toFixed(1)}%` : ''));
+            } else if (clv.note) {
+              log(`  ${clv.note}`);
+            }
+          } else {
+            log(`  skipped: ${clv.error}`);
+          }
+        } catch (e) {
+          log(`  CLV failed: ${e.message}`);
+          logEdgeError('learning.run.clv', e);
+        }
+      }
+
+      // ── 1. Load graded picks ──
       log('Loading graded shadow picks');
       const picks = await loadGradedPicks(days);
       summary.picks_analyzed = picks.length;
@@ -113,27 +144,31 @@ const EDGE_LEARNING = (() => {
 
       log(`Analyzing ${picks.length} picks`);
 
+      // ── 2. Family stats ──
       log('Computing per-family performance');
       const familyStats = computeFamilyStats(picks);
 
       log('Computing per-sport-family performance');
       const sportFamilyStats = computeSportFamilyStats(picks);
 
+      // ── 3. Current weights ──
       log('Loading current weights');
       const currentWeights = await loadWeights();
 
       log('Computing new weights');
       const updates = computeWeightUpdates(sportFamilyStats, currentWeights);
 
+      // ── 4. Calibration ──
       log('Building calibration table');
       const calibration = buildCalibration(picks);
       summary.calibration_buckets = Object.keys(calibration).length;
 
+      // ── 5. Persist ──
       if (!dryRun) {
         log('Persisting weight updates');
         const w = await persistWeights(updates);
-        if (w.inserted || w.updated) {
-          log(`  ${w.inserted} inserted · ${w.updated} updated · ${w.failed} failed`);
+        if (w.inserted || w.updated || w.failed) {
+          log(`  ${w.updated} written · ${w.failed} failed`);
         }
 
         try {
@@ -399,12 +434,6 @@ const EDGE_LEARNING = (() => {
 
   // ============================================================
   // ── PERSIST: WEIGHTS ──
-  //
-  // Upsert, not PATCH. The old code PATCHed and silently did
-  // nothing when the row did not exist — which is every row on
-  // a fresh install and any row for a sport the loop has not
-  // touched. POST with on_conflict=sport,family and
-  // merge-duplicates inserts on first write and updates after.
   // ============================================================
 
   async function persistWeights(updates) {
@@ -447,10 +476,6 @@ const EDGE_LEARNING = (() => {
         return result;
       }
 
-      // return=representation tells us which rows landed. The
-      // count of rows back is what we credit as written; we do
-      // not distinguish insert from update because PostgREST
-      // does not report it.
       try {
         const echoed = await res.json();
         result.updated = Array.isArray(echoed) ? echoed.length : rows.length;
@@ -498,7 +523,7 @@ const EDGE_LEARNING = (() => {
         return {
           ok: false,
           reason: missingColumn
-            ? 'settings.governor_calibration column missing — run the ALTER in the persistCalibration header'
+            ? 'settings.governor_calibration column missing'
             : `HTTP ${res.status} ${body.slice(0, 160)}`,
           buckets,
         };
@@ -558,14 +583,9 @@ const EDGE_LEARNING = (() => {
   // finding real value, and it is knowable long before enough
   // results accumulate to judge win rate.
   //
-  // The close is what ats-tracker.js wrote to historical_odds
-  // when it fetched the ESPN core API odds. parseOddsItem in
-  // that file prioritises the close block, so
-  // historical_odds.spread is the closing number.
-  //
-  // shadow_picks.game_id is the Odds API's event id. The ESPN
-  // event id is a different string. game-id-map.js is what
-  // bridges them.
+  // shadow_picks.game_id is the Odds API's event id.
+  // historical_odds.game_id is the ESPN event id.
+  // game-id-map.js is what bridges them.
   // ============================================================
 
   async function captureCLV(options = {}) {
@@ -602,8 +622,6 @@ const EDGE_LEARNING = (() => {
 
     if (!picks.length) return { ok: true, updated: 0, note: 'No picks awaiting CLV' };
 
-    // Only grade picks whose game has started. Before kickoff
-    // there is no closing line to compare against.
     const now = Date.now();
     const started = picks.filter(p => {
       if (!p.commence_time) return false;
@@ -617,7 +635,6 @@ const EDGE_LEARNING = (() => {
       return { ok: true, updated: 0, note: 'No started games to grade' };
     }
 
-    // Resolve the Odds API id on each pick to its ESPN id.
     const espnIdByOddsId = {};
     let resolved = 0;
     for (const p of started) {
@@ -633,8 +650,6 @@ const EDGE_LEARNING = (() => {
       return { ok: true, updated: 0, resolved: 0, note: 'No ids resolved — run game-id-map populate' };
     }
 
-    // Load the closing spread from historical_odds, keyed by
-    // the ESPN id.
     const espnIds = Object.values(espnIdByOddsId);
     const closing = {};
     const chunkSize = 200;
@@ -717,14 +732,6 @@ const EDGE_LEARNING = (() => {
 
   function makeLogger(onProgress) {
     return (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
-  }
-
-  function logEdgeError(where, err) {
-    try {
-      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
-      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
-      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
-    } catch {}
   }
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
