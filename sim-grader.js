@@ -1,46 +1,32 @@
 // ============================================================
-// EDGE — SIM GRADER v2.0
+// EDGE — SIM GRADER v2.1
 //
 // The sim engine places paper bets and stores them in bet_log
 // with mode='sim' and status='pending'. This module is what
 // turns those pending rows into W/L/P.
 //
-// v2.0 changes:
+// v2.1 changes:
 //
-//   · Resolves the game id. bet_log.game_id is The Odds API's
-//     event id. historical_odds.game_id is ESPN's event id.
-//     They are unrelated strings. The old code queried
-//     historical_odds by the bet's id and always found nothing,
-//     so no sim bet ever graded. The lookup now goes through
-//     EDGE_GAME_ID_MAP.resolveFromOddsId() first.
+//   · The result, pnl and graded_at columns are probed once
+//     per run instead of assumed. If any of them is missing
+//     on bet_log, the PATCH would 400 with no grade written
+//     and no clear error. The run now reports the missing
+//     column and stops before touching any row.
 //
-//   · Handles the old empty-line rows. Auto-placed bets before
-//     the orchestrator v3.2 change wrote line: '' and used the
-//     moneyline as the price for either side. Number('') is 0,
-//     so an old row would have graded as pick'em. Those rows
-//     are now reported as legacy_format and skipped rather than
-//     mis-graded.
+//   · Every unresolved id is counted and reported. The old
+//     code's summary collapsed unresolved ids, legacy rows,
+//     and awaiting-score rows into a single number. The
+//     caller now sees three separate counts.
 //
-//   · Reports every unresolved id per run rather than swallowing
-//     it. If a game_id has no link in game_id_map yet, the row
-//     stays pending and the count shows up in the summary.
-//
-// Workflow:
-//   1. Read pending sim bets from bet_log.
-//   2. Resolve each game_id via game-id-map.js.
-//   3. Load final scores from historical_odds by the ESPN id.
-//   4. Grade each bet against the side it took.
-//   5. PATCH the row with result, pnl, graded_at, status='graded'.
-//   6. Update the local sim state so the betting page reflects
-//      the same record.
-//
-// Idempotent. A row already marked graded is skipped, so a run
-// twice a day does not double-count.
+// v2.0 changes (retained):
+//   · Resolves the game id through game-id-map.js.
+//   · Handles old empty-line rows (written before
+//     orchestrator v3.2) by skipping them.
 // ============================================================
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20260925-01';
+  const BUILD = 'simgrade-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -53,23 +39,22 @@ const EDGE_SIM_GRADER = (() => {
     } catch {}
   }
 
-  // How far back to look for pending bets. Older than a month and
-  // they are stale — either the game was never scheduled, or the
-  // score was never written. Reported as unresolved rather than
-  // left silently in the pending queue forever.
+  // How far back to look for pending bets.
   const LOOKBACK_DAYS = 30;
 
   const DEFAULT_SPREAD_PRICE = -110;
+
+  const SCHEMA_SQL = `alter table public.bet_log
+  add column if not exists result text,
+  add column if not exists pnl numeric,
+  add column if not exists graded_at timestamptz;`;
 
   return {
     BUILD,
     run,
     gradeOne,
     probe,
-    SCHEMA_SQL: `alter table public.bet_log
-  add column if not exists result text,
-  add column if not exists pnl numeric,
-  add column if not exists graded_at timestamptz;`,
+    SCHEMA_SQL,
   };
 
   // ============================================================
@@ -133,15 +118,17 @@ const EDGE_SIM_GRADER = (() => {
     if (!schema.bet_log) {
       return { ok: false, error: 'bet_log table not readable' };
     }
-    if (!schema.result_col) {
-      log('bet_log is missing the result/pnl/graded_at columns');
+    if (!schema.result_col || !schema.pnl_col || !schema.graded_at_col) {
+      log('bet_log is missing one or more of the grading columns:');
+      if (!schema.result_col)    log('  result');
+      if (!schema.pnl_col)       log('  pnl');
+      if (!schema.graded_at_col) log('  graded_at');
       log('Add them with:');
       log(SCHEMA_SQL);
       return { ok: false, error: 'columns missing', sql: SCHEMA_SQL };
     }
     if (!schema.game_id_map) {
       log('game_id_map table is missing — sim bets cannot resolve their score');
-      log('Run EDGE_GAME_ID_MAP.schemaSql() output in the Supabase editor');
       return { ok: false, error: 'game_id_map missing' };
     }
     if (typeof window.EDGE_GAME_ID_MAP === 'undefined') {
@@ -155,12 +142,13 @@ const EDGE_SIM_GRADER = (() => {
     log(`${pending.length} pending ${mode} bets from the last ${LOOKBACK_DAYS} days`);
 
     if (!pending.length) {
-      return { ok: true, graded: 0, unresolved: 0, legacy: 0, pending: 0 };
+      return { ok: true, graded: 0, unresolved: 0, legacy: 0, pending_score: 0, pending: 0 };
     }
 
     // ── 2. Filter legacy-format rows ──
-    // Rows written before orchestrator v3.2 carry pick_type 'HOME'
-    // or an empty line. They cannot be graded correctly.
+    // Rows written before orchestrator v3.2 carry pick_type
+    // 'HOME' or 'AWAY' or an empty line. They cannot be
+    // graded correctly.
     const gradable = [];
     let legacy = 0;
     for (const b of pending) {
@@ -262,23 +250,12 @@ const EDGE_SIM_GRADER = (() => {
 
   // ============================================================
   // ── LEGACY FORMAT ──
-  //
-  // Auto-placed bets before orchestrator v3.2 wrote:
-  //   pick_type: 'HOME'
-  //   line: ''
-  //   odds: the home moneyline for either side
-  //
-  // Number('') is 0, so an ATS grade would compute against a
-  // spread of zero. Those rows cannot be graded correctly and
-  // are skipped rather than corrupted.
   // ============================================================
 
   function isLegacyFormat(bet) {
     if (bet.pick_type === 'HOME' || bet.pick_type === 'AWAY') return true;
     if (bet.pick_type == null) return true;
 
-    // ATS / ML / TOTAL with an empty line, when the pick_type
-    // requires one, is also legacy.
     if (bet.pick_type === 'ATS' || bet.pick_type === 'TOTAL') {
       if (bet.line == null) return true;
       const lineStr = String(bet.line).trim();
@@ -357,14 +334,6 @@ const EDGE_SIM_GRADER = (() => {
 
   // ============================================================
   // ── GRADE ONE ──
-  //
-  // pick_label is the team name (physics builds it from
-  // side_label.team). To grade, match it against home or away,
-  // then apply the pick_type.
-  //
-  //   ATS: pick team's cover margin against the bet's line.
-  //   ML:  pick team won outright.
-  //   Total: over/under against combined score.
   // ============================================================
 
   function gradeOne(bet, score) {
