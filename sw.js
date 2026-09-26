@@ -1,24 +1,27 @@
 // ============================================================
-// EDGE — Service Worker v2
+// EDGE — Service Worker v3
 // App shell is precached so every page opens offline.
 // Network-first at runtime so a reload always gets fresh code.
 //
-// v2 — VERSION bumped. Any browser that has the old service
-// worker installed will not fetch new files until the cache
-// name changes, because the install handler only runs when the
-// script bytes differ and the activate handler keeps whichever
-// caches match the current names. Bumping VERSION creates new
-// cache names, so activate drops the old ones and the next load
-// pulls the fresh modules. Every code fix deployed before this
-// bump was sitting behind the old cache on any installed device.
+// v3 — VERSION bumped to edge-v3. Any browser still running
+// the edge-v2 cache keeps serving v2 modules until the cache
+// name changes, because the install handler only reruns when
+// the script bytes differ and activate only deletes caches
+// whose names do not match the current ones. Bumping the
+// version creates new cache names, so the next load drops
+// everything the app is currently holding.
 //
-// Every current engine is now precached. score-backfill,
-// situations-engine, situation-results, backfill and the
-// prop-trends file were all missing from v1, so a browser that
-// loaded a page using one of them offline would 404 the script
-// and the page would fail silently at the first call.
+// Three engine files were added since v2 and were not in the
+// precache list:
 //
-// The v3.1 fetch rules are retained:
+//   · game-id-map.js      (the id bridge — added in this round)
+//   · shadow-grader.js    (grades shadow_picks)
+//   · sim-grader.js       (grades sim bets)
+//
+// A page that loaded one of those offline would 404 the script
+// and fail silently at the first call. They are now precached.
+//
+// The v2/v3.1 fetch rules are retained:
 //   · Only scoreboard reads are cacheable on ESPN. Teams,
 //     rosters, summaries and injuries always go to the network
 //     because a cached empty array there poisons the next run.
@@ -26,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v1';
+const VERSION = 'edge-v3';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -75,6 +78,11 @@ const SHELL_FILES = [
   './situations-engine.js',
   './situation-results.js',
   './score-backfill.js',
+
+  // Id bridge and graders. Added in v3.
+  './game-id-map.js',
+  './shadow-grader.js',
+  './sim-grader.js',
 
   // Calibration
   './backfill.js',
