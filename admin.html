@@ -321,7 +321,7 @@
           <div class="pipeline-title">Backfill Scores</div>
         </div>
         <div class="pipeline-desc">
-          Fills home_score and away_score on historical_odds rows that lack them. Matches by ESPN event id, which is the row's own game_id, with a ±1 day fetch window to cover the UTC/Eastern date shift. Resumable.
+          Fills home_score and away_score on historical_odds rows that lack them. Matches by ESPN event id, which is the row's own game_id, with a ±1 day fetch window. Force mode re-fetches every game in the window and overwrites existing scores — use once after the id-matching fix ships, then run in normal mode.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runScoreBtn" onclick="runScoreBackfill()">▲ Backfill Scores</button>
@@ -910,14 +910,37 @@
       return result;
     }
 
+    // ============================================================
+    // BACKFILL SCORES
+    //
+    // v2.1 — asks about force mode. When the operator confirms,
+    // every game in the window is re-fetched and its score is
+    // overwritten. When they cancel, only rows with a null
+    // score are filled. Use force once after the id-matching
+    // fix ships, then run normally.
+    // ============================================================
+
     async function runScoreBackfill(silent = false) {
       const btn = document.getElementById('runScoreBtn');
       const logEl = document.getElementById('scoreLog');
       if (!window.EDGE_SCORE_BACKFILL) { showToast('Score backfill not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Backfilling scores…\n'; }
+
+      let force = false;
+      if (!silent) {
+        force = confirm(
+          'Force mode re-fetches every game in the window and overwrites any existing score.\n\n' +
+          'Use this ONCE after the ID-matching fix ships, to correct historical scores that ' +
+          'were written by the old name-and-date matcher.\n\n' +
+          'Run in force mode now?\n\n' +
+          'Cancel runs in normal mode — only empty rows are filled.'
+        );
+      }
+
+      if (!silent) { btn.disabled = true; logEl.textContent = force ? 'Force backfill — scores will be overwritten…\n' : 'Backfilling scores…\n'; }
 
       const result = await window.EDGE_SCORE_BACKFILL.buildAll({
         sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+        force,
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -928,13 +951,16 @@
         btn.disabled = false;
         let total = 0;
         let noMatch = 0;
+        let mismatch = 0;
         Object.values(result).forEach(r => {
           total += (r.updated || 0);
           noMatch += (r.no_match || 0);
+          mismatch += (r.name_mismatch || 0);
         });
-        logEl.textContent += `\n✓ ${total} games scored`;
+        logEl.textContent += `\n✓ ${total} games scored` + (force ? ' (force mode)' : '');
         if (noMatch) logEl.textContent += ` · ${noMatch} had no ESPN id`;
-        showToast(`✓ ${total} games scored`, '');
+        if (mismatch) logEl.textContent += ` · ${mismatch} skipped on name mismatch`;
+        showToast(`✓ ${total} games scored${force ? ' (force)' : ''}`, '');
       }
       return result;
     }
@@ -1183,14 +1209,6 @@
 
     // ============================================================
     // MANUAL RESULT ENTRY
-    //
-    // Grades a shadow_picks row that the automatic grader could
-    // not resolve, or that the operator wants to correct by hand.
-    // The old version wrote to a `picks` table that nothing else
-    // in the app reads — History, Performance and the learning
-    // loop all read shadow_picks. This form searches shadow_picks
-    // for candidates, lets the operator pick one, and patches the
-    // result directly.
     // ============================================================
 
     let selectedPick = null;
