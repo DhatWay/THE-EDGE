@@ -74,7 +74,6 @@
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px,11vw,68px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* SOURCE BAR */
     .source-bar {
       display: flex; align-items: center; justify-content: space-between;
       padding: 8px 20px; background: var(--bg2);
@@ -85,7 +84,6 @@
     }
     .source-bar .src-value { color: var(--gold); }
 
-    /* ALERT STRIP */
     .alert-strip { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
     .alert-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .alert-pill { display: flex; align-items: center; gap: 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; padding: 5px 11px; border: 1px solid; cursor: pointer; }
@@ -99,13 +97,11 @@
     .refresh-btn:hover { border-color: var(--gold); color: var(--gold); }
     .refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* FILTER TABS */
     .filter-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
     .filter-tabs::-webkit-scrollbar { display: none; }
     .ftab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 12px 16px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
     .ftab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
-    /* LINE CARDS */
     .lines-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
     .line-card { background: var(--surface); border: 1px solid var(--border); overflow: hidden; transition: border-color 0.2s; }
     .line-card:hover { border-color: var(--border-bright); }
@@ -155,7 +151,6 @@
     .lc-btn:hover { color: var(--gold); background: var(--gold-glow); }
     .lc-btn.gold { color: var(--gold); }
 
-    /* EMPTY */
     .empty-state { padding: 48px 20px; text-align: center; }
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
@@ -504,7 +499,7 @@
         };
       });
 
-      if (sbUrl && sbKey) saveSnapshots(allLines, sbUrl, sbKey, currentSource);
+      if (sbUrl && sbKey) await saveSnapshots(allLines, sbUrl, sbKey, currentSource);
 
       try {
         localStorage.setItem('edge_lines_cache', JSON.stringify({
@@ -552,10 +547,30 @@
     }
 
     // ── SAVE SNAPSHOTS ──
-    // Rows carry the source tag so the read path can filter.
+    //
+    // Rows carry the source tag so the read path can filter, and
+    // the actual kickoff time so game-id-map.js can match them
+    // to ESPN event ids.
+    //
+    // Two changes from the previous version:
+    //
+    //   1. Delta check. Before writing, we fetch the latest
+    //      snapshot for each (game, source) pair and only insert
+    //      a new row when spread, total or ml actually moved.
+    //      The old code inserted one row per game on every
+    //      refresh, so leaving the page open all afternoon
+    //      wrote thousands of identical snapshots and burned
+    //      Odds API credits on the refresh itself.
+    //
+    //   2. commence_time is written alongside each row. Without
+    //      it, game-id-map.js fell back to created_at, which is
+    //      the moment the snapshot was taken — usually days
+    //      before kickoff — and never matched ESPN's game_date
+    //      inside the matching window.
     async function saveSnapshots(lines, url, key, source) {
       if (!lines.length) return;
-      const rows = lines
+
+      const payload = lines
         .filter(l => l.currentSpread !== null || l.currentTotal !== null || l.currentML !== null)
         .map(l => ({
           game_id: l.id,
@@ -566,8 +581,39 @@
           total: l.currentTotal,
           ml: l.currentML,
           source,
+          commence_time: l.time || null,
         }));
+      if (!payload.length) return;
+
+      // Delta check. Fetch the latest snapshot already on file
+      // for each game at this source, then keep only rows whose
+      // price actually differs.
+      let latest = {};
+      try {
+        const inList = payload.map(r => `"${r.game_id}"`).join(',');
+        const res = await fetch(
+          `${url}/rest/v1/line_history?select=game_id,spread,total,ml,created_at` +
+          `&game_id=in.(${inList})&source=eq.${encodeURIComponent(source)}` +
+          `&order=created_at.desc`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (res.ok) {
+          const rows = await res.json();
+          rows.forEach(r => { if (!latest[r.game_id]) latest[r.game_id] = r; });
+        }
+      } catch (e) { logEdgeError('lines.saveSnapshots.prefetch', e); }
+
+      const rows = payload.filter(r => {
+        const prev = latest[r.game_id];
+        if (!prev) return true;
+        if (prev.spread !== r.spread) return true;
+        if (prev.total !== r.total) return true;
+        if (prev.ml !== r.ml) return true;
+        return false;
+      });
+
       if (!rows.length) return;
+
       try {
         await fetch(`${url}/rest/v1/line_history`, {
           method: 'POST',
