@@ -1,70 +1,60 @@
 // ============================================================
-// EDGE — ROSTER ENRICHMENT v3.3
+// EDGE — ROSTER ENRICHMENT v3.4
 //
 // Reads production from player_game_stats and refines each
 // player's rating from the roster baseline to a 40-95 scale.
 //
-// v3.3 changes:
+// v3.4 changes:
 //
-//   · Per-game counting is correct. The v3.2 aggregator
-//     incremented `games` once per row it read from
-//     player_game_stats. But a player has one row per stat
-//     category per game — a quarterback appears in a passing
-//     row, a rushing row, and a receiving row for the same
-//     game. The loader collapsed them into one record per
-//     (player, game), so a QB with three stat categories in
-//     twelve games was counted as thirty-six games. Every
-//     average divided by a number three times larger than
-//     reality.
+//   · NFL defensive metrics are gone. The v3.3 config asked
+//     for tackles, sacks, interceptions, passes_defensed and
+//     forced_fumbles on NFL defensive groups. ESPN's box score
+//     summary does not carry those fields, so the columns do
+//     not exist on player_game_stats and the enrichment query
+//     failed with a 400 for the whole sport — every NFL
+//     player came back unreached. The five metrics are
+//     removed. NFL defensive players now fall through to the
+//     no_metrics counter, which is the honest report: we do
+//     not have defensive production data, and their rating
+//     stays at the roster baseline.
 //
-//     The new aggregator groups by (player_id, game_id) first,
-//     then takes one value per metric per game, then rolls up.
-//     `games` is the number of distinct game_ids.
+//     Adding defensive ratings later is a separate job —
+//     either scraping the ESPN tackle feed, or an external
+//     source — and should not be faked by leaving a metric in
+//     the config that cannot fire.
 //
-//   · Only the current season is loaded. The v3.2 code read
-//     every row in player_game_stats across every season on
-//     file, so a four-season NFL backfill had ratings built
-//     from old production as if it were current. Now the load
-//     filters by season label; players with no current-season
-//     rows fall back to their previous rating and are reported
-//     as `no_current_stats`.
+//   · position_group is read from the roster row with an
+//     explicit fallback. If the column is missing on a stale
+//     roster row, the player is skipped from enrichment
+//     rather than dropped into the sport-wide distribution
+//     bucket as if they had no position. This is rare but
+//     shows up after a schema change.
 //
-//   · Per-position-group z-scores are real. The header said
-//     "z-score per position group" but the v3.2 code built one
-//     mean and standard deviation across every position, so a
-//     guard was compared against a quarterback and an offensive
-//     lineman was compared against a skill player. Every metric
-//     is now normalised within its own (sport, position_group)
-//     bucket. A group with fewer than MIN_GROUP_SIZE samples
-//     falls back to the sport-wide distribution for that metric.
+//   · The write path no longer sends an `enriched` flag.
+//     Preservation is decided by the roster engine on the
+//     next rebuild, based on whether position_group and
+//     is_starter still match. Nothing here needs to say the
+//     rating came from enrichment — the shape comparison
+//     handles it.
 //
-//   · Defensive metrics for NFL and NCAAF. The v3.2 code had
-//     no way to score a defensive lineman, linebacker or
-//     defensive back — their group carried no metrics, so
-//     `weightedZ` returned null and they were left at their
-//     roster baseline forever. Tackles, sacks, interceptions
-//     and passes defensed are the standard ESPN defensive
-//     columns; when present in player_game_stats they drive
-//     defensive rating. When absent, defensive players are
-//     flagged `no_metrics` so the surface can tell the
-//     difference between "rated low" and "never rated."
+//   · Defensive players on every sport are counted in a new
+//     `no_metrics` bucket rather than silently skipped, so
+//     the run summary tells the truth about who got rated.
 //
-//   · Enrichment respects existing ratings. When a player
-//     already has a rating from a prior enrichment run and the
-//     new data would not move it, the write is skipped. That
-//     keeps the roster table's `updated_at` meaningful as a
-//     "last enriched" timestamp rather than rewriting every
-//     row on every run.
-//
-// The rating scale, contribution function, and update path are
-// unchanged. The roster engine's v1.3 rebuild now preserves
-// enriched ratings, so a full rebuild followed by an enrich
-// does not lose the refinement.
+// v3.3 changes (retained):
+//   · Per-game counting is correct. Rows are grouped by
+//     (player_id, game_id) before rolling up, so a QB who
+//     appears in a passing row and a rushing row for the
+//     same game is not counted twice.
+//   · Only the current season is loaded.
+//   · Per-position-group z-scores are real. Metrics normalise
+//     within their own (sport, position_group) bucket, with
+//     a sport-wide fallback for thin groups.
 // ============================================================
 
 const EDGE_ROSTER_ENRICH = (() => {
 
-  const BUILD = 'enrich-20260925-01';
+  const BUILD = 'enrich-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -89,10 +79,18 @@ const EDGE_ROSTER_ENRICH = (() => {
   //
   // `inverted: true` means a lower value is better — earned
   // runs, goals against.
+  //
+  // IMPORTANT: every column listed here must exist on
+  // player_game_stats and be populated by box-score-fetcher.js.
+  // A metric that names a nonexistent column makes the whole
+  // sport's read fail with HTTP 400, not just that one metric.
   // ============================================================
 
   const NFL_METRICS = [
-    // Offensive skill
+    // Offensive skill only. Defensive metrics are intentionally
+    // absent — the box score does not carry them and the old
+    // config's five defensive columns caused the entire NFL
+    // enrichment read to fail.
     { col: 'passing_yards',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
     { col: 'passing_tds',      weight: 1.0, groups: ['OFFENSE_SKILL'], agg: 'sum' },
     { col: 'rushing_yards',    weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
@@ -100,14 +98,6 @@ const EDGE_ROSTER_ENRICH = (() => {
     { col: 'receiving_yards',  weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
     { col: 'receiving_tds',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
     { col: 'receptions',       weight: 0.5, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-
-    // Defense — NFL defenders were never scored under v3.2
-    // because there were no metrics for their groups.
-    { col: 'tackles',          weight: 0.6, groups: ['DEFENSE_FRONT','DEFENSE_EDGE','DEFENSE_MID','DEFENSE_SECONDARY'], agg: 'sum' },
-    { col: 'sacks',            weight: 1.0, groups: ['DEFENSE_FRONT','DEFENSE_EDGE','DEFENSE_MID'], agg: 'sum' },
-    { col: 'interceptions',    weight: 1.0, groups: ['DEFENSE_SECONDARY','DEFENSE_MID'], agg: 'sum' },
-    { col: 'passes_defensed',  weight: 0.7, groups: ['DEFENSE_SECONDARY'], agg: 'sum' },
-    { col: 'forced_fumbles',   weight: 0.8, groups: ['DEFENSE_FRONT','DEFENSE_EDGE','DEFENSE_MID'], agg: 'sum' },
   ];
 
   const NBA_METRICS = [
@@ -261,9 +251,6 @@ const EDGE_ROSTER_ENRICH = (() => {
     }
 
     // ── 3. Normalise per position group ──
-    // Build normalisers per (sport, position_group). A group
-    // with too few samples falls back to the sport-wide
-    // distribution.
     const norms = buildNormalisers(metrics, agg, players);
 
     // ── 4. Score ──
@@ -272,14 +259,17 @@ const EDGE_ROSTER_ENRICH = (() => {
     let noStats = 0;
     let noCurrentStats = 0;
     let noMetrics = 0;
+    let noGroup = 0;
 
     players.forEach(p => {
+      // A player with no position_group cannot be scored
+      // against a group distribution, and dropping them into
+      // the sport-wide bucket would mix a lineman's stats into
+      // a quarterback's. Skip and report.
+      if (!p.position_group) { noGroup++; return; }
+
       const stats = agg[String(p.player_id)];
       if (!stats) {
-        // Distinguish "no current-season data" from "no data at
-        // all". A player on the roster who has never appeared in
-        // player_game_stats is different from one who played last
-        // season but not this one.
         noCurrentStats++;
         return;
       }
@@ -287,10 +277,11 @@ const EDGE_ROSTER_ENRICH = (() => {
 
       const z = weightedZ(stats, metrics, p.position_group, norms, sport);
       if (z === null) {
-        // All metrics gated out or missing. A defensive lineman
-        // whose ESPN feed does not carry sacks lands here, and
-        // should be visible as "no metrics" not silently left
-        // at the roster baseline.
+        // All metrics gated out or missing. This is the
+        // expected path for every NFL defensive player — the
+        // box score does not carry the fields needed to rate
+        // them, so their rating stays at the roster baseline.
+        // Reported honestly, not silently skipped.
         noMetrics++;
         return;
       }
@@ -319,7 +310,8 @@ const EDGE_ROSTER_ENRICH = (() => {
     });
 
     log(`  ${updates.length} players to write`);
-    log(`  ${noCurrentStats} no current-season rows · ${noStats} below ${MIN_GAMES} games · ${noMetrics} no applicable metrics`);
+    log(`  ${noCurrentStats} no current-season rows · ${noStats} below ${MIN_GAMES} games · ` +
+        `${noMetrics} no applicable metrics · ${noGroup} missing position group`);
 
     if (!updates.length) {
       return {
@@ -328,6 +320,7 @@ const EDGE_ROSTER_ENRICH = (() => {
         no_stats: noStats,
         no_current_stats: noCurrentStats,
         no_metrics: noMetrics,
+        no_group: noGroup,
         stats_available: statCount,
         note: 'no players moved enough to warrant a write',
       };
@@ -362,6 +355,7 @@ const EDGE_ROSTER_ENRICH = (() => {
       no_stats: noStats,
       no_current_stats: noCurrentStats,
       no_metrics: noMetrics,
+      no_group: noGroup,
       stats_available: statCount,
     };
   }
@@ -369,7 +363,7 @@ const EDGE_ROSTER_ENRICH = (() => {
   function emptyResult(note) {
     return {
       enriched: 0, unmatched: 0, no_stats: 0,
-      no_current_stats: 0, no_metrics: 0,
+      no_current_stats: 0, no_metrics: 0, no_group: 0,
       note,
     };
   }
@@ -401,17 +395,11 @@ const EDGE_ROSTER_ENRICH = (() => {
   // ============================================================
   // ── AGGREGATE ──
   //
-  // The v3.2 aggregator treated each row in player_game_stats as
-  // a separate game. But a player has one row per stat category
-  // per game — a QB appears in passing, rushing and receiving
-  // rows for the same game. So the same game was counted three
-  // times.
-  //
-  // This aggregator groups by (player_id, game_id) first. For
-  // each game, it takes the value from whichever row carries
-  // it — a metric column is null in rows for other categories.
-  // Once the per-game set is built, it rolls up to one record
-  // per player.
+  // Groups by (player_id, game_id) first. For each game, it
+  // takes the value from whichever row carries it — a metric
+  // column is null in rows for other categories. Once the
+  // per-game set is built, it rolls up to one record per
+  // player.
   // ============================================================
 
   async function loadAggregates(url, key, sport, season, metrics) {
@@ -419,8 +407,6 @@ const EDGE_ROSTER_ENRICH = (() => {
     metrics.forEach(m => cols.add(m.col));
     const colList = Array.from(cols).join(',');
 
-    // Read all rows for the season. The season filter uses the
-    // sport-appropriate label.
     const rows = [];
     const pageSize = 1000;
     for (let offset = 0; offset < 500000; offset += pageSize) {
@@ -430,7 +416,10 @@ const EDGE_ROSTER_ENRICH = (() => {
           `&select=${colList}&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
-        if (!res.ok) break;
+        if (!res.ok) {
+          logEdgeError('enrich.loadAggregates.' + sport, new Error('HTTP ' + res.status));
+          break;
+        }
         const batch = await res.json();
         rows.push(...batch);
         if (batch.length < pageSize) break;
@@ -441,9 +430,7 @@ const EDGE_ROSTER_ENRICH = (() => {
     }
 
     // ── Per (player, game) roll-up ──
-    // For each metric, the value for that game is whatever
-    // non-null appears in the row for that game.
-    const perGame = new Map();   // key: player_id|game_id
+    const perGame = new Map();
     rows.forEach(r => {
       const pid = String(r.player_id);
       const gid = r.game_id;
@@ -463,7 +450,7 @@ const EDGE_ROSTER_ENRICH = (() => {
     });
 
     // ── Roll up per player ──
-    const byPlayer = new Map();  // player_id → { games, sums, counts }
+    const byPlayer = new Map();
     perGame.forEach(entry => {
       const pid = entry.player_id;
       if (!byPlayer.has(pid)) {
@@ -500,25 +487,16 @@ const EDGE_ROSTER_ENRICH = (() => {
 
   // ============================================================
   // ── NORMALISATION ──
-  //
-  // Norms are built per (sport, position_group, metric). A
-  // group with fewer than MIN_GROUP_SIZE samples falls back to
-  // the sport-wide distribution for that metric, so a sport's
-  // first season with a thin group still produces a defensible
-  // normaliser.
   // ============================================================
 
   function buildNormalisers(metrics, agg, players) {
-    // Index players by id so we can attach position_group to
-    // each player's aggregate.
     const groupByPlayer = new Map();
     players.forEach(p => {
       groupByPlayer.set(String(p.player_id), p.position_group || 'UNKNOWN');
     });
 
-    // Collect values per (group, metric) and per (sport, metric).
-    const byGroup = {};   // group → { metric: [values] }
-    const bySport = {};   // metric → [values]
+    const byGroup = {};
+    const bySport = {};
 
     Object.entries(agg).forEach(([pid, stats]) => {
       const group = groupByPlayer.get(pid) || 'UNKNOWN';
@@ -535,7 +513,6 @@ const EDGE_ROSTER_ENRICH = (() => {
       });
     });
 
-    // Final norms: { group: { metric: { mean, sd } } }
     const norms = {};
     Object.entries(byGroup).forEach(([group, perMetric]) => {
       norms[group] = {};
@@ -543,7 +520,6 @@ const EDGE_ROSTER_ENRICH = (() => {
         if (values.length >= MIN_GROUP_SIZE) {
           norms[group][metric] = statsFor(values);
         } else if (bySport[metric] && bySport[metric].length >= MIN_GROUP_SIZE) {
-          // Fall back to sport-wide.
           norms[group][metric] = statsFor(bySport[metric]);
         } else {
           norms[group][metric] = null;
@@ -551,8 +527,6 @@ const EDGE_ROSTER_ENRICH = (() => {
       });
     });
 
-    // Store the sport-wide norms under a reserved key so a
-    // group we've never seen before still gets a distribution.
     norms._sport = {};
     Object.entries(bySport).forEach(([metric, values]) => {
       norms._sport[metric] = values.length >= MIN_GROUP_SIZE ? statsFor(values) : null;
@@ -572,11 +546,6 @@ const EDGE_ROSTER_ENRICH = (() => {
 
   // ============================================================
   // ── WEIGHTED Z ──
-  //
-  // A metric applies to a player if its `groups` list is empty
-  // (applies to all) or contains the player's group. Norms are
-  // looked up first in the player's own group, then in the
-  // sport-wide fallback.
   // ============================================================
 
   function weightedZ(stats, metrics, playerGroup, norms, sport) {
@@ -621,8 +590,8 @@ const EDGE_ROSTER_ENRICH = (() => {
   // ============================================================
   // ── SEASON LABEL ──
   //
-  // Matches ats-tracker v3.0, power-engine v4.3, trends-engine
-  // v2.0, prop-trends-engine v1.2 and box-score-fetcher v1.3.
+  // Matches ats-tracker, power-engine, trends-engine,
+  // prop-trends-engine and box-score-fetcher.
   // ============================================================
 
   function seasonLabel(sport, date) {
