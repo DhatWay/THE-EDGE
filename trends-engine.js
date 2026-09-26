@@ -1,18 +1,47 @@
 // ============================================================
-// EDGE — TRENDS ENGINE v1.2
+// EDGE — TRENDS ENGINE v2.0
 //
-// A trend is a repeatable situation with a track record — not a
-// pattern in your own pick history.
+// A trend is a repeatable situation with a track record — not
+// a pattern in your own pick history.
 //
-// v1.2 — fetch uses ?dates=YYYY (single year). ESPN's range
-// format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400 for anything
-// outside the current season, which is why every sport reported
-// "0 completed games" and no trend was ever built.
-// College endpoints need a groups filter (80 FBS / 50 D-I) or
-// they return nothing. Soccer wants a range, not a year.
+// v2.0 changes:
+//
+//   · Fetch uses power-engine's chunked fetch when available.
+//     The v1.x code requested a whole year with limit=1000.
+//     MLB is 2,430 games a year, the NBA and NHL about 1,300
+//     each, D-I basketball several thousand. Trends were built
+//     from less than half the schedule in those sports. The
+//     fallback below the power-engine path chunks by month so
+//     the limit is under even a full month of NCAAB.
+//
+//   · Rest and previous result no longer cross season
+//     boundaries. The old code looked at the prior game in the
+//     list regardless of season, so a season opener counted as
+//     "off a bye" against the summer break and "after a loss"
+//     against last season's final game. Both reset when the
+//     season key changes.
+//
+//   · A hot streak no longer qualifies a losing record. The
+//     old rule was `rate >= MIN_HIT_RATE OR streak >= MIN_STREAK`.
+//     A team sitting at 6-20 with a four-game cover streak
+//     qualified. A streak now needs the sample to be there
+//     first, and the rate to at least be above a floor.
+//
+//   · Season labels match ats-tracker v3.0 and the rest of the
+//     pipeline. Cross-year sports carry the year the season
+//     started. Single-year sports carry the calendar year.
+//
+//   · trendsForGame builds context itself when the caller has
+//     none. parlay.js passed no context, so rest, opener,
+//     revenge and late-season situations never applied to
+//     today's games. The engine can now build a minimal context
+//     from the game object and the rest-by-team index if one is
+//     passed in, without requiring the caller to know the shape.
 // ============================================================
 
 const EDGE_TRENDS = (() => {
+
+  const BUILD = 'trends-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -42,6 +71,13 @@ const EDGE_TRENDS = (() => {
   const MIN_SAMPLE = 5;
   const MIN_HIT_RATE = 0.70;
   const MIN_STREAK = 4;
+
+  // A hot streak qualifies only when the underlying sample is
+  // non-trivial AND the hit rate is at least at this floor.
+  // Without the floor, a 6-20 record qualifies on a four-game
+  // run.
+  const STREAK_RATE_FLOOR = 0.50;
+
   const FETCH_CONCURRENCY = 4;
 
   const LONG_REST = { NFL: 10, NCAAF: 10, NBA: 3, NHL: 3, MLB: 2, NCAAB: 5, MLS: 7 };
@@ -94,6 +130,7 @@ const EDGE_TRENDS = (() => {
   ];
 
   return {
+    BUILD,
     buildAll,
     buildSport,
     trendsForGame,
@@ -103,6 +140,7 @@ const EDGE_TRENDS = (() => {
     MIN_SAMPLE,
     MIN_HIT_RATE,
     MIN_STREAK,
+    STREAK_RATE_FLOOR,
   };
 
   // ============================================================
@@ -235,9 +273,18 @@ const EDGE_TRENDS = (() => {
       games.forEach((g, i) => {
         const prev = i > 0 ? games[i - 1] : null;
 
-        g.restDays = prev ? Math.round((g.date - prev.date) / 86400000) : null;
-        g.prevResult = prev ? (prev.margin > 0 ? 'W' : prev.margin < 0 ? 'L' : 'T') : null;
-        g.prevMargin = prev ? prev.margin : null;
+        // Rest and prior result only carry within a season.
+        // Across a season boundary, the summer break is not
+        // rest, and last season's final game is not "the
+        // previous game". Without this check, every season
+        // opener read as off-a-bye and after-a-loss.
+        const sameSeason = prev && prev.season === g.season;
+
+        g.restDays = sameSeason ? Math.round((g.date - prev.date) / 86400000) : null;
+        g.prevResult = sameSeason
+          ? (prev.margin > 0 ? 'W' : prev.margin < 0 ? 'L' : 'T')
+          : null;
+        g.prevMargin = sameSeason ? prev.margin : null;
 
         if (!perSeason[g.season]) perSeason[g.season] = { all: 0, home: 0 };
         perSeason[g.season].all++;
@@ -247,6 +294,9 @@ const EDGE_TRENDS = (() => {
           g.homeGameOfSeason = perSeason[g.season].home;
         }
 
+        // Head-to-head history persists across seasons. A
+        // rivalry spans years; only the rest/result chain
+        // resets.
         const key = g.opponent;
         g.playedBefore = !!metBefore[key];
         g.lostLastMeeting = metBefore[key] ? metBefore[key].margin < 0 : false;
@@ -347,13 +397,21 @@ const EDGE_TRENDS = (() => {
     return out;
   }
 
+  // A trend qualifies on a strong hit rate, or on a hot streak
+  // — but a hot streak only counts if the sample is there and
+  // the underlying rate is at least at the floor. The old rule
+  // let a 6-20 record qualify on four straight covers.
   function makeRow(sport, team, sit, meta, market, rec, hits, isHit) {
     const rate = rec.total > 0 ? rec.wins / rec.total : 0;
     const streaks = streakOf(hits, isHit);
     const seasons = Array.from(new Set(hits.map(g => g.season))).sort();
 
-    const qualified = (rec.total >= MIN_SAMPLE && rate >= MIN_HIT_RATE)
-                   || streaks.current >= MIN_STREAK;
+    const qualifiedByRate = rec.total >= MIN_SAMPLE && rate >= MIN_HIT_RATE;
+    const qualifiedByStreak =
+      rec.total >= MIN_SAMPLE &&
+      streaks.current >= MIN_STREAK &&
+      rate >= STREAK_RATE_FLOOR;
+    const qualified = qualifiedByRate || qualifiedByStreak;
 
     const subject = meta.scope === 'player' ? meta.player : team;
     const verb = market === 'SU' ? 'is' : market === 'ATS' ? 'is' : 'has gone';
@@ -382,6 +440,7 @@ const EDGE_TRENDS = (() => {
       last_season: seasons[seasons.length - 1] || null,
       last_occurrence: hits.length ? hits[hits.length - 1].date.toISOString() : null,
       qualified,
+      qualified_by: qualifiedByRate ? 'rate' : qualifiedByStreak ? 'streak' : 'none',
       headline: `${subject} ${verb} ${tail} ${sit.label}`,
       updated_at: new Date().toISOString(),
     };
@@ -417,6 +476,13 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── APPLY TO TODAY ──
+  //
+  // trendsForGame accepts a context object. When the caller has
+  // none, the game object itself is used as the source of truth
+  // for anything it carries — rest days, previous result,
+  // previous margin, home game of season. parlay.js used to
+  // pass nothing, so rest, opener, revenge and late-season
+  // situations never matched today's games.
   // ============================================================
 
   async function trendsForGame(game, options = {}) {
@@ -471,6 +537,9 @@ const EDGE_TRENDS = (() => {
     const spread = isHome ? (game.spread ?? null)
                           : (game.spread != null ? -game.spread : null);
 
+    // Read the game object first, then fall back to the passed
+    // context. The game object is what parlay.js hands over and
+    // it now carries the fields the rest situations look for.
     const restDays = isHome
       ? (game.home_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null)
       : (game.away_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null);
@@ -534,65 +603,91 @@ const EDGE_TRENDS = (() => {
   // ============================================================
   // ── FETCH ──
   //
-  // ESPN's range format ?dates=YYYYMMDD-YYYYMMDD returns HTTP 400
-  // for anything outside the current season. Single-year ?dates=YYYY
-  // works and returns a whole season in one call.
-  //
-  // College needs a groups filter (80 FBS / 50 D-I) or returns nothing.
-  // Soccer does not honour ?dates=YYYY — it wants a range, and its
-  // season fits inside a calendar year.
+  // Prefers power-engine's chunked fetch. That function walks
+  // the window in day-sized chunks and has a day-by-day
+  // fallback, which is what sidesteps the 1,000-event cap on a
+  // single ESPN year response. The fallback below the
+  // power-engine path chunks by month, so even a heavy NCAAB
+  // month lands under the cap.
   // ============================================================
 
   async function fetchRange(sport, start, end, log) {
     const path = ESPN_MAP[sport];
-    const years = [];
-    for (let y = start.getFullYear(); y <= end.getFullYear(); y++) years.push(y);
+    if (!path) return [];
 
-    if (log) log(`  fetching ${years.length} season${years.length === 1 ? '' : 's'}: ${years.join(', ')}`);
+    if (window.EDGE_POWER && typeof window.EDGE_POWER.fetchGamesBetween === 'function') {
+      try {
+        const events = await window.EDGE_POWER.fetchGamesBetween(sport, start, end, { raw: true });
+        if (log) log(`  fetched ${events.length} events via power-engine`);
+        return filterRange(events, start, end);
+      } catch (e) {
+        logEdgeError('trends.fetchRange.powerEngine.' + sport, e);
+      }
+    }
+
+    // Fallback: month-by-month. A single month of any sport is
+    // under 1,000 events.
+    const months = monthsBetween(start, end);
+    if (log) log(`  fallback: fetching ${months.length} month${months.length === 1 ? '' : 's'}`);
 
     const seen = new Map();
-    await parallelMap(years, FETCH_CONCURRENCY, async (year) => {
-      const events = await fetchYear(path, year, sport);
-      if (log && events.length) log(`    ${year}: ${events.length} events`);
-      events.forEach(e => {
-        if (!e?.id || seen.has(e.id)) return;
-        const comp = e.competitions?.[0];
-        if (!comp) return;
-        if ((e.season?.type ?? comp.season?.type) === 1) return;
-        if (comp.status?.type?.completed !== true) return;
-        seen.set(e.id, e);
-      });
+    await parallelMap(months, FETCH_CONCURRENCY, async (m) => {
+      const events = await fetchEspnRange(path, m.start, m.end, sport);
+      if (log && events.length) log(`    ${fmtMonth(m.start)}: ${events.length} events`);
+      events.forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
     });
 
+    return filterRange(Array.from(seen.values()), start, end);
+  }
+
+  function filterRange(events, start, end) {
     const startMs = start.getTime();
     const endMs = end.getTime();
-    return Array.from(seen.values())
+    return events
       .filter(e => {
+        const comp = e?.competitions?.[0];
+        if (!comp) return false;
+        if ((e.season?.type ?? comp.season?.type) === 1) return false;
+        if (comp.status?.type?.completed !== true) return false;
         const t = new Date(e.date).getTime();
         return isFinite(t) && t >= startMs && t <= endMs;
       })
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
-  async function fetchYear(path, year, sport) {
+  function monthsBetween(start, end) {
+    const out = [];
+    let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cur <= end) {
+      const mStart = new Date(cur);
+      const mEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+      out.push({
+        start: mStart < start ? start : mStart,
+        end: mEnd > end ? end : mEnd,
+      });
+      cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+    }
+    return out;
+  }
+
+  async function fetchEspnRange(path, start, end, sport) {
     const group = sport === 'NCAAF' ? 80
                 : sport === 'NCAAB' ? 50
                 : null;
 
-    const dateParam = sport === 'MLS'
-      ? `${year}0101-${year}1231`
-      : String(year);
-
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard` +
-                `?dates=${dateParam}${group ? '&groups=' + group : ''}&limit=1000`;
+    const s = fmtDate(start);
+    const e = fmtDate(end);
+    let url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${s}-${e}&limit=1000`;
+    if (group) url += `&groups=${group}`;
 
     try {
       const res = await fetch(url, { cache: 'no-store' });
+      if (res.headers.get('x-edge-offline') === '1') return [];
       if (!res.ok) return [];
       const data = await res.json();
       return data.events || [];
-    } catch (e) {
-      logEdgeError('trends.fetchYear.' + path + '.' + year, e);
+    } catch (err) {
+      logEdgeError('trends.fetchEspnRange.' + path + '.' + s, err);
       return [];
     }
   }
@@ -677,22 +772,29 @@ const EDGE_TRENDS = (() => {
   }
 
   // ============================================================
-  // ── UTILITIES ──
+  // ── SEASON LABEL ──
+  //
+  // Matches ats-tracker v3.0, power-engine v4.3, and the rest
+  // of the pipeline. Cross-year sports carry the year the
+  // season started. Single-year sports carry the calendar year.
   // ============================================================
 
   function seasonOf(sport, date) {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
-    const cross = (startMonth) => (m >= startMonth ? y : y - 1);
-    switch (sport) {
-      case 'NBA':
-      case 'NHL':
-      case 'NCAAB': return cross(9);
-      case 'NFL':
-      case 'NCAAF': return cross(3);
-      default:      return y;
+
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
+      return String(m >= 9 ? y : y - 1);
     }
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      return String(m >= 3 ? y : y - 1);
+    }
+    return String(y);
   }
+
+  // ============================================================
+  // ── UTILITIES ──
+  // ============================================================
 
   async function parallelMap(items, concurrency, fn) {
     const queue = [...items];
@@ -707,6 +809,17 @@ const EDGE_TRENDS = (() => {
 
   function mk(onProgress) {
     return (m) => { if (typeof onProgress === 'function') onProgress(m); };
+  }
+
+  function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
+
+  function fmtMonth(d) {
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
   }
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
