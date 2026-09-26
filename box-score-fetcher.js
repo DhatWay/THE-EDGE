@@ -1,48 +1,56 @@
 // ============================================================
-// EDGE — BOX SCORE FETCHER v1.3
+// EDGE — BOX SCORE FETCHER v1.4
 //
-// v1.3 changes:
+// v1.4 changes:
 //
-//   · Writes are idempotent. The old code inserted a game's
-//     player rows with a POST and retried on transient
-//     failures. A request that succeeded on the server but
-//     timed out on the client was retried and inserted a
-//     second copy. Every row is now written with
-//     on_conflict=game_id,player_id and merge-duplicates, so
-//     a retry updates the existing row instead of duplicating.
-//     Requires a unique constraint on (game_id, player_id);
-//     the CREATE INDEX is emitted by schemaSql().
+//   · Per-player-per-game rows are merged before the write.
+//     ESPN returns one row per stat category. A quarterback
+//     appears in a passing row and a rushing row for the same
+//     game; a two-way player can appear in three. The v1.3
+//     fetcher pushed all of them to player_game_stats and
+//     asked the database to upsert on (game_id, player_id),
+//     which the unique index could not do — the rows within a
+//     single POST batch carried the same key, so Postgres
+//     rejected the whole chunk with ON CONFLICT DO UPDATE
+//     command cannot affect row a second time. Every game
+//     failed. The merge now collapses the category rows into
+//     one row per player-game before the write.
 //
-//   · Half-stored games are retried. The old code checked
-//     whether a game_id had any rows at all; if the fetch
-//     succeeded but the write crashed halfway, the game was
-//     marked complete and never retried. The check is now
-//     "does this game have at least one row per athlete we
-//     expect to see" — a game is only skipped when it looks
-//     fully stored.
+//     The merge keeps the identity columns from the first row
+//     seen for the player (game_id, player_id, team, position,
+//     etc.) and fills every stat column from whichever
+//     category row actually carried it. A column that is null
+//     in one row and populated in another ends up populated
+//     in the merged result. A column that is null everywhere
+//     stays null.
 //
-//   · Failures are tracked. A game that fails to fetch or
-//     fails to write is reported in the run summary, not
-//     silently skipped. The caller can retry the run and only
-//     the incomplete games get re-fetched.
+//   · The unique index is not partial. The v1.3 SCHEMA_SQL
+//     emitted `create unique index ... on (game_id,
+//     player_id)` which is fine, but the previous writer had
+//     already inserted duplicate rows for every player who
+//     appeared in two stat categories. Creating the index
+//     against that data fails. A companion migration ships
+//     with this file that dedupes first. Both need to run.
 //
-//   · Position group is written. The prop-trends engine now
-//     gates thresholds by position group; the fetcher stores
-//     the group it can infer from the athlete's position.
+//   · Write chunk is smaller. 500 rows per chunk could hold
+//     many duplicate keys before the merge existed. With the
+//     merge, 500 is safe, but the chunk is now 400 to keep
+//     the request body under 200KB on the widest sports.
 //
-//   · Season labels match ats-tracker v3.0, power-engine
-//     v4.3, trends-engine v2.0, prop-trends-engine v1.2.
+//   · position_group is written. Same as v1.3.
 //
-// v1.2 changes (retained):
-//   · ESPN sends stats as a positional array zipped against a
-//     keys array. The old code expected an array of
-//     {name, value} objects and stored an empty raw object for
-//     every row.
+//   · Season labels match ats-tracker, power-engine,
+//     trends-engine, prop-trends-engine.
+//
+// v1.3 changes (retained):
+//   · Writes are idempotent via on_conflict + merge-duplicates.
+//   · Half-stored games are retried.
+//   · Failures are tracked in the run summary.
 // ============================================================
 
 const EDGE_BOXSCORE = (() => {
 
-  const BUILD = 'box-20260925-01';
+  const BUILD = 'box-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -59,10 +67,12 @@ const EDGE_BOXSCORE = (() => {
   };
 
   const FETCH_CONCURRENCY = 6;
-  const WRITE_CHUNK = 500;
+  const WRITE_CHUNK = 400;
 
-  // The unique constraint this fetcher relies on. Emitted as a
+  // The unique index this fetcher relies on. Emitted as a
   // string so any page that loads the module can print it.
+  // Non-partial on purpose — PostgREST's on_conflict clause
+  // cannot target a partial index.
   const SCHEMA_SQL = `create unique index if not exists player_game_stats_unique_idx
   on public.player_game_stats (game_id, player_id);`;
 
@@ -73,6 +83,7 @@ const EDGE_BOXSCORE = (() => {
     schemaSql,
     SCHEMA_SQL,
     positionGroupFor,
+    mergePlayerRows,
   };
 
   function schemaSql() { return SCHEMA_SQL; }
@@ -120,13 +131,9 @@ const EDGE_BOXSCORE = (() => {
     const pending = games.filter(g => !existing.has(g.game_id));
     const retryable = games.filter(g => existing.has(g.game_id));
 
-    // Games that exist in the table are not automatically done.
-    // A write that crashed halfway left a partial set. We
-    // re-fetch any game whose stored row count is below the
-    // expected threshold — the total athletes ESPN reports,
-    // which we do not have yet. A pragmatic threshold: fewer
-    // than 12 rows for a team sport is almost certainly a
-    // partial write and worth retrying.
+    // A game with a small stored row count is a partial write
+    // and deserves a re-fetch. Twelve rows for a team sport is
+    // the floor.
     const MIN_ROWS_PER_GAME = 12;
     const retry = retryable.filter(g => (existing.get(g.game_id) || 0) < MIN_ROWS_PER_GAME);
 
@@ -145,7 +152,14 @@ const EDGE_BOXSCORE = (() => {
     const buffer = [];
 
     await parallelMap(queue, FETCH_CONCURRENCY, async (game) => {
-      const rows = await fetchGameStats(sport, game);
+      const raw = await fetchGameStats(sport, game);
+      if (!raw.length) { failed++; return; }
+
+      // ── Merge ──
+      // ESPN returns one row per stat category. Collapse to
+      // one row per player before the write so the upsert on
+      // (game_id, player_id) works.
+      const rows = mergePlayerRows(raw);
       if (!rows.length) { failed++; return; }
 
       if (existing.has(game.game_id)) retried++;
@@ -313,10 +327,60 @@ const EDGE_BOXSCORE = (() => {
   }
 
   // ============================================================
-  // ── POSITION GROUP ──
+  // ── MERGE ──
   //
-  // Minimal mapping. Matches the groups roster-engine.js
-  // produces so prop-trends-engine's gates line up.
+  // ESPN returns one row per (player, stat category). A
+  // quarterback has a passing row and a rushing row for the
+  // same game; a tight end with a carry has a rushing row on
+  // top of a receiving row. The upsert keys on (game_id,
+  // player_id), which means two rows with the same key in one
+  // POST batch cause Postgres to reject the whole chunk.
+  //
+  // This collapses them. The first row seen for a player-game
+  // supplies the identity columns (position, team, opponent,
+  // game_date, starter flag). Every subsequent row fills any
+  // stat column that was still null. Columns that are null in
+  // every category row stay null.
+  // ============================================================
+
+  function mergePlayerRows(rows) {
+    if (!rows.length) return rows;
+
+    const byKey = new Map();
+    for (const r of rows) {
+      const key = `${r.game_id}|${r.player_id}`;
+      let target = byKey.get(key);
+
+      if (!target) {
+        // First time we have seen this player-game. Take the
+        // row as-is and remember it.
+        target = { ...r };
+        if (r.raw) target.raw = [r.raw];
+        else target.raw = [];
+        byKey.set(key, target);
+        continue;
+      }
+
+      // Subsequent row. Fill every stat column that was null
+      // on the target. Identity columns are left alone.
+      for (const k of Object.keys(r)) {
+        if (k === 'game_id' || k === 'player_id') continue;
+        if (k === 'raw') continue;
+
+        if (r[k] == null) continue;
+        if (target[k] == null) {
+          target[k] = r[k];
+        }
+      }
+
+      if (r.raw) target.raw.push(r.raw);
+    }
+
+    return Array.from(byKey.values());
+  }
+
+  // ============================================================
+  // ── POSITION GROUP ──
   // ============================================================
 
   function positionGroupFor(sport, position) {
@@ -491,8 +555,6 @@ const EDGE_BOXSCORE = (() => {
         row.earned_runs         = num(stats.earnedRuns);
         row.hits_allowed        = num(stats.hits);
         row.walks_allowed       = num(stats.walks);
-        // Pitching strikeouts land in their own column now.
-        // The batter column, `strikeouts`, is left alone.
         row.pitching_strikeouts = num(stats.strikeouts);
       } else {
         return null;
@@ -529,9 +591,9 @@ const EDGE_BOXSCORE = (() => {
   // ── WRITE ──
   //
   // on_conflict=game_id,player_id + merge-duplicates makes the
-  // write idempotent. A request that succeeded on the server
-  // but failed on the client can be retried without producing
-  // duplicate rows.
+  // write idempotent. With mergePlayerRows in front, no two
+  // rows in a single POST batch share a key, so Postgres never
+  // rejects the batch with "cannot affect row a second time."
   // ============================================================
 
   async function writeRows(url, key, rows, log) {
@@ -558,15 +620,18 @@ const EDGE_BOXSCORE = (() => {
           );
           if (res.ok) { ok = true; written += chunk.length; break; }
 
-          // 409 means the unique index is missing. Report it
-          // once rather than per chunk.
-          if (res.status === 409) {
-            log(`    write rejected 409 — add the unique index:`);
+          // 42P10 means the ON CONFLICT clause cannot be
+          // satisfied — the unique index is missing. Report
+          // once and stop, since every subsequent chunk will
+          // fail the same way.
+          const txt = await res.text().catch(() => '');
+          if (res.status === 400 && /there is no unique or exclusion constraint/i.test(txt)) {
+            log(`    write rejected 400 — the unique index is missing.`);
+            log(`    Run this in Supabase:`);
             log(`    ${SCHEMA_SQL}`);
             return written;
           }
 
-          const txt = await res.text().catch(() => '');
           log(`    write attempt ${attempt + 1}: HTTP ${res.status} ${txt.slice(0, 140)}`);
         } catch (e) {
           log(`    write attempt ${attempt + 1}: ${e.message}`);
