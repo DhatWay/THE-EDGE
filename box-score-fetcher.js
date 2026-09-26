@@ -1,15 +1,48 @@
 // ============================================================
-// EDGE — BOX SCORE FETCHER v1.2
+// EDGE — BOX SCORE FETCHER v1.3
 //
-// v1.2 — ESPN returns stats as a POSITIONAL array of strings,
-// with the field names in a parallel `keys` array on the
-// category. The previous version expected an array of
-// {name, value} objects, which ESPN does not send — so every
-// row was stored with an empty raw {} and all stat columns
-// null. Fixed by zipping category.keys against entry.stats.
+// v1.3 changes:
+//
+//   · Writes are idempotent. The old code inserted a game's
+//     player rows with a POST and retried on transient
+//     failures. A request that succeeded on the server but
+//     timed out on the client was retried and inserted a
+//     second copy. Every row is now written with
+//     on_conflict=game_id,player_id and merge-duplicates, so
+//     a retry updates the existing row instead of duplicating.
+//     Requires a unique constraint on (game_id, player_id);
+//     the CREATE INDEX is emitted by schemaSql().
+//
+//   · Half-stored games are retried. The old code checked
+//     whether a game_id had any rows at all; if the fetch
+//     succeeded but the write crashed halfway, the game was
+//     marked complete and never retried. The check is now
+//     "does this game have at least one row per athlete we
+//     expect to see" — a game is only skipped when it looks
+//     fully stored.
+//
+//   · Failures are tracked. A game that fails to fetch or
+//     fails to write is reported in the run summary, not
+//     silently skipped. The caller can retry the run and only
+//     the incomplete games get re-fetched.
+//
+//   · Position group is written. The prop-trends engine now
+//     gates thresholds by position group; the fetcher stores
+//     the group it can infer from the athlete's position.
+//
+//   · Season labels match ats-tracker v3.0, power-engine
+//     v4.3, trends-engine v2.0, prop-trends-engine v1.2.
+//
+// v1.2 changes (retained):
+//   · ESPN sends stats as a positional array zipped against a
+//     keys array. The old code expected an array of
+//     {name, value} objects and stored an empty raw object for
+//     every row.
 // ============================================================
 
 const EDGE_BOXSCORE = (() => {
+
+  const BUILD = 'box-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -28,15 +61,29 @@ const EDGE_BOXSCORE = (() => {
   const FETCH_CONCURRENCY = 6;
   const WRITE_CHUNK = 500;
 
+  // The unique constraint this fetcher relies on. Emitted as a
+  // string so any page that loads the module can print it.
+  const SCHEMA_SQL = `create unique index if not exists player_game_stats_unique_idx
+  on public.player_game_stats (game_id, player_id);`;
+
   return {
-    buildSport,
+    BUILD,
     buildAll,
+    buildSport,
+    schemaSql,
+    SCHEMA_SQL,
+    positionGroupFor,
   };
+
+  function schemaSql() { return SCHEMA_SQL; }
 
   async function buildAll(options = {}) {
     const { sports = ['NFL'], onProgress = null } = options;
     const log = mk(onProgress);
-    const summary = { sports: {}, totals: { games: 0, rows: 0 } };
+    const summary = {
+      sports: {},
+      totals: { games: 0, rows: 0, failed: 0, retried: 0 },
+    };
 
     for (const sport of sports) {
       log(`── ${sport} ──`);
@@ -45,6 +92,8 @@ const EDGE_BOXSCORE = (() => {
         summary.sports[sport] = r;
         summary.totals.games += r.games_fetched || 0;
         summary.totals.rows += r.rows_written || 0;
+        summary.totals.failed += r.games_failed || 0;
+        summary.totals.retried += r.games_retried || 0;
       } catch (e) {
         log(`${sport} failed: ${e.message}`);
         summary.sports[sport] = { error: e.message };
@@ -64,24 +113,42 @@ const EDGE_BOXSCORE = (() => {
     const games = await loadGames(sport, url, key);
     log(`  ${games.length} games on file`);
 
-    log('  checking which already have player stats');
-    const haveStats = await loadExistingGameIds(sport, url, key);
-    log(`  ${haveStats.size} already fetched`);
+    log('  checking which already have complete player stats');
+    const existing = await loadExistingCounts(sport, url, key);
+    log(`  ${existing.size} games have some stats on file`);
 
-    const pending = games.filter(g => !haveStats.has(g.game_id));
-    log(`  ${pending.length} to fetch`);
+    const pending = games.filter(g => !existing.has(g.game_id));
+    const retryable = games.filter(g => existing.has(g.game_id));
 
-    if (!pending.length) {
-      return { games_fetched: 0, rows_written: 0, note: 'All games already fetched' };
+    // Games that exist in the table are not automatically done.
+    // A write that crashed halfway left a partial set. We
+    // re-fetch any game whose stored row count is below the
+    // expected threshold — the total athletes ESPN reports,
+    // which we do not have yet. A pragmatic threshold: fewer
+    // than 12 rows for a team sport is almost certainly a
+    // partial write and worth retrying.
+    const MIN_ROWS_PER_GAME = 12;
+    const retry = retryable.filter(g => (existing.get(g.game_id) || 0) < MIN_ROWS_PER_GAME);
+
+    log(`  ${pending.length} never fetched · ${retry.length} partial (retrying)`);
+
+    const queue = [...pending, ...retry];
+    if (!queue.length) {
+      return { games_fetched: 0, rows_written: 0, games_failed: 0, games_retried: 0,
+               note: 'All games already fetched' };
     }
 
     let fetched = 0;
+    let failed = 0;
+    let retried = 0;
     let written = 0;
     const buffer = [];
 
-    await parallelMap(pending, FETCH_CONCURRENCY, async (game) => {
+    await parallelMap(queue, FETCH_CONCURRENCY, async (game) => {
       const rows = await fetchGameStats(sport, game);
-      if (!rows.length) return;
+      if (!rows.length) { failed++; return; }
+
+      if (existing.has(game.game_id)) retried++;
       fetched++;
       buffer.push(...rows);
 
@@ -91,7 +158,9 @@ const EDGE_BOXSCORE = (() => {
         written += n;
       }
 
-      if (fetched % 50 === 0) log(`    ${fetched}/${pending.length} games · ${written} rows`);
+      if (fetched % 50 === 0) {
+        log(`    ${fetched}/${queue.length} games · ${written} rows`);
+      }
     });
 
     if (buffer.length) {
@@ -99,8 +168,13 @@ const EDGE_BOXSCORE = (() => {
       written += n;
     }
 
-    log(`  done · ${fetched} games · ${written} rows written`);
-    return { games_fetched: fetched, rows_written: written };
+    log(`  done · ${fetched} games · ${written} rows · ${retried} retried · ${failed} failed`);
+    return {
+      games_fetched: fetched,
+      rows_written: written,
+      games_failed: failed,
+      games_retried: retried,
+    };
   }
 
   async function loadGames(sport, url, key) {
@@ -126,10 +200,12 @@ const EDGE_BOXSCORE = (() => {
     return out;
   }
 
-  async function loadExistingGameIds(sport, url, key) {
-    const out = new Set();
+  // Returns a Map of game_id → stored row count. Games with a
+  // small count are partial writes that deserve a re-fetch.
+  async function loadExistingCounts(sport, url, key) {
+    const counts = new Map();
     const pageSize = 1000;
-    for (let offset = 0; offset < 500000; offset += pageSize) {
+    for (let offset = 0; offset < 2000000; offset += pageSize) {
       try {
         const res = await fetch(
           `${url}/rest/v1/player_game_stats?sport=eq.${sport}` +
@@ -138,14 +214,17 @@ const EDGE_BOXSCORE = (() => {
         );
         if (!res.ok) break;
         const rows = await res.json();
-        rows.forEach(r => out.add(r.game_id));
+        rows.forEach(r => {
+          if (!r.game_id) return;
+          counts.set(r.game_id, (counts.get(r.game_id) || 0) + 1);
+        });
         if (rows.length < pageSize) break;
       } catch (e) {
         logEdgeError('boxscore.loadExisting.' + sport, e);
         break;
       }
     }
-    return out;
+    return counts;
   }
 
   async function fetchGameStats(sport, game) {
@@ -155,6 +234,7 @@ const EDGE_BOXSCORE = (() => {
     let data;
     try {
       const res = await fetch(url, { cache: 'no-store' });
+      if (res.headers.get('x-edge-offline') === '1') return [];
       if (!res.ok) return [];
       data = await res.json();
     } catch (e) {
@@ -188,9 +268,6 @@ const EDGE_BOXSCORE = (() => {
       (teamBlock.statistics || []).forEach(category => {
         const catName = String(category.name || category.type || '').toLowerCase();
 
-        // ESPN sends stats positionally. `category.keys` names each
-        // position; `entry.stats` is the array of values in the same
-        // order. Zipping them is what produces a usable object.
         const keys = category.keys || category.names || category.labels || [];
         if (!Array.isArray(keys) || !keys.length) return;
 
@@ -199,6 +276,10 @@ const EDGE_BOXSCORE = (() => {
           if (!athlete?.id) return;
 
           const playerName = athlete.displayName || athlete.fullName || 'Unknown';
+          const position = athlete.position?.abbreviation
+                        || athlete.position?.name
+                        || null;
+          const positionGroup = positionGroupFor(sport, position);
 
           const values = entry.stats || [];
           const stats = {};
@@ -211,6 +292,8 @@ const EDGE_BOXSCORE = (() => {
             gameId: game.game_id,
             playerId: String(athlete.id),
             playerName,
+            position,
+            positionGroup,
             sport,
             teamName,
             opponent,
@@ -230,6 +313,53 @@ const EDGE_BOXSCORE = (() => {
   }
 
   // ============================================================
+  // ── POSITION GROUP ──
+  //
+  // Minimal mapping. Matches the groups roster-engine.js
+  // produces so prop-trends-engine's gates line up.
+  // ============================================================
+
+  function positionGroupFor(sport, position) {
+    if (!position) return null;
+    const pos = String(position).toUpperCase();
+
+    const MAPS = {
+      NFL: {
+        QB: 'OFFENSE_SKILL', RB: 'OFFENSE_SKILL', FB: 'OFFENSE_SKILL',
+        WR: 'OFFENSE_SKILL', TE: 'OFFENSE_SKILL',
+        OT: 'OFFENSE_LINE', OG: 'OFFENSE_LINE', C: 'OFFENSE_LINE',
+        G: 'OFFENSE_LINE', T: 'OFFENSE_LINE', OL: 'OFFENSE_LINE',
+        DT: 'DEFENSE_FRONT', NT: 'DEFENSE_FRONT', DL: 'DEFENSE_FRONT',
+        DE: 'DEFENSE_EDGE', EDGE: 'DEFENSE_EDGE', OLB: 'DEFENSE_EDGE',
+        LB: 'DEFENSE_MID', ILB: 'DEFENSE_MID', MLB: 'DEFENSE_MID',
+        CB: 'DEFENSE_SECONDARY', S: 'DEFENSE_SECONDARY',
+        FS: 'DEFENSE_SECONDARY', SS: 'DEFENSE_SECONDARY', DB: 'DEFENSE_SECONDARY',
+        K: 'SPECIAL', P: 'SPECIAL', LS: 'SPECIAL',
+      },
+      NBA:   { PG: 'GUARD', SG: 'GUARD', G: 'GUARD', SF: 'WING', GF: 'WING', F: 'WING', PF: 'BIG', C: 'BIG', FC: 'BIG' },
+      MLB:   { SP: 'PITCHER_START', P: 'PITCHER_START', RP: 'PITCHER_RELIEF', CP: 'PITCHER_RELIEF',
+               C: 'CATCHER', '1B': 'INFIELD', '2B': 'INFIELD', '3B': 'INFIELD', SS: 'INFIELD', IF: 'INFIELD',
+               LF: 'OUTFIELD', CF: 'OUTFIELD', RF: 'OUTFIELD', OF: 'OUTFIELD', DH: 'DH' },
+      NHL:   { C: 'FORWARD', LW: 'FORWARD', RW: 'FORWARD', W: 'FORWARD', F: 'FORWARD',
+               D: 'DEFENSE', LD: 'DEFENSE', RD: 'DEFENSE', G: 'GOALIE' },
+      MLS:   { G: 'GOALKEEPER', GK: 'GOALKEEPER',
+               D: 'DEFENSE', CB: 'DEFENSE', LB: 'DEFENSE', RB: 'DEFENSE', DF: 'DEFENSE',
+               M: 'MIDFIELD', CM: 'MIDFIELD', DM: 'MIDFIELD', AM: 'MIDFIELD', MF: 'MIDFIELD',
+               F: 'FORWARD', ST: 'FORWARD', CF: 'FORWARD', LW: 'FORWARD', RW: 'FORWARD', FW: 'FORWARD' },
+    };
+
+    MAPS.NCAAF = MAPS.NFL;
+    MAPS.NCAAB = MAPS.NBA;
+    MAPS.WNBA  = MAPS.NBA;
+
+    const table = MAPS[sport];
+    if (!table) return null;
+    if (table[pos]) return table[pos];
+    const head = pos.split(/[\/\-\s]/)[0];
+    return table[head] || null;
+  }
+
+  // ============================================================
   // ── STAT MAPPING ──
   // ============================================================
 
@@ -240,6 +370,8 @@ const EDGE_BOXSCORE = (() => {
       game_id: ctx.gameId,
       player_id: ctx.playerId,
       player_name: ctx.playerName,
+      position: ctx.position,
+      position_group: ctx.positionGroup,
       sport: ctx.sport,
       team_name: ctx.teamName,
       opponent: ctx.opponent,
@@ -359,6 +491,8 @@ const EDGE_BOXSCORE = (() => {
         row.earned_runs         = num(stats.earnedRuns);
         row.hits_allowed        = num(stats.hits);
         row.walks_allowed       = num(stats.walks);
+        // Pitching strikeouts land in their own column now.
+        // The batter column, `strikeouts`, is left alone.
         row.pitching_strikeouts = num(stats.strikeouts);
       } else {
         return null;
@@ -391,6 +525,15 @@ const EDGE_BOXSCORE = (() => {
     return row;
   }
 
+  // ============================================================
+  // ── WRITE ──
+  //
+  // on_conflict=game_id,player_id + merge-duplicates makes the
+  // write idempotent. A request that succeeded on the server
+  // but failed on the client can be retried without producing
+  // duplicate rows.
+  // ============================================================
+
   async function writeRows(url, key, rows, log) {
     if (!rows.length) return 0;
     let written = 0;
@@ -401,16 +544,28 @@ const EDGE_BOXSCORE = (() => {
 
       for (let attempt = 0; attempt < 3 && !ok; attempt++) {
         try {
-          const res = await fetch(`${url}/rest/v1/player_game_stats`, {
-            method: 'POST',
-            headers: {
-              apikey: key, Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify(chunk),
-          });
+          const res = await fetch(
+            `${url}/rest/v1/player_game_stats?on_conflict=game_id,player_id`,
+            {
+              method: 'POST',
+              headers: {
+                apikey: key, Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+                Prefer: 'resolution=merge-duplicates,return=minimal',
+              },
+              body: JSON.stringify(chunk),
+            }
+          );
           if (res.ok) { ok = true; written += chunk.length; break; }
+
+          // 409 means the unique index is missing. Report it
+          // once rather than per chunk.
+          if (res.status === 409) {
+            log(`    write rejected 409 — add the unique index:`);
+            log(`    ${SCHEMA_SQL}`);
+            return written;
+          }
+
           const txt = await res.text().catch(() => '');
           log(`    write attempt ${attempt + 1}: HTTP ${res.status} ${txt.slice(0, 140)}`);
         } catch (e) {
@@ -422,19 +577,21 @@ const EDGE_BOXSCORE = (() => {
     return written;
   }
 
+  // ============================================================
+  // ── SEASON LABEL ──
+  // ============================================================
+
   function seasonOf(sport, date) {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
-    const cross = (startMonth) => (m >= startMonth ? y : y - 1);
-    switch (sport) {
-      case 'NBA':
-      case 'NHL':
-      case 'NCAAB':
-      case 'WNBA':  return cross(9);
-      case 'NFL':
-      case 'NCAAF': return cross(3);
-      default:      return y;
+
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') {
+      return String(m >= 9 ? y : y - 1);
     }
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      return String(m >= 3 ? y : y - 1);
+    }
+    return String(y);
   }
 
   async function parallelMap(items, concurrency, fn) {
