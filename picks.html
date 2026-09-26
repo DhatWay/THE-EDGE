@@ -189,15 +189,6 @@
     .ctx-value .gold { color: var(--gold); }
     .ctx-value .blue { color: var(--blue); }
 
-    .inj-row { display: flex; gap: 8px; font-size: 11px; padding: 4px 0; align-items: center; }
-    .inj-status { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; padding: 1px 5px; border: 1px solid; min-width: 44px; text-align: center; }
-    .inj-status.out { border-color: rgba(231,76,60,0.5); color: var(--red); }
-    .inj-status.q   { border-color: rgba(201,168,76,0.5); color: var(--gold); }
-    .inj-status.d   { border-color: rgba(231,76,60,0.3); color: var(--red); }
-    .inj-name { color: var(--text-mid); flex: 1; }
-    .inj-pos { color: var(--text-dim); font-size: 10px; }
-    .inj-impact { color: var(--red); font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 1px; }
-
     .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
     .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
     .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
@@ -441,6 +432,17 @@
     }
 
     // ── LOAD PICKS + CONTEXT ──
+    //
+    // Filter is by commence_time, not created_at.
+    //
+    // The pipeline dedups on game_id across a 14-day window,
+    // so a game is written exactly once. A pick created on
+    // Monday for a Saturday kickoff is the only pick that game
+    // will ever have. Filtering by created_at = today meant
+    // that pick vanished from the page by Tuesday, even though
+    // its game had not been played. Filtering by commence_time
+    // in the next seven days shows every pending pick for every
+    // upcoming game.
     async function loadPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -449,8 +451,13 @@
       try {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
+        const horizon = new Date(todayStart.getTime() + 7 * 86400000);
+
         const res = await fetch(
-          `${url}/rest/v1/shadow_picks?select=*&created_at=gte.${todayStart.toISOString()}&order=confidence.desc&limit=100`,
+          `${url}/rest/v1/shadow_picks?select=*` +
+          `&commence_time=gte.${todayStart.toISOString()}` +
+          `&commence_time=lt.${horizon.toISOString()}` +
+          `&order=confidence.desc&limit=200`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1022,10 +1029,26 @@
       showToast('Pick skipped', '');
     }
 
+    // logBet writes the same shape the orchestrator's
+    // autoPlaceSimBets writes, so a bet placed from this page
+    // and a bet placed by the pipeline both grade identically.
+    //
+    //   pick_type: 'ATS'            (was 'HOME' or 'AWAY')
+    //   line: the actual spread     (was the same field but formatted loosely)
+    //   odds: -110 for spread       (was the home moneyline)
+    //
+    // sim-grader.js skips rows that carry pick_type 'HOME' or
+    // 'AWAY' as legacy format. Before this fix, every pick
+    // placed from this page was written in that legacy shape
+    // and never graded. Using the ATS shape means a manual
+    // placement and a pipeline auto-placement are
+    // indistinguishable to the grader.
     async function logBet(mode, pick, units, stakeDollars) {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) return;
+
+      const spread = pick.market_spread;
 
       const row = {
         mode,
@@ -1034,9 +1057,9 @@
         sport: pick.sport,
         matchup: `${pick.away_team} vs ${pick.home_team}`,
         pick_label: pick.side_team,
-        pick_type: pick.direction === 'home' ? 'HOME' : 'AWAY',
-        line: String(pick.market_spread ?? ''),
-        odds: pick.market_home_ml || null,
+        pick_type: 'ATS',
+        line: spread != null ? String(spread) : '',
+        odds: -110,
         confidence: pick.confidence,
         edge: pick.edge,
         units,
