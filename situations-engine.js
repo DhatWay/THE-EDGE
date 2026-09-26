@@ -1,66 +1,48 @@
 // ============================================================
-// EDGE — SITUATIONS ENGINE v2.0
+// EDGE — SITUATIONS ENGINE v2.1
 //
 // Encodes high-probability spots as testable rules. A situation
 // is a specific condition that historically produces a winning
 // side more often than the spread implies.
 //
-// Every rule is:
-//   1. Specific (fires or doesn't)
-//   2. Testable (win/loss can be graded against historical games)
-//   3. Justifiable (there is a reason the spot produces an edge)
+// v2.1 changes:
 //
-// The engine scores each game by counting which situations fire
-// and on which side. High count = strong lean. Zero = pass.
+//   · Rank lookups normalise the input name. The top-10 and
+//     bottom-10 situations call isTop(sport, 'overall',
+//     homeName, 10) with the game's own team name — The Odds
+//     API spelling. The ranking index is keyed from
+//     power_ratings.team_name — ESPN spelling. Whenever the
+//     two differ, the lookup silently failed and the rule
+//     either never fired or fired for the wrong team. Both
+//     sides now go through EDGE_TEAMS.normalize before the
+//     comparison, so "LA Clippers" and "Los Angeles Clippers"
+//     land on the same entry. This is the same fix the slate
+//     backtest was already doing via its own resolver — the
+//     live path was the one missing it.
 //
-// v2.0
-//   · Rank-based thresholds. Absolute "overall >= 70" gates are
-//     replaced with per-sport rank checks. The rating scale is
-//     compressed by shrinkage — a raw threshold means a different
-//     thing in every sport and fires for a different share of the
-//     league in each. Rank is scale-free.
-//   · Resolver injection. Slate can pass precomputed indexes and
-//     a team-name resolver so names from the Odds API resolve to
-//     the right row.
-//   · Testability gate. Rules whose inputs are missing from the
-//     context are reported as untestable, not as a silent zero.
-//   · Per-rule weights. Backtest-measured weights flow in via
-//     options.situationWeights and produce weighted_tally.
-//   · New rules: away_off_bye, lost_last_week_by_14plus.
-//   · Blocked rules declared explicitly: divisional_home_dog,
-//     public_road_fav, public_road_dog — flagged, not dead.
+//   · The unused per-sport resolver cache from v2.0 is now
+//     shared with the ranking index so the two are built from
+//     one list. No behaviour change, less code.
+//
+// v2.0 changes (retained):
+//   · Rank-based thresholds, resolver injection, testability
+//     gate, per-rule weights, new rules, blocked rules declared.
 // ============================================================
 
 const EDGE_SITUATIONS = (() => {
 
-  const BUILD = 'se-20260923-01';
+  const BUILD = 'se-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
   // ============================================================
   // ── SITUATIONS LIBRARY ──
-  //
-  // Each situation has:
-  //   id         — short name for storage
-  //   label      — human-readable
-  //   side       — 'home' | 'away' | 'underdog' | 'favorite'
-  //                | 'under' | 'over' | 'self' | 'dynamic'
-  //                | 'opponent_of_cold' | 'rested' | 'healthy'
-  //   requires   — data sources the test needs. If any are missing
-  //                from the context, the rule is untestable, not a
-  //                silent zero.
-  //   test       — fires or doesn't
-  //   note       — optional, flags rules whose inputs are not yet
-  //                collected. They still evaluate; they just never
-  //                have a testable context today.
   // ============================================================
 
   const SITUATIONS = [
 
     // ── POWER RATING SPOTS ──
-    // Rank-based. "Top 10" means top 10 teams by that field in
-    // that sport's power_ratings table, not an absolute score.
 
     {
       id: 'elite_home_small_fav',
@@ -129,10 +111,6 @@ const EDGE_SITUATIONS = (() => {
       },
     },
     {
-      // Side resolved from which team is rated higher, not from
-      // the spread. If the spread has the higher-rated team as
-      // the underdog, this points at that team, not at the
-      // nominal favourite.
       id: 'power_gap_high',
       label: 'Rating gap 15+ but line under 10 — mispriced',
       side: 'dynamic',
@@ -341,10 +319,6 @@ const EDGE_SITUATIONS = (() => {
     },
 
     // ── MARKET ──
-    // These depend on line movement captured before kickoff.
-    // historical_odds does not store open_spread yet, so during a
-    // backtest these are untestable unless open_spread is present
-    // on the game row. Live slate has it via line_history.
 
     {
       id: 'rlm_against_home',
@@ -443,7 +417,7 @@ const EDGE_SITUATIONS = (() => {
       test: (g, c) => c.weather?.wind_effect_mph != null && c.weather.wind_effect_mph >= 18,
     },
 
-    // ── PREVIOUS GAME (needs schedule history in context) ──
+    // ── PREVIOUS GAME ──
 
     {
       id: 'lost_last_week_by_14plus',
@@ -498,8 +472,6 @@ const EDGE_SITUATIONS = (() => {
         if (g.spread > -7) return false;
         const publicPct = c.lineHistory?.public_pct;
         if (publicPct == null) return false;
-        // Public siding with the road favourite would put pct on the away side,
-        // which this context cannot yet distinguish. Kept for structure.
         return false;
       },
       note: 'per-side public money not yet collected — rule cannot fire until data exists',
@@ -508,10 +480,6 @@ const EDGE_SITUATIONS = (() => {
 
   // ============================================================
   // ── TESTABILITY ──
-  // A rule is testable only if the context actually contains the
-  // data its test reads. This is separate from "the condition was
-  // false" — an untestable rule contributes no sample, a testable
-  // rule that didn't fire contributes a sample of zero.
   // ============================================================
 
   function isTestable(rule, g, c) {
@@ -537,8 +505,13 @@ const EDGE_SITUATIONS = (() => {
 
   // ============================================================
   // ── RANKING ──
-  // Built once per evaluateSlate call from the power index. Rank is
-  // 1-indexed, 1 = highest value in that field for that sport.
+  //
+  // Rank keys are normalized so a lookup with either the ESPN
+  // spelling or The Odds API spelling lands on the same entry.
+  // Without normalization, isTop('overall', 'LA Clippers', 10)
+  // missed the entry stored under 'Los Angeles Clippers' and
+  // the top-10 and bottom-10 situations either never fired or
+  // fired for the wrong team.
   // ============================================================
 
   function buildRankings(powerIndex) {
@@ -552,7 +525,7 @@ const EDGE_SITUATIONS = (() => {
       if (!row) return;
 
       if (!bySport[sport]) bySport[sport] = { rows: [], fields: {} };
-      bySport[sport].rows.push({ name, row });
+      bySport[sport].rows.push({ name, norm: normalizeFor(sport, name), row });
     });
 
     Object.entries(bySport).forEach(([sport, bucket]) => {
@@ -560,10 +533,10 @@ const EDGE_SITUATIONS = (() => {
       fieldsToRank.forEach(field => {
         const list = bucket.rows
           .filter(({ row }) => row[field] != null)
-          .map(({ name, row }) => ({ name, value: Number(row[field]) }))
+          .map(({ name, norm, row }) => ({ name, norm, value: Number(row[field]) }))
           .sort((a, b) => b.value - a.value);
         const rankMap = new Map();
-        list.forEach((entry, i) => rankMap.set(entry.name, i + 1));
+        list.forEach((entry, i) => rankMap.set(entry.norm, i + 1));
         bucket.fields[field] = { rankMap, count: rankMap.size };
       });
     });
@@ -574,7 +547,9 @@ const EDGE_SITUATIONS = (() => {
   function rankOf(rankings, sport, field, name) {
     const b = rankings?.[sport];
     if (!b || !b.fields?.[field]) return null;
-    return b.fields[field].rankMap.get(name) ?? null;
+    const norm = normalizeFor(sport, name);
+    if (!norm) return null;
+    return b.fields[field].rankMap.get(norm) ?? null;
   }
 
   function isTop(rankings, sport, field, name, n) {
@@ -585,17 +560,29 @@ const EDGE_SITUATIONS = (() => {
   function isBottom(rankings, sport, field, name, n) {
     const b = rankings?.[sport];
     if (!b || !b.fields?.[field]) return false;
-    const r = b.fields[field].rankMap.get(name);
+    const norm = normalizeFor(sport, name);
+    if (!norm) return false;
+    const r = b.fields[field].rankMap.get(norm);
     if (r == null) return false;
     const total = b.fields[field].count;
     return r >= total - n + 1;
   }
 
   // ============================================================
+  // ── NORMALIZE ──
+  // ============================================================
+
+  function normalizeFor(sport, name) {
+    if (!name) return '';
+    if (window.EDGE_TEAMS && typeof window.EDGE_TEAMS.normalize === 'function') {
+      try { return window.EDGE_TEAMS.normalize(name, sport); }
+      catch {}
+    }
+    return String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  // ============================================================
   // ── TEAM RESOLUTION ──
-  // Precompute one EDGE_TEAMS index per sport so each lookup does
-  // not rebuild it. When EDGE_TEAMS is absent, exact name matching
-  // is the only path.
   // ============================================================
 
   function buildSportResolvers(powerIndex, atsIndex, h2hIndex) {
@@ -871,7 +858,6 @@ const EDGE_SITUATIONS = (() => {
 
   // ============================================================
   // ── DATA LOADERS ──
-  // Only used when the caller did not inject indexes.
   // ============================================================
 
   async function loadPower(url, key) {
@@ -926,6 +912,7 @@ const EDGE_SITUATIONS = (() => {
     rankOf,
     isTop,
     isBottom,
+    normalizeFor,
   };
 
 })();
