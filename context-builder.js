@@ -1,52 +1,56 @@
 // ============================================================
-// EDGE — CONTEXT BUILDER v5.0
+// EDGE — CONTEXT BUILDER v5.1
 //
 // Supplies line history, rest, travel, weather, injuries,
 // ATS form and head-to-head for a slate.
 //
-// v5.0 changes:
+// v5.1 changes:
 //
-//   · Team names are resolved through team-aliases.js before
-//     any ATS or head-to-head lookup. The old code queried
-//     team_ats and matchup_ats by the game's own team name —
-//     which is The Odds API's spelling — against rows written
-//     by ats-tracker with ESPN's spelling. Any team spelled
-//     differently got no ATS or H2H data. Every lookup now
-//     goes through EDGE_TEAMS.normalize.
+//   · line_history is filtered by source. Both writers tag
+//     their rows with the book the price came from, but the
+//     reader was pulling every row for the game regardless
+//     of source, so switching books on the Settings page
+//     manufactured fake line movement — a snapshot from
+//     DraftKings and a snapshot from FanDuel sat next to
+//     each other as "open" and "current." The read now
+//     filters to the currently active source. When the
+//     source column is not yet present on the table, the
+//     query falls back to the unfiltered shape and writes
+//     one warning to edge_errors per sport per page load.
 //
-//   · ATS and H2H are loaded once per sport, indexed locally,
-//     and matched against normalized names. The old code
-//     queried with team_name=in.(...) using raw names; the
-//     new code fetches the sport's whole table (a few hundred
-//     rows) and joins in memory.
+//   · Trends context is populated. The trends engine reads
+//     prev result, prev margin, game of season, home game of
+//     season, played-before, lost-last-meeting and season
+//     progress from the game object and the context. None of
+//     those were being set, so every "revenge," "opener,"
+//     "after a loss," "off a bye" and "late season" rule
+//     silently never matched a live game. Every field the
+//     trends engine looks for is now computed and attached
+//     directly to each game object, so parlay.html and the
+//     supporting-trends panel on Today's Picks both light up.
 //
-//   · The schedule fetch goes day by day over the last 60
-//     days, not by year with limit=1000. A full MLB year is
-//     2,430 games; the old fetch truncated at 1,000 and lost
-//     more than half the season. Rest days, travel type and
-//     road-trip length were computed on a partial schedule.
-//     60 single-day calls, cacheable per (sport, date), cover
-//     exactly the window the rest calculation needs.
+//   · Per-date schedule cache TTL. Today's and yesterday's
+//     scoreboards now expire after an hour instead of a full
+//     day. The old fixed 24-hour TTL meant a fetch that ran
+//     before a game finished kept serving a final score that
+//     was still "in progress" the next morning, and back-to-
+//     back detection for the following day's teams read from
+//     the stale copy.
 //
-//   · The 60-day window no longer starts at Jan 1. A January
-//     game now correctly sees December games behind it. The
-//     old year-boundary logic lost every December game from
-//     January's perspective.
+//   · Schedule fetch runs with the declared SCHEDULE_
+//     CONCURRENCY. The constant existed but the fetch fired
+//     every date at once — up to 60 parallel requests per
+//     sport, eight sports, hundreds of calls from one tap.
+//     Now capped at four concurrent.
 //
-//   · Travel uses a resolver. The stadium table is expanded
-//     to cover WNBA, MLS and a representative set of college
-//     teams, and match now goes through a normalized lookup
-//     so "LA Clippers" and "Los Angeles Clippers" land on the
-//     same coordinate.
-//
-//   · Weather cache and schedule cache are kept. The schedule
-//     cache is now keyed per (path, date) instead of per
-//     (path, year) since the fetch is per-day.
+//   · Line history query tries the source-filtered shape
+//     first, then falls back. Two queries per game window in
+//     the worst case, one per game in the common case.
 // ============================================================
 
 const EDGE_CONTEXT = (() => {
 
-  const BUILD = 'ctx-20260925-01';
+  const BUILD = 'ctx-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -63,18 +67,21 @@ const EDGE_CONTEXT = (() => {
   };
 
   const REST_LOOKBACK_DAYS = 60;
-  const SCHEDULE_CONCURRENCY = 6;
+  const SCHEDULE_CONCURRENCY = 4;
 
   const WEATHER_TTL_MS = 12 * 60 * 60 * 1000;
   const WEATHER_CACHE_KEY = 'edge_weather_cache_v1';
   const WEATHER_CACHE_MAX = 400;
 
-  const SCHEDULE_TTL_MS = 24 * 60 * 60 * 1000;
-  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v2';
-  const SCHEDULE_CACHE_MAX = 600;
+  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v3';
+  const SCHEDULE_CACHE_MAX = 900;
 
   const SESSION_TTL_MS = 5 * 60 * 1000;
   const sessionMemo = new Map();
+
+  // Logged once per sport per page load, not per query, so a
+  // missing source column does not flood edge_errors.
+  const _warnedNoSource = new Set();
 
   function logEdgeError(where, err) {
     try {
@@ -86,11 +93,6 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── STADIUM COORDINATES ──
-  //
-  // Canonical names. resolveCoord() normalizes the incoming
-  // team name and matches against a normalized index of these
-  // keys, so "LA Clippers" and "Los Angeles Clippers" both
-  // find the same row.
   // ============================================================
 
   const TEAM_CITIES = {
@@ -273,13 +275,11 @@ const EDGE_CONTEXT = (() => {
     'Vancouver Whitecaps FC': [49.2778, -123.1087],
   };
 
-  // Alias map for teams whose canonical entry differs from
-  // what an upstream might send. Keyed by normalized form,
-  // value is the canonical key in TEAM_CITIES.
   const CITY_ALIASES = {
     'laclippers': 'Los Angeles Clippers',
     'lalakers': 'Los Angeles Lakers',
     'utahhockeyclub': 'Utah Hockey Club',
+    'utahmammoth': 'Utah Hockey Club',
     'arizonacoyotes': 'Utah Hockey Club',
     'oaklandathletics': 'Athletics',
     'lasvegasathletics': 'Athletics',
@@ -290,7 +290,6 @@ const EDGE_CONTEXT = (() => {
     'washingtonfootballteam': 'Washington Commanders',
   };
 
-  // Normalized city index built once on first use.
   let _cityIndex = null;
   function cityIndex() {
     if (_cityIndex) return _cityIndex;
@@ -351,6 +350,18 @@ const EDGE_CONTEXT = (() => {
       injuriesByGame: {},
       atsByTeam: {},
       h2hByGame: {},
+
+      // Trends fields. trends-engine.js reads these through
+      // the game object; they are also mirrored on the
+      // context map for callers that read the context direct.
+      prevResultByTeam: {},
+      prevMarginByTeam: {},
+      gameOfSeasonByTeam: {},
+      homeGameOfSeasonByTeam: {},
+      playedBeforeByTeam: {},
+      lostLastMeetingByTeam: {},
+      seasonProgressByGame: {},
+
       loadedAt: new Date().toISOString(),
     };
 
@@ -382,9 +393,45 @@ const EDGE_CONTEXT = (() => {
     ctx.atsByTeam = trends.atsByTeam || {};
     ctx.h2hByGame = trends.h2hByGame || {};
 
+    // Trends context fields, computed from the schedule and
+    // attached both to the flat context maps and directly to
+    // each game object so trends-engine reads them wherever it
+    // looks.
+    ctx.prevResultByTeam          = schedule.prevResultByTeam || {};
+    ctx.prevMarginByTeam          = schedule.prevMarginByTeam || {};
+    ctx.gameOfSeasonByTeam        = schedule.gameOfSeasonByTeam || {};
+    ctx.homeGameOfSeasonByTeam    = schedule.homeGameOfSeasonByTeam || {};
+    ctx.playedBeforeByTeam        = schedule.playedBeforeByTeam || {};
+    ctx.lostLastMeetingByTeam     = schedule.lostLastMeetingByTeam || {};
+    ctx.seasonProgressByGame      = schedule.seasonProgressByGame || {};
+
+    games.forEach(g => {
+      const sport = g._sport || g.sport;
+      const home = g.home_team || g.home;
+      const away = g.away_team || g.away;
+      if (!sport || !home || !away) return;
+
+      const homeKey = `${sport}:${home}`;
+      const awayKey = `${sport}:${away}`;
+
+      if (ctx.restByTeam[homeKey] != null) g.home_rest_days = ctx.restByTeam[homeKey];
+      if (ctx.restByTeam[awayKey] != null) g.away_rest_days = ctx.restByTeam[awayKey];
+      if (ctx.prevResultByTeam[homeKey] != null) g.home_prev_result = ctx.prevResultByTeam[homeKey];
+      if (ctx.prevResultByTeam[awayKey] != null) g.away_prev_result = ctx.prevResultByTeam[awayKey];
+      if (ctx.prevMarginByTeam[homeKey] != null) g.home_prev_margin = ctx.prevMarginByTeam[homeKey];
+      if (ctx.prevMarginByTeam[awayKey] != null) g.away_prev_margin = ctx.prevMarginByTeam[awayKey];
+      if (ctx.gameOfSeasonByTeam[homeKey] != null) g.home_game_of_season = ctx.gameOfSeasonByTeam[homeKey];
+      if (ctx.gameOfSeasonByTeam[awayKey] != null) g.away_game_of_season = ctx.gameOfSeasonByTeam[awayKey];
+      if (ctx.homeGameOfSeasonByTeam[homeKey] != null) g.home_home_game_of_season = ctx.homeGameOfSeasonByTeam[homeKey];
+      if (ctx.homeGameOfSeasonByTeam[awayKey] != null) g.away_home_game_of_season = ctx.homeGameOfSeasonByTeam[awayKey];
+      if (ctx.playedBeforeByTeam[homeKey] != null) g.played_before = ctx.playedBeforeByTeam[homeKey];
+      if (ctx.lostLastMeetingByTeam[homeKey] != null) g.home_lost_last_meeting = ctx.lostLastMeetingByTeam[homeKey];
+      if (ctx.lostLastMeetingByTeam[awayKey] != null) g.away_lost_last_meeting = ctx.lostLastMeetingByTeam[awayKey];
+      if (ctx.seasonProgressByGame[g.id] != null) g.season_progress = ctx.seasonProgressByGame[g.id];
+    });
+
     // Travel. resolveCoord handles aliases and normalized
-    // matches, so 'LA Clippers' and 'Los Angeles Clippers' both
-    // find the same coordinate.
+    // matches.
     let travelMisses = 0;
     games.forEach(g => {
       const home = g.home_team || g.home;
@@ -426,6 +473,17 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── LINE HISTORY ──
+  //
+  // Reads only rows written from the currently active book (or
+  // from consensus when no book is chosen). Every writer tags
+  // its rows with a `source` value; without filtering, rows
+  // from two books for the same game sat in the table with no
+  // way to tell which was which, and the "open" line could be
+  // a different book's number from the "current" line.
+  //
+  // When the source column does not yet exist, the query falls
+  // back to the unfiltered shape and one warning is logged per
+  // sport per page load.
   // ============================================================
 
   async function loadLineHistory(games) {
@@ -440,21 +498,42 @@ const EDGE_CONTEXT = (() => {
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
     const inList = gameIds.map(id => `"${id}"`).join(',');
 
-    const selects = [
-      'game_id,spread,total,ml,public_pct,sharp_pct,created_at',
-      'game_id,spread,total,ml,created_at',
+    const book = (localStorage.getItem('edge_book_key') || '').trim().toLowerCase();
+    const source = book ? `book:${book}` : 'consensus';
+
+    // Two shapes. Source-filtered first, unfiltered as the
+    // fallback for a table where the source column has not
+    // been added yet.
+    const shapes = [
+      {
+        url:
+          `${url}/rest/v1/line_history?select=game_id,spread,total,ml,public_pct,sharp_pct,source,created_at` +
+          `&game_id=in.(${inList})&source=eq.${encodeURIComponent(source)}&order=created_at.asc`,
+        tag: 'source-filtered',
+      },
+      {
+        url:
+          `${url}/rest/v1/line_history?select=game_id,spread,total,ml,created_at` +
+          `&game_id=in.(${inList})&order=created_at.asc`,
+        tag: 'unfiltered',
+      },
     ];
 
     let rows = null;
-    for (const select of selects) {
+    for (const shape of shapes) {
       try {
-        const res = await fetch(
-          `${url}/rest/v1/line_history?select=${select}&game_id=in.(${inList})&order=created_at.asc`,
-          { headers }
-        );
-        if (res.ok) { rows = await res.json(); break; }
+        const res = await fetch(shape.url, { headers });
+        if (!res.ok) continue;
+        rows = await res.json();
+        if (shape.tag === 'unfiltered' && !_warnedNoSource.has('line_history')) {
+          _warnedNoSource.add('line_history');
+          logEdgeError('context.loadLineHistory.noSource',
+            new Error('line_history source column missing — reading across books'));
+        }
+        break;
       } catch (e) { logEdgeError('context.lineHistory', e); }
     }
+
     if (!rows) return out;
 
     const perGame = {};
@@ -475,6 +554,7 @@ const EDGE_CONTEXT = (() => {
         movement: moved ? (current - open) : 0,
         public_pct: h.latest.public_pct ?? null,
         sharp_pct: h.latest.sharp_pct ?? null,
+        source,
       };
     });
 
@@ -482,17 +562,7 @@ const EDGE_CONTEXT = (() => {
   }
 
   // ============================================================
-  // ── SCHEDULE (rest days) ──
-  //
-  // Fetches every day in the last REST_LOOKBACK_DAYS by
-  // single-date query. A full-season fetch capped at limit=1000
-  // truncated MLB (2,430 games), NBA (1,300), NHL (1,300) and
-  // NCAAB (5,000+) — rest days and road-trip length were
-  // computed on a partial schedule for exactly those sports.
-  //
-  // 60 single-day calls per sport, cached per (path, date).
-  // The window is anchored to today, not to January 1, so a
-  // January game sees December games behind it.
+  // ── SCHEDULE ──
   // ============================================================
 
   async function loadScheduleContext(games) {
@@ -501,6 +571,13 @@ const EDGE_CONTEXT = (() => {
       practiceDaysByTeam: {},
       travelTypeByTeam: {},
       roadTripLengthByTeam: {},
+      prevResultByTeam: {},
+      prevMarginByTeam: {},
+      gameOfSeasonByTeam: {},
+      homeGameOfSeasonByTeam: {},
+      playedBeforeByTeam: {},
+      lostLastMeetingByTeam: {},
+      seasonProgressByGame: {},
       stats: { hits: 0, misses: 0 },
     };
 
@@ -515,23 +592,21 @@ const EDGE_CONTEXT = (() => {
       dates.push(new Date(now.getTime() - i * 86400000));
     }
 
-    // Build the schedule by fetching each (sport, date) once.
     const schedules = {};
-    await Promise.all(sports.map(async sport => {
+    for (const sport of sports) {
       const path = ESPN_MAP[sport];
-      const perDate = await Promise.all(dates.map(d =>
-        getDaySchedule(path, d, sport).then(r => {
-          if (r.hit) out.stats.hits++;
-          else out.stats.misses++;
-          return r.events;
-        })
-      ));
+      const perDate = [];
 
-      const flat = [];
-      perDate.forEach(events => { flat.push(...events); });
-      flat.sort((a, b) => new Date(a.date) - new Date(b.date));
-      schedules[sport] = flat;
-    }));
+      await parallelMap(dates, SCHEDULE_CONCURRENCY, async d => {
+        const r = await getDaySchedule(path, d, sport);
+        if (r.hit) out.stats.hits++;
+        else out.stats.misses++;
+        perDate.push(...r.events);
+      });
+
+      perDate.sort((a, b) => new Date(a.date) - new Date(b.date));
+      schedules[sport] = perDate;
+    }
 
     games.forEach(g => {
       const sport = g._sport || g.sport;
@@ -542,12 +617,8 @@ const EDGE_CONTEXT = (() => {
       [['home', g.home_team || g.home], ['away', g.away_team || g.away]].forEach(([side, team]) => {
         if (!team) return;
         const key = `${sport}:${team}`;
-
-        // Resolve the game's team name against the schedule's
-        // own team names, so Odds API spelling matches ESPN
-        // spelling. Direct comparison failed for every team
-        // whose name varies between the two sources.
         const teamNorm = normalizeTeam(sport, team);
+
         const prior = schedule
           .filter(e => new Date(e.date) < when)
           .filter(e => normalizeTeam(sport, e.home) === teamNorm || normalizeTeam(sport, e.away) === teamNorm)
@@ -577,17 +648,167 @@ const EDGE_CONTEXT = (() => {
       });
     });
 
+    // Per-team season stats. Computed from the full schedule
+    // (home + away games), not just the target team's own
+    // history, so homeGameOfSeason counts only home appearances.
+    for (const sport of sports) {
+      const schedule = schedules[sport] || [];
+      if (!schedule.length) continue;
+
+      const ordered = schedule.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      // Count how many games each team has played as of each
+      // date. Uses a running map. Season reset is done by
+      // checking the seasonOf() label against the last game's
+      // season — a new season zeroes the counter.
+      const playedByTeam = {};
+      const homeByTeam = {};
+      const lastSeasonByTeam = {};
+      const lastResult = {};
+      const metBefore = new Map();
+
+      ordered.forEach(e => {
+        const when = new Date(e.date);
+        const season = seasonOf(sport, when);
+
+        const homeTeam = e.home;
+        const awayTeam = e.away;
+        const homeKey = normalizeTeam(sport, homeTeam);
+        const awayKey = normalizeTeam(sport, awayTeam);
+
+        [homeTeam, awayTeam].forEach(t => {
+          const k = normalizeTeam(sport, t);
+          if (lastSeasonByTeam[k] !== season) {
+            playedByTeam[k] = 0;
+            homeByTeam[k] = 0;
+            lastSeasonByTeam[k] = season;
+          }
+        });
+
+        playedByTeam[homeKey] = (playedByTeam[homeKey] || 0) + 1;
+        playedByTeam[awayKey] = (playedByTeam[awayKey] || 0) + 1;
+        homeByTeam[homeKey] = (homeByTeam[homeKey] || 0) + 1;
+
+        // Record the result for the previous-result lookup.
+        if (e.homeScore != null && e.awayScore != null) {
+          const margin = e.homeScore - e.awayScore;
+          const homeResult = margin > 0 ? 'W' : margin < 0 ? 'L' : 'T';
+          const awayResult = homeResult === 'W' ? 'L' : homeResult === 'L' ? 'W' : 'T';
+          lastResult[homeKey] = { result: homeResult, margin };
+          lastResult[awayKey] = { result: awayResult, margin: -margin };
+        }
+
+        // Head to head: keep the most recent prior meeting per
+        // pair so lostLastMeetingByTeam can be computed.
+        const pairKey = [homeKey, awayKey].sort().join('|');
+        if (!metBefore.has(pairKey)) metBefore.set(pairKey, []);
+        metBefore.get(pairKey).push({ date: when, home: homeTeam, away: awayTeam, homeScore: e.homeScore, awayScore: e.awayScore });
+      });
+
+      // Now walk the target games and attach the values the
+      // trends engine reads.
+      games.forEach(g => {
+        if ((g._sport || g.sport) !== sport) return;
+        const when = new Date(g.commence_time || g.time);
+        if (isNaN(when)) return;
+
+        const home = g.home_team || g.home;
+        const away = g.away_team || g.away;
+        const homeNorm = normalizeTeam(sport, home);
+        const awayNorm = normalizeTeam(sport, away);
+
+        // playedBefore / lostLastMeeting
+        const pairKey = [homeNorm, awayNorm].sort().join('|');
+        const meetings = metBefore.get(pairKey) || [];
+        const priorMeetings = meetings.filter(m => new Date(m.date) < when);
+
+        if (priorMeetings.length) {
+          const lastMeet = priorMeetings[priorMeetings.length - 1];
+          const homeWasHome = normalizeTeam(sport, lastMeet.home) === homeNorm;
+          const homeMargin = lastMeet.homeScore != null && lastMeet.awayScore != null
+            ? (homeWasHome ? lastMeet.homeScore - lastMeet.awayScore : lastMeet.awayScore - lastMeet.homeScore)
+            : null;
+
+          out.playedBeforeByTeam[`${sport}:${home}`] = true;
+          out.playedBeforeByTeam[`${sport}:${away}`] = true;
+          out.lostLastMeetingByTeam[`${sport}:${home}`] = homeMargin != null && homeMargin < 0;
+          out.lostLastMeetingByTeam[`${sport}:${away}`] = homeMargin != null && homeMargin > 0;
+        }
+
+        // Count games played by each team before this kickoff.
+        const homeBefore = schedule.filter(e =>
+          new Date(e.date) < when &&
+          (normalizeTeam(sport, e.home) === homeNorm || normalizeTeam(sport, e.away) === homeNorm)
+        ).length;
+        const awayBefore = schedule.filter(e =>
+          new Date(e.date) < when &&
+          (normalizeTeam(sport, e.home) === awayNorm || normalizeTeam(sport, e.away) === awayNorm)
+        ).length;
+
+        out.gameOfSeasonByTeam[`${sport}:${home}`] = homeBefore + 1;
+        out.gameOfSeasonByTeam[`${sport}:${away}`] = awayBefore + 1;
+
+        const homeHomeBefore = schedule.filter(e =>
+          new Date(e.date) < when &&
+          normalizeTeam(sport, e.home) === homeNorm
+        ).length;
+        const awayHomeBefore = schedule.filter(e =>
+          new Date(e.date) < when &&
+          normalizeTeam(sport, e.home) === awayNorm
+        ).length;
+
+        out.homeGameOfSeasonByTeam[`${sport}:${home}`] = homeHomeBefore + 1;
+        out.homeGameOfSeasonByTeam[`${sport}:${away}`] = awayHomeBefore + 1;
+
+        // Previous result and margin for each team.
+        for (const [side, teamNorm, teamFull] of [
+          ['home', homeNorm, home],
+          ['away', awayNorm, away],
+        ]) {
+          const prev = schedule
+            .filter(e =>
+              new Date(e.date) < when &&
+              (normalizeTeam(sport, e.home) === teamNorm || normalizeTeam(sport, e.away) === teamNorm)
+            )
+            .slice(-1)[0];
+
+          if (!prev || prev.homeScore == null || prev.awayScore == null) continue;
+
+          const wasHome = normalizeTeam(sport, prev.home) === teamNorm;
+          const margin = wasHome
+            ? prev.homeScore - prev.awayScore
+            : prev.awayScore - prev.homeScore;
+
+          out.prevResultByTeam[`${sport}:${teamFull}`] = margin > 0 ? 'W' : margin < 0 ? 'L' : 'T';
+          out.prevMarginByTeam[`${sport}:${teamFull}`] = margin;
+        }
+
+        // Season progress: how far into the season is this game
+        // for the home team. Uses the team's games played so far
+        // divided by a nominal full season, capped at 1.
+        const homeGamesSoFar = homeBefore + 1;
+        const seasonLengthGuess = {
+          NFL: 17, NCAAF: 12, NBA: 82, NCAAB: 30, NHL: 82, MLB: 162, MLS: 34, WNBA: 40,
+        }[sport] || 30;
+        out.seasonProgressByGame[g.id] = Math.min(homeGamesSoFar / seasonLengthGuess, 1);
+      });
+    }
+
     return out;
   }
 
-  // Fetch one day's events for one sport. Cache per (path, date).
+  // Fetch one day's events for one sport. Cache per (path,
+  // date). The TTL is short for recent days because a
+  // scoreboard fetched before a game finishes must not be
+  // trusted the next morning.
   async function getDaySchedule(path, date, sport) {
     const dateStr = fmtDate(date);
     const cacheKey = `${path}:${dateStr}`;
     const cache = readCache(SCHEDULE_CACHE_KEY);
     const entry = cache[cacheKey];
+    const ttl = ttlForDate(dateStr);
 
-    if (entry && (Date.now() - entry.t) < SCHEDULE_TTL_MS) {
+    if (entry && (Date.now() - entry.t) < ttl) {
       return { events: entry.events, hit: true };
     }
 
@@ -597,6 +818,16 @@ const EDGE_CONTEXT = (() => {
     writeCache(SCHEDULE_CACHE_KEY, cache);
 
     return { events, hit: false };
+  }
+
+  // Recent days expire fast. Older days are stable and can be
+  // held for a full day.
+  function ttlForDate(dateStr) {
+    const day = new Date(dateStr + 'T00:00:00Z');
+    const daysAgo = Math.floor((Date.now() - day.getTime()) / 86400000);
+    if (daysAgo < 2) return 60 * 60 * 1000;
+    if (daysAgo < 7) return 6 * 60 * 60 * 1000;
+    return 24 * 60 * 60 * 1000;
   }
 
   async function fetchEspnDay(path, dateStr, sport) {
@@ -624,7 +855,17 @@ const EDGE_CONTEXT = (() => {
         const hn = h.team?.displayName;
         const an = a.team?.displayName;
         if (!hn || !an) return;
-        out.push({ date: e.date, home: hn, away: an });
+
+        const hs = parseInt(h.score, 10);
+        const as = parseInt(a.score, 10);
+
+        out.push({
+          date: e.date,
+          home: hn,
+          away: an,
+          homeScore: isFinite(hs) ? hs : null,
+          awayScore: isFinite(as) ? as : null,
+        });
       });
       return out;
     } catch (e) {
@@ -773,13 +1014,6 @@ const EDGE_CONTEXT = (() => {
 
   // ============================================================
   // ── ATS + H2H ──
-  //
-  // Both tables are keyed on ESPN names. Games carry The Odds
-  // API spelling. The lookup is normalized on both sides via
-  // EDGE_TEAMS.normalize, and the row is stored against the
-  // game's own name so downstream code — algorithms.js,
-  // situations-engine.js — reads it without having to know
-  // which spelling the row uses.
   // ============================================================
 
   async function loadTrends(games) {
@@ -799,9 +1033,6 @@ const EDGE_CONTEXT = (() => {
     for (const sport of Object.keys(gamesBySport)) {
       const sportGames = gamesBySport[sport];
 
-      // ── ATS ──
-      // Fetch the whole sport's table. Small — a few hundred
-      // rows — and reliable.
       const atsRows = await fetchAll(
         `${url}/rest/v1/team_ats?sport=eq.${sport}&select=*&limit=1000`,
         key
@@ -828,9 +1059,6 @@ const EDGE_CONTEXT = (() => {
         }
       });
 
-      // ── H2H ──
-      // Same pattern: fetch the sport's table, build a
-      // normalized pair index, resolve each game against it.
       const h2hRows = await fetchAll(
         `${url}/rest/v1/matchup_ats?sport=eq.${sport}&select=*&limit=5000`,
         key
@@ -871,9 +1099,6 @@ const EDGE_CONTEXT = (() => {
     }
   }
 
-  // Uses team-aliases.js when loaded. The fallback strips
-  // punctuation and lowercases — less precise, but exact-match
-  // games still resolve.
   function normalizeTeam(sport, name) {
     if (!name) return '';
     if (window.EDGE_TEAMS && typeof window.EDGE_TEAMS.normalize === 'function') {
@@ -881,6 +1106,22 @@ const EDGE_CONTEXT = (() => {
       catch {}
     }
     return String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  // Season label, matching ats-tracker, power-engine, and
+  // trends-engine. Used here to zero the per-team game counter
+  // when a new season starts.
+  function seasonOf(sport, date) {
+    const m = date.getMonth() + 1;
+    const y = date.getFullYear();
+
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') {
+      return String(m >= 9 ? y : y - 1);
+    }
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      return String(m >= 3 ? y : y - 1);
+    }
+    return String(y);
   }
 
   // ============================================================
@@ -941,8 +1182,14 @@ const EDGE_CONTEXT = (() => {
       },
       schedule: {
         entries: Object.keys(schedule).length,
-        fresh: fresh(schedule, SCHEDULE_TTL_MS),
-        ttl_hours: SCHEDULE_TTL_MS / 3600000,
+        fresh: Object.values(schedule).filter(e => {
+          if (!e) return false;
+          const key = Object.keys(schedule).find(k => schedule[k] === e);
+          const dateStr = key ? key.split(':').pop() : null;
+          const ttl = dateStr ? ttlForDate(dateStr) : 24 * 60 * 60 * 1000;
+          return (now - e.t) < ttl;
+        }).length,
+        note: 'recent days expire hourly, older days daily',
       },
       session_entries: sessionMemo.size,
       session_ttl_minutes: SESSION_TTL_MS / 60000,
@@ -985,6 +1232,17 @@ const EDGE_CONTEXT = (() => {
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
+  }
+
+  async function parallelMap(items, concurrency, fn) {
+    const queue = [...items];
+    await Promise.all(Array.from({ length: concurrency }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (item === undefined) break;
+        await fn(item);
+      }
+    }));
   }
 
 })();
