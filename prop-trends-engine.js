@@ -1,34 +1,35 @@
 // ============================================================
-// EDGE — PROP TRENDS ENGINE v1.1
+// EDGE — PROP TRENDS ENGINE v1.2
 //
 // Reads player_game_stats and mines per-player, per-opponent
 // streaks like "Josh Allen 300+ pass yards vs NYJ — 10 straight".
 //
-// For every player against every opponent, tests a fixed set of
-// stat/threshold pairs (300+ pass yds, 2+ TD, 25+ points, etc.).
-// Writes the results to prop_trends.
+// v1.2 changes:
+//
+//   · Pitcher strikeouts are now mined. The 'K' threshold was
+//     reading the `strikeouts` column, which is filled from
+//     batting rows. A pitcher's strikeouts live in
+//     `pitching_strikeouts`, which the loader never selected,
+//     so any "K" trend was really a batter strikeout streak.
+//     Both are now separate entries: `strikeouts` stays as a
+//     batter line, `pitching_strikeouts` is the pitcher prop.
+//
+//   · Season labels match ats-tracker v3.0 and the rest of the
+//     pipeline. Cross-year sports carry the year the season
+//     started. Single-year sports carry the calendar year.
+//
+// v1.1 changes (retained):
+//   · THRESHOLDS is built from per-sport templates via
+//     cloneThresholds(). Each key owns its own array and its
+//     own inner objects.
 //
 // Run once per sport. Reads only from the local database — no
 // external fetches. Takes seconds.
-//
-// v1.1 changes:
-//
-//   · THRESHOLDS now holds independent objects per sport. The
-//     v1.0 code did THRESHOLDS.NCAAF = THRESHOLDS.NFL and the
-//     same for NCAAB, which made the two keys point at the same
-//     array — and the array's inner objects were shared too.
-//     Nothing currently mutates the config, so the bug is latent
-//     rather than active. But the next time someone adds a
-//     college-only threshold they would silently also change the
-//     pro sport, and the mistake would not surface until the two
-//     sports' prop trends disagreed in a way that was hard to
-//     trace. Each key now owns its own array and its own objects,
-//     produced by cloning the template at module load.
 // ============================================================
 
 const EDGE_PROP_TRENDS = (() => {
 
-  const BUILD = 'props-20260924-01';
+  const BUILD = 'props-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -50,26 +51,33 @@ const EDGE_PROP_TRENDS = (() => {
       label: t.label,
       thresholds: Array.isArray(t.thresholds) ? t.thresholds.slice() : t.thresholds,
       computed: t.computed || false,
+      // Some stats only make sense for certain position groups.
+      // When set, the row's position_group must be one of these.
+      groups: Array.isArray(t.groups) ? t.groups.slice() : null,
     }));
   }
 
   // ============================================================
   // ── THRESHOLDS ──
-  // Each entry: { stat, label, thresholds, computed? }
+  // Each entry: { stat, label, thresholds, computed?, groups? }
   //
   // `computed` marks a stat that is not a raw column and must be
   // derived from other stats per row — for hockey/soccer points,
   // goals + assists.
+  //
+  // `groups` gates a rule by position group. MLB has batter and
+  // pitcher stats on the same row shape, so both variants need
+  // to declare which group they apply to.
   // ============================================================
 
   const NFL_THRESHOLDS = [
-    { stat: 'passing_yards',    label: 'pass yds',   thresholds: [200, 250, 300, 350] },
-    { stat: 'passing_tds',      label: 'pass TD',    thresholds: [1, 2, 3] },
-    { stat: 'rushing_yards',    label: 'rush yds',   thresholds: [50, 75, 100, 125] },
-    { stat: 'rushing_tds',      label: 'rush TD',    thresholds: [1, 2] },
-    { stat: 'receptions',       label: 'receptions', thresholds: [4, 6, 8, 10] },
-    { stat: 'receiving_yards',  label: 'rec yds',    thresholds: [50, 75, 100] },
-    { stat: 'receiving_tds',    label: 'rec TD',     thresholds: [1, 2] },
+    { stat: 'passing_yards',    label: 'pass yds',   thresholds: [200, 250, 300, 350], groups: ['OFFENSE_SKILL'] },
+    { stat: 'passing_tds',      label: 'pass TD',    thresholds: [1, 2, 3], groups: ['OFFENSE_SKILL'] },
+    { stat: 'rushing_yards',    label: 'rush yds',   thresholds: [50, 75, 100, 125], groups: ['OFFENSE_SKILL'] },
+    { stat: 'rushing_tds',      label: 'rush TD',    thresholds: [1, 2], groups: ['OFFENSE_SKILL'] },
+    { stat: 'receptions',       label: 'receptions', thresholds: [4, 6, 8, 10], groups: ['OFFENSE_SKILL'] },
+    { stat: 'receiving_yards',  label: 'rec yds',    thresholds: [50, 75, 100], groups: ['OFFENSE_SKILL'] },
+    { stat: 'receiving_tds',    label: 'rec TD',     thresholds: [1, 2], groups: ['OFFENSE_SKILL'] },
   ];
 
   const NBA_THRESHOLDS = [
@@ -80,24 +88,34 @@ const EDGE_PROP_TRENDS = (() => {
   ];
 
   const MLB_THRESHOLDS = [
-    { stat: 'hits',       label: 'hits', thresholds: [1, 2, 3] },
-    { stat: 'home_runs',  label: 'HR',   thresholds: [1, 2] },
-    { stat: 'rbis',       label: 'RBIs', thresholds: [1, 2, 3] },
-    { stat: 'runs',       label: 'runs', thresholds: [1, 2] },
-    { stat: 'strikeouts', label: 'K',    thresholds: [5, 7, 10] },
+    // Batter lines. Gated on the batting position groups so a
+    // pitcher's batting row (rare, interleague) does not count
+    // against these.
+    { stat: 'hits',       label: 'hits', thresholds: [1, 2, 3], groups: ['CATCHER', 'INFIELD', 'OUTFIELD', 'DH', 'HITTER'] },
+    { stat: 'home_runs',  label: 'HR',   thresholds: [1, 2],    groups: ['CATCHER', 'INFIELD', 'OUTFIELD', 'DH', 'HITTER'] },
+    { stat: 'rbis',       label: 'RBIs', thresholds: [1, 2, 3], groups: ['CATCHER', 'INFIELD', 'OUTFIELD', 'DH', 'HITTER'] },
+    { stat: 'runs',       label: 'runs', thresholds: [1, 2],    groups: ['CATCHER', 'INFIELD', 'OUTFIELD', 'DH', 'HITTER'] },
+    { stat: 'strikeouts', label: 'batter K', thresholds: [1, 2, 3], groups: ['CATCHER', 'INFIELD', 'OUTFIELD', 'DH', 'HITTER'] },
+
+    // Pitcher lines. `pitching_strikeouts` is the column filled
+    // from the pitching category. The old code read `strikeouts`,
+    // which held the batter number, so a K prop was measuring the
+    // wrong thing entirely.
+    { stat: 'pitching_strikeouts', label: 'pitcher K', thresholds: [4, 5, 6, 7, 8, 10], groups: ['PITCHER_START', 'PITCHER_RELIEF', 'PITCHER'] },
+    { stat: 'earned_runs',         label: 'ER',        thresholds: [0, 1, 2], groups: ['PITCHER_START', 'PITCHER_RELIEF', 'PITCHER'] },
   ];
 
   const NHL_THRESHOLDS = [
-    { stat: 'goals',   label: 'goals',   thresholds: [1, 2] },
-    { stat: 'assists', label: 'assists', thresholds: [1, 2] },
-    { stat: 'points',  label: 'points',  thresholds: [1, 2, 3], computed: true },
-    { stat: 'saves',   label: 'saves',   thresholds: [25, 30, 35] },
+    { stat: 'goals',   label: 'goals',   thresholds: [1, 2], groups: ['FORWARD', 'DEFENSE'] },
+    { stat: 'assists', label: 'assists', thresholds: [1, 2], groups: ['FORWARD', 'DEFENSE'] },
+    { stat: 'points',  label: 'points',  thresholds: [1, 2, 3], computed: true, groups: ['FORWARD', 'DEFENSE'] },
+    { stat: 'saves',   label: 'saves',   thresholds: [25, 30, 35], groups: ['GOALIE'] },
   ];
 
   const MLS_THRESHOLDS = [
-    { stat: 'goals',   label: 'goals',   thresholds: [1, 2] },
-    { stat: 'assists', label: 'assists', thresholds: [1] },
-    { stat: 'saves',   label: 'saves',   thresholds: [3, 5, 7] },
+    { stat: 'goals',   label: 'goals',   thresholds: [1, 2], groups: ['FORWARD', 'MIDFIELD', 'DEFENSE'] },
+    { stat: 'assists', label: 'assists', thresholds: [1], groups: ['FORWARD', 'MIDFIELD', 'DEFENSE'] },
+    { stat: 'saves',   label: 'saves',   thresholds: [3, 5, 7], groups: ['GOALKEEPER'] },
   ];
 
   // Every key owns its own array and its own inner objects. No two
@@ -113,11 +131,8 @@ const EDGE_PROP_TRENDS = (() => {
     MLS:   cloneThresholds(MLS_THRESHOLDS),
   };
 
-  // Streak shorter than this doesn't qualify on its own.
   const MIN_STREAK = 3;
-  // Hit rate at or above this qualifies regardless of current streak.
   const MIN_HIT_RATE = 0.70;
-  // Minimum games against an opponent before anything is written.
   const MIN_GAMES_VS_OPPONENT = 3;
 
   return {
@@ -169,7 +184,6 @@ const EDGE_PROP_TRENDS = (() => {
 
     if (!stats.length) return { rows_written: 0, qualified: 0 };
 
-    // Group by player + opponent
     log('  grouping by player and opponent');
     const groups = {};
     stats.forEach(row => {
@@ -181,6 +195,7 @@ const EDGE_PROP_TRENDS = (() => {
           player_name: row.player_name,
           team_name: row.team_name,
           opponent: row.opponent,
+          position_group: row.position_group || null,
           games: [],
         };
       }
@@ -188,13 +203,18 @@ const EDGE_PROP_TRENDS = (() => {
     });
     log(`  ${Object.keys(groups).length} player-opponent pairs`);
 
-    // Evaluate each group
     const allRows = [];
     Object.values(groups).forEach(g => {
       g.games.sort((a, b) => new Date(a.game_date) - new Date(b.game_date));
       if (g.games.length < MIN_GAMES_VS_OPPONENT) return;
 
       thresholds.forEach(t => {
+        // Position-group gate. A pitcher row is not evaluated
+        // against a batter threshold, and vice versa.
+        if (Array.isArray(t.groups) && t.groups.length) {
+          if (!g.position_group || !t.groups.includes(g.position_group)) return;
+        }
+
         t.thresholds.forEach(thr => {
           const row = evaluateStreak(sport, g, t, thr);
           if (row) allRows.push(row);
@@ -216,10 +236,8 @@ const EDGE_PROP_TRENDS = (() => {
   function evaluateStreak(sport, group, threshold, limit) {
     const stat = threshold.stat;
 
-    // Build the sequence of (date, value, hit?)
     const seq = group.games.map(g => {
       let v = g[stat];
-      // Hockey/soccer "points" is goals + assists, computed on the fly.
       if (threshold.computed && stat === 'points') {
         v = (Number(g.goals) || 0) + (Number(g.assists) || 0);
       }
@@ -236,14 +254,12 @@ const EDGE_PROP_TRENDS = (() => {
     const hitCount = hits.filter(Boolean).length;
     const hitRate = hitCount / seq.length;
 
-    // Current streak: consecutive hits from the end backwards
     let current = 0;
     for (let i = hits.length - 1; i >= 0; i--) {
       if (hits[i]) current++;
       else break;
     }
 
-    // Longest streak anywhere in the sequence
     let longest = 0, run = 0;
     hits.forEach(h => {
       if (h) { run++; longest = Math.max(longest, run); }
@@ -272,6 +288,7 @@ const EDGE_PROP_TRENDS = (() => {
       player_name: group.player_name,
       team_name: group.team_name,
       opponent: group.opponent,
+      position_group: group.position_group,
       stat_name: stat,
       threshold: limit,
       direction: 'over',
@@ -299,6 +316,9 @@ const EDGE_PROP_TRENDS = (() => {
 
   // ============================================================
   // ── LOAD ──
+  //
+  // position_group is included so the threshold gate works.
+  // pitching_strikeouts is included for the pitcher-K line.
   // ============================================================
 
   async function loadPlayerStats(sport, url, key) {
@@ -308,11 +328,12 @@ const EDGE_PROP_TRENDS = (() => {
       try {
         const res = await fetch(
           `${url}/rest/v1/player_game_stats?sport=eq.${sport}` +
-          `&select=player_id,player_name,team_name,opponent,game_date,` +
+          `&select=player_id,player_name,team_name,opponent,game_date,position_group,` +
           `passing_yards,passing_tds,rushing_yards,rushing_tds,` +
           `receptions,receiving_yards,receiving_tds,` +
           `points,rebounds,assists,three_made,` +
           `hits,home_runs,rbis,runs,strikeouts,` +
+          `earned_runs,pitching_strikeouts,` +
           `goals,saves` +
           `&order=game_date.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
@@ -341,8 +362,6 @@ const EDGE_PROP_TRENDS = (() => {
       'Content-Type': 'application/json', Prefer: 'return=minimal',
     };
 
-    // Clear this sport's previous rows first. prop_trends is fully
-    // recomputed each run, so a clean slate is safe.
     try {
       await fetch(`${url}/rest/v1/prop_trends?sport=eq.${sport}`, {
         method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
@@ -373,21 +392,25 @@ const EDGE_PROP_TRENDS = (() => {
   }
 
   // ============================================================
-  // ── UTILITIES ──
+  // ── SEASON LABEL ──
+  //
+  // Matches ats-tracker v3.0, power-engine v4.3, trends-engine
+  // v2.0 and the rest of the pipeline. Cross-year sports carry
+  // the year the season started. Single-year sports carry the
+  // calendar year.
   // ============================================================
 
   function seasonOf(sport, date) {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
-    const cross = (startMonth) => (m >= startMonth ? y : y - 1);
-    switch (sport) {
-      case 'NBA':
-      case 'NHL':
-      case 'NCAAB': return cross(9);
-      case 'NFL':
-      case 'NCAAF': return cross(3);
-      default:      return y;
+
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
+      return String(m >= 9 ? y : y - 1);
     }
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      return String(m >= 3 ? y : y - 1);
+    }
+    return String(y);
   }
 
   function mk(onProgress) {
