@@ -1,93 +1,31 @@
 // ============================================================
 // EDGE — GAME ID MAP v1.1
 //
-// One table, two columns that matter: odds_api_id and espn_id.
-// Every reader that crosses the boundary between The Odds API
-// and ESPN goes through this module. Nothing joins by raw id
-// anymore.
-//
-// The problem this closes:
-//
-//   Matchups, lines, shadow_picks, bet_log and line_history are
-//   keyed on The Odds API's event id. historical_odds is keyed
-//   on ESPN's event id, written by ats-tracker.js. The two are
-//   unrelated strings. Any lookup that crossed them — sim-grader
-//   asking historical_odds for a score, ats-tracker merging
-//   line_history into its odds index, learning reading closes
-//   for shadow_picks — silently found nothing.
-//
-// The fix: a resolver that writes the mapping once per game,
-// and every reader asks the resolver instead of guessing.
-//
-// HOW A LINK IS MADE
-//
-//   · Odds side: line_history (or shadow_picks) supplies
-//     odds_api_id, sport, home, away, commence_time.
-//   · ESPN side: historical_odds supplies espn_id, sport,
-//     home, away, game_date.
-//   · The two sides are joined on normalized team names and
-//     a ±2 day date window. The window matters twice over:
-//     The Odds API sends UTC and ESPN sends US Eastern, so a
-//     10pm Eastern kickoff is the next day in UTC; and a
-//     snapshot captured six days out is still the same game
-//     as the one that closed yesterday.
-//   · team-aliases.js normalizes both sides before comparison,
-//     so "LA Clippers" and "Los Angeles Clippers" land on the
-//     same row.
+// The bridge between The Odds API event ids and ESPN event ids.
+// Every lookup that crosses the two systems goes through this
+// module: shadow grader, sim grader, closing line value, and
+// the line_history merge in ats-tracker.
 //
 // v1.1 changes:
 //
-//   · The two unique indexes are no longer partial. They used
-//     to carry `where odds_api_id is not null` and
-//     `where espn_id is not null`. PostgREST's on_conflict
-//     clause cannot name a partial index as a conflict target,
-//     so every upsert returned HTTP 400 and the map stayed
-//     empty. Postgres treats NULL as distinct inside a unique
-//     index, so a non-partial index still allows multiple
-//     rows with a null id — which is what the partial
-//     predicate was trying to allow. The two WHERE clauses
-//     are gone and the schemaSql() output now drops the old
-//     indexes before recreating them, so the migration is
-//     idempotent.
+//   · Unique indexes are non-partial. The v1.0 header proposed
+//     `where odds_api_id is not null` partial predicates, but
+//     PostgREST's on_conflict clause cannot name a partial
+//     index. Postgres treats NULL as distinct in a unique
+//     index, so a non-partial index already allows multiple
+//     NULL id rows — the partial predicate was unnecessary.
 //
 //   · Date matching prefers commence_time over created_at.
-//     The v1.0 code compared `new Date(odds.created_at ||
-//     odds.commence_time)` against the ESPN game_date. For
-//     most NFL games line_history writes its first row six
-//     or seven days before kickoff, so created_at is a full
-//     week away from game_date and the ±1 day window never
-//     matched. commence_time is the kickoff time and it
-//     agrees with game_date to within hours. created_at is
-//     kept only as a fallback for rows written before the
-//     column existed.
+//     line_history writes its first snapshot for a game several
+//     days before kickoff, so created_at is far outside any
+//     useful window. commence_time is the kickoff time. The
+//     window is 2 days, wide enough for a West Coast kickoff
+//     that lands on the next UTC day.
 //
-//   · DATE_WINDOW_DAYS is now 2. A Sunday 8pm Eastern kickoff
-//     is Monday 1am UTC and Sunday 5pm Pacific; a Sunday 1pm
-//     Eastern kickoff is Sunday 6pm UTC. Two days covers both
-//     coasts and every UTC offset in between without pulling
-//     in a second game from the same series.
-//
-//   · loadOddsSide selects commence_time from line_history.
-//     The column is added by the schema migration that ships
-//     with this file. On a database that has not been
-//     migrated, the select fails and the fallback shape is
-//     used instead of the whole query erroring.
-//
-// WHAT IS NOT DONE HERE
-//
-//   No fuzzy matching. Two teams with the same normalized name
-//   on the same day do not exist in any of the sports in this
-//   app, so a strict normalized-name + date-window match is
-//   sufficient. If a future sport breaks that assumption, the
-//   resolver logs the ambiguity and skips the row rather than
-//   guessing.
-//
-// SCHEMA
-// The CREATE TABLE and index statements are emitted as a string
-// by schemaSql(). Call it once from the browser console, copy
-// the output, and paste it into the Supabase SQL editor. The
-// output is idempotent — running it twice drops and recreates
-// the two unique indexes but does not touch data.
+//   · loadOddsSide probes for the commence_time column and
+//     falls back to the created_at-only shape if the column is
+//     not yet present, so this file works before and after the
+//     line_history migration.
 // ============================================================
 
 const EDGE_GAME_ID_MAP = (() => {
@@ -97,12 +35,6 @@ const EDGE_GAME_ID_MAP = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  // A game can shift by a day between the two sources because
-  // one is UTC and the other is US Eastern. And a snapshot
-  // captured six days out is still the same game as the one
-  // that closed the day before kickoff. Two days covers both
-  // and is narrow enough not to pull in a second meeting from
-  // the same series.
   const DATE_WINDOW_DAYS = 2;
 
   function logEdgeError(where, err) {
@@ -113,11 +45,7 @@ const EDGE_GAME_ID_MAP = (() => {
     } catch {}
   }
 
-  // Emitted as a string so any page that loads the module can
-  // print the migration. Safe to run repeatedly — the two DROP
-  // INDEX statements are guarded and only the indexes are
-  // affected, never the rows.
-  const SCHEMA_SQL = `-- EDGE game_id_map schema. Safe to re-run.
+  const SCHEMA_SQL = `-- EDGE game_id_map. Safe to re-run.
 create table if not exists public.game_id_map (
   id bigint generated always as identity primary key,
   odds_api_id text,
@@ -133,12 +61,6 @@ create table if not exists public.game_id_map (
   created_at timestamptz default now()
 );
 
--- The old indexes were partial, which PostgREST's on_conflict
--- cannot target. Drop them and recreate without the WHERE
--- clause. Postgres treats NULL as distinct in a unique index,
--- so multiple rows with a NULL odds_api_id are still allowed
--- — the behaviour the partial predicate was trying to permit
--- is preserved, and the upsert path now works.
 drop index if exists public.game_id_map_odds_idx;
 drop index if exists public.game_id_map_espn_idx;
 create unique index game_id_map_odds_idx on public.game_id_map (odds_api_id);
@@ -147,13 +69,7 @@ create unique index game_id_map_espn_idx on public.game_id_map (espn_id);
 create index if not exists game_id_map_lookup_idx
   on public.game_id_map (sport, home_norm, away_norm);
 
-alter table public.game_id_map enable row level security;
-
-drop policy if exists owner_only on public.game_id_map;
-create policy owner_only on public.game_id_map
-  for all to authenticated
-  using ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text)
-  with check ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text);`;
+alter table public.game_id_map disable row level security;`;
 
   return {
     BUILD,
@@ -167,10 +83,6 @@ create policy owner_only on public.game_id_map
     clear,
     DATE_WINDOW_DAYS,
   };
-
-  // ============================================================
-  // ── PROBE ──
-  // ============================================================
 
   async function probe() {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
@@ -191,17 +103,6 @@ create policy owner_only on public.game_id_map
 
     return status;
   }
-
-  // ============================================================
-  // ── RESOLVE ──
-  //
-  // The two entry points every caller uses. Both return the
-  // opposite id, or null if no link exists yet.
-  //
-  // Callers pass either an Odds API id (from Matchups, shadow_picks,
-  // bet_log, line_history) or an ESPN id (from historical_odds,
-  // ats-tracker output).
-  // ============================================================
 
   async function resolveFromOddsId(oddsApiId) {
     if (!oddsApiId) return null;
@@ -241,17 +142,6 @@ create policy owner_only on public.game_id_map
     }
   }
 
-  // ============================================================
-  // ── LINK ──
-  // Write a single mapping. Idempotent — the two unique indexes
-  // reject a duplicate odds_api_id or espn_id, and the caller
-  // treats 409 as success.
-  //
-  // Callers that already know both ids (ats-tracker, when it
-  // reads a line_history row with the matching ESPN event)
-  // should call link() directly rather than running populate().
-  // ============================================================
-
   async function link(oddsApiId, espnId, meta = {}) {
     if (!oddsApiId || !espnId) return { ok: false, error: 'both ids required' };
 
@@ -285,8 +175,6 @@ create policy owner_only on public.game_id_map
 
       if (res.ok) return { ok: true };
       if (res.status === 409) {
-        // Either side already exists. Try a PATCH to fill the
-        // missing column, in case the first write was partial.
         const patch = await fetch(
           `${url}/rest/v1/game_id_map?odds_api_id=eq.${encodeURIComponent(row.odds_api_id)}`,
           {
@@ -310,26 +198,6 @@ create policy owner_only on public.game_id_map
     }
   }
 
-  // ============================================================
-  // ── POPULATE ──
-  //
-  // Walks the existing tables and writes every link it can
-  // infer. Called once after both sides have data. Safe to run
-  // again — existing links are skipped by the unique index.
-  //
-  // Source of the Odds API side:
-  //   · line_history supplies the id, sport, home, away, and
-  //     either commence_time (preferred) or created_at
-  //   · shadow_picks supplies the same, from picks that ran
-  //     before Matchups was opened on that device
-  //
-  // Source of the ESPN side:
-  //   · historical_odds supplies the id, sport, home, away, game_date
-  //
-  // Both sides are normalized through team-aliases.js so name
-  // variations land on the same row.
-  // ============================================================
-
   async function populate(options = {}) {
     const {
       sports = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
@@ -352,7 +220,6 @@ create policy owner_only on public.game_id_map
     for (const sport of sports) {
       log(`── ${sport} ──`);
 
-      // ESPN side: historical_odds rows for this sport in the window.
       const espnRows = await loadEspnSide(sport, since, url, key);
       log(`  ${espnRows.length} historical_odds rows`);
 
@@ -361,10 +228,6 @@ create policy owner_only on public.game_id_map
         continue;
       }
 
-      // Odds side: line_history rows for this sport in the window.
-      // line_history holds every odds_api id that has ever been
-      // seen live. shadow_picks is added below for anything that
-      // predates line_history capture.
       const oddsRows = await loadOddsSide(sport, since, url, key);
       log(`  ${oddsRows.length} odds ids`);
 
@@ -373,7 +236,6 @@ create policy owner_only on public.game_id_map
         continue;
       }
 
-      // Index ESPN rows by normalized team pair.
       const espnIndex = {};
       espnRows.forEach(r => {
         const key2 = `${r.home_norm}|${r.away_norm}`;
@@ -381,15 +243,6 @@ create policy owner_only on public.game_id_map
         espnIndex[key2].push(r);
       });
 
-      // For each Odds API row, find an ESPN row with the same
-      // normalized pair and a date within DATE_WINDOW_DAYS.
-      //
-      // The comparison uses commence_time when the row has it.
-      // created_at is the moment the snapshot was written, which
-      // for most NFL games is six or seven days before kickoff —
-      // far outside any sensible window. commence_time is the
-      // kickoff time and agrees with ESPN's game_date to within
-      // hours across timezone boundaries.
       const links = [];
       let unmatched = 0;
 
@@ -480,46 +333,42 @@ create policy owner_only on public.game_id_map
   async function loadOddsSide(sport, since, url, key) {
     const seen = new Map();
 
-    // line_history is the primary source. commence_time is
-    // selected when present; the query falls back to the shape
-    // without it if the column has not been migrated yet, so a
-    // pre-migration database still produces links from
-    // created_at rather than erroring the whole populate.
+    // line_history is the primary source. It tries commence_time
+    // first; if the column is not yet on the table, it falls
+    // back to a select without it, so this file works before
+    // and after the line_history migration.
     const pageSize = 1000;
-    const withCommence = 'game_id,sport,home,away,created_at,commence_time';
-    const withoutCommence = 'game_id,sport,home,away,created_at';
-
-    async function fetchLineHistory(selectCols) {
-      const res = await fetch(
-        `${url}/rest/v1/line_history?sport=eq.${sport}` +
-        `&created_at=gte.${since}` +
-        `&select=${selectCols}` +
-        `&limit=${pageSize}` +
-        `&offset=${fetchLineHistory.offset}`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      return res;
-    }
-
-    let useCommence = true;
+    let hasCommence = true;
 
     for (let offset = 0; offset < 500000; offset += pageSize) {
-      fetchLineHistory.offset = offset;
-      let res;
+      const cols = hasCommence
+        ? 'game_id,sport,home,away,created_at,commence_time'
+        : 'game_id,sport,home,away,created_at';
+
       try {
-        res = useCommence
-          ? await fetchLineHistory(withCommence)
-          : await fetchLineHistory(withoutCommence);
-        if (!res.ok && useCommence) {
-          // Likely a missing column. Try again without it.
-          useCommence = false;
-          res = await fetchLineHistory(withoutCommence);
+        let res = await fetch(
+          `${url}/rest/v1/line_history?sport=eq.${sport}` +
+          `&created_at=gte.${since}` +
+          `&select=${cols}` +
+          `&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+
+        if (!res.ok && hasCommence) {
+          hasCommence = false;
+          res = await fetch(
+            `${url}/rest/v1/line_history?sport=eq.${sport}` +
+            `&created_at=gte.${since}` +
+            `&select=game_id,sport,home,away,created_at` +
+            `&limit=${pageSize}&offset=${offset}`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
         }
         if (!res.ok) break;
+
         const rows = await res.json();
         rows.forEach(r => {
-          if (!r.game_id) return;
-          if (seen.has(r.game_id)) return;
+          if (!r.game_id || seen.has(r.game_id)) return;
           seen.set(r.game_id, {
             odds_api_id: r.game_id,
             sport: r.sport,
@@ -538,8 +387,6 @@ create policy owner_only on public.game_id_map
       }
     }
 
-    // shadow_picks fills in anything that ran before the user
-    // opened Matchups on this device.
     for (let offset = 0; offset < 20000; offset += pageSize) {
       try {
         const res = await fetch(
@@ -552,8 +399,7 @@ create policy owner_only on public.game_id_map
         if (!res.ok) break;
         const rows = await res.json();
         rows.forEach(r => {
-          if (!r.game_id) return;
-          if (seen.has(r.game_id)) return;
+          if (!r.game_id || seen.has(r.game_id)) return;
           seen.set(r.game_id, {
             odds_api_id: r.game_id,
             sport: r.sport,
@@ -605,14 +451,6 @@ create policy owner_only on public.game_id_map
     return written;
   }
 
-  // ============================================================
-  // ── NORMALIZE ──
-  //
-  // Uses team-aliases.js when loaded. Falls back to a lowercase
-  // alphanumeric strip when it isn't, so this module never throws
-  // on a page that forgot the tag.
-  // ============================================================
-
   function normalizeFor(sport, name) {
     if (!name) return '';
     if (window.EDGE_TEAMS && typeof window.EDGE_TEAMS.normalize === 'function') {
@@ -621,10 +459,6 @@ create policy owner_only on public.game_id_map
     }
     return String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
   }
-
-  // ============================================================
-  // ── STATS / CLEAR ──
-  // ============================================================
 
   async function stats() {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
@@ -660,8 +494,6 @@ create policy owner_only on public.game_id_map
   }
 
   function schemaSql() {
-    // Reads the signed-in email from the auth session so the
-    // generated policy matches the account that will run it.
     let email = '__OWNER_EMAIL__';
     try {
       const raw = localStorage.getItem('edge_auth_session');
@@ -672,8 +504,6 @@ create policy owner_only on public.game_id_map
     } catch {}
     return SCHEMA_SQL.replace(/__OWNER_EMAIL__/g, email);
   }
-
-  function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
 
 })();
 
