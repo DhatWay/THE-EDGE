@@ -35,6 +35,8 @@
   <script src="situation-results.js"></script>
   <script src="situations-engine.js"></script>
   <script src="backfill.js"></script>
+  <script src="game-id-map.js"></script>
+  <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -126,6 +128,22 @@
     .form-select:focus { outline: none; border-color: var(--gold); }
     .submit-btn { width: 100%; background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; padding: 14px; cursor: pointer; transition: opacity 0.2s; }
     .submit-btn:hover { opacity: 0.85; }
+    .submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .candidate-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .candidate {
+      background: var(--bg4); border: 1px solid var(--border);
+      padding: 10px 12px; cursor: pointer; transition: all 0.15s;
+      font-family: 'Barlow Condensed', sans-serif;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .candidate:hover { border-color: var(--gold); background: var(--gold-glow); }
+    .candidate.selected { border-color: var(--gold); background: var(--gold-glow); }
+    .candidate .c-sport { font-size: 10px; letter-spacing: 2px; padding: 2px 6px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); }
+    .candidate .c-match { flex: 1; font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .candidate .c-side { font-size: 12px; color: var(--gold); }
+    .candidate .c-conf { font-size: 11px; color: var(--text-dim); }
+    .candidate-note { font-size: 11px; color: var(--text-dim); font-weight: 300; margin-top: 6px; line-height: 1.5; }
 
     .raw-tabs { display: flex; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
     .raw-tabs::-webkit-scrollbar { display: none; }
@@ -210,7 +228,7 @@
           <div class="pipeline-mode math" id="pipelineMode">DETERMINISTIC</div>
         </div>
         <div class="pipeline-desc">
-          Runs power ratings → algorithms → governor → physics. In AI-assisted mode, also sends actionable picks to Claude for review.
+          Runs power ratings → algorithms → governor → physics. In AI-assisted mode, also sends actionable picks to Claude for review. Optionally grades yesterday's ungraded picks at the end.
         </div>
         <div class="pipeline-actions">
           <button class="pipeline-btn" id="runPipelineBtn" onclick="runPipeline()">▶ Run Pipeline</button>
@@ -225,7 +243,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries.
+          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks → Grade Sim Bets.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -264,7 +282,7 @@
           <div class="pipeline-title">Build Rosters</div>
         </div>
         <div class="pipeline-desc">
-          Reads team list from power_ratings, fetches every roster from ESPN, assigns per-player ratings, computes contributions. Seeds the players table.
+          Reads team list from power_ratings, fetches every roster from ESPN, assigns per-player ratings, computes contributions. Rebuilds preserve enriched ratings when the player's position and starter status have not changed.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runRosterBtn" onclick="runRosterBuild()">▲ Build Rosters</button>
@@ -277,7 +295,7 @@
           <div class="pipeline-title">Enrich Rosters</div>
         </div>
         <div class="pipeline-desc">
-          Pulls real per-player production stats from ESPN and refines ratings from the 50 baseline to a 40-95 scale. Run after Build Rosters.
+          Reads current-season production from player_game_stats, z-scores per position group, refines ratings from the 50 baseline to a 40-95 scale.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runEnrichBtn" onclick="runRosterEnrich()">▲ Enrich Rosters</button>
@@ -290,7 +308,7 @@
           <div class="pipeline-title">Build ATS &amp; H2H</div>
         </div>
         <div class="pipeline-desc">
-          Builds team ATS form and head-to-head spread history from several seasons of results. Feeds the trend family and the analysis page.
+          Builds team ATS form and head-to-head spread history from several seasons of results. Writes scores with every historical_odds row.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runAtsBtn" onclick="runAtsBuild()">▲ Build ATS &amp; H2H</button>
@@ -303,7 +321,7 @@
           <div class="pipeline-title">Backfill Scores</div>
         </div>
         <div class="pipeline-desc">
-          Reads historical_odds, pulls ESPN scoreboards per date, matches on date + team name, writes home_score and away_score. Resumable. Run once per sport.
+          Fills home_score and away_score on historical_odds rows that lack them. Matches by ESPN event id, which is the row's own game_id, with a ±1 day fetch window to cover the UTC/Eastern date shift. Resumable.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runScoreBtn" onclick="runScoreBackfill()">▲ Backfill Scores</button>
@@ -316,7 +334,7 @@
           <div class="pipeline-title">Backfill &amp; Calibration</div>
         </div>
         <div class="pipeline-desc">
-          Pulls multiple completed seasons per sport, rates each in order with carry-over between seasons, walks the season forward to measure projection error on unseen games, fits the model constants (home advantage, margin scale) to real results, and measures how much the model adds beyond the closing line. Writes model_calibration, which the governor reads on every run. Without this the model uses compiled defaults it never validated.
+          Pulls multiple completed seasons per sport, rates each in order with carry-over, walks forward to measure projection error on unseen games, fits the model constants to real results, and measures how much the model adds beyond the closing line. Writes model_calibration.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runBackfillBtn" onclick="runBackfill()">▲ Run Backfill &amp; Calibration</button>
@@ -329,7 +347,7 @@
           <div class="pipeline-title">Build Trends</div>
         </div>
         <div class="pipeline-desc">
-          Mines historical results for repeatable situations. Writes the trends table that feeds the trend family and the Trend Bets page.
+          Mines historical results for repeatable situations. Rest and previous result reset at season boundaries. Writes the trends table.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runTrendsBtn" onclick="runTrendsBuild()">▲ Build Trends</button>
@@ -342,7 +360,7 @@
           <div class="pipeline-title">Pull Player Stats</div>
         </div>
         <div class="pipeline-desc">
-          Walks every completed game in historical_odds, pulls the ESPN box score for each, writes one row per player per game to player_game_stats. Resumable.
+          Walks every completed game in historical_odds, pulls the ESPN box score, writes one row per player per game to player_game_stats. Writes are idempotent — a partial failure can be retried without duplicating.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runBoxScoreBtn" onclick="runBoxScoreFetch()">▲ Fetch Box Scores</button>
@@ -355,7 +373,7 @@
           <div class="pipeline-title">Build Prop Trends</div>
         </div>
         <div class="pipeline-desc">
-          Mines player_game_stats for per-player streaks against specific opponents. Writes the prop_trends table. Seconds to run.
+          Mines player_game_stats for per-player streaks against specific opponents. Pitcher strikeouts and batter strikeouts are separate lines.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runPropTrendsBtn" onclick="runPropTrendsBuild()">▲ Build Prop Trends</button>
@@ -374,6 +392,45 @@
           <button class="pipeline-btn secondary" id="runInjuryBtn" onclick="refreshInjuries()">↻ Refresh Injuries</button>
         </div>
         <div class="pipeline-log" id="injuryLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Backfill Game ID Map</div>
+        </div>
+        <div class="pipeline-desc">
+          Bridges the two id systems. The Odds API's event id and ESPN's event id are unrelated strings; nothing joins across them until a row exists in game_id_map. This writes every link it can infer from historical_odds and line_history.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn secondary" id="runGidMapBtn" onclick="runGameIdBackfill()">▲ Backfill Game ID Map</button>
+        </div>
+        <div class="pipeline-log" id="gidMapLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Grade Shadow Picks</div>
+        </div>
+        <div class="pipeline-desc">
+          Reads ungraded shadow_picks, resolves each game_id to its ESPN id, loads the final score, writes W/L/P and P&amp;L. History, Performance, and the learning loop all read the result column this fills.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn blue" id="runShadowGradeBtn" onclick="runShadowGrader()">✓ Grade Shadow Picks</button>
+        </div>
+        <div class="pipeline-log" id="shadowGradeLog">Idle.</div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">Grade Sim Bets</div>
+        </div>
+        <div class="pipeline-desc">
+          Reads pending sim bets from bet_log, resolves their ids through game_id_map, loads final scores, and writes the result back. Updates the local sim bankroll ledger.
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn blue" id="runSimGradeBtn" onclick="runSimGrader()">✓ Grade Sim Bets</button>
+        </div>
+        <div class="pipeline-log" id="simGradeLog">Idle.</div>
       </div>
     </div>
 
@@ -498,29 +555,39 @@
 
     <div class="section">
       <div class="sec-title">ENTER <em>RESULT</em></div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
+        Grades a pick already on file. The pipeline writes shadow_picks every run; the grader
+        fills the result column once the game finishes. This form is for entering a result by
+        hand — a correction, a postponement, a game the grader could not resolve. It writes to
+        the same table the app reads from, not a side table.
+      </div>
       <div class="result-form">
         <div class="form-row">
-          <input type="date" class="form-input" id="resultDate" />
+          <input type="date" class="form-input" id="resultDate" onchange="onResultDateChange()" />
         </div>
         <div class="form-row">
-          <input type="text" class="form-input" id="resultMatchup" placeholder="Matchup (e.g. BOS vs MIA)" />
+          <input type="text" class="form-input" id="resultSearch" placeholder="Team name (home or away)" oninput="onResultSearchChange()" />
+          <button class="key-save-btn" onclick="searchPendingPicks()">SEARCH</button>
         </div>
-        <div class="form-row">
-          <input type="text" class="form-input" id="resultPick" placeholder="Pick (e.g. BOS -5.5)" />
-          <select class="form-select" id="resultType">
-            <option>ATS</option><option>ML</option><option>Total</option>
-          </select>
-        </div>
-        <div class="form-row">
+        <div class="candidate-list" id="candidateList"></div>
+        <div class="candidate-note" id="candidateNote"></div>
+
+        <div class="form-row" id="resultEntryRow" style="display:none;">
           <select class="form-select" id="resultOutcome">
             <option value="">Result</option>
             <option value="W">Win</option>
             <option value="L">Loss</option>
             <option value="P">Push</option>
           </select>
-          <input type="number" class="form-input" id="resultPnl" placeholder="P&L (units)" step="0.5" />
+          <input type="number" class="form-input" id="resultPnl" placeholder="P&L (units)" step="0.1" />
         </div>
-        <button class="submit-btn" onclick="submitResult()">SUBMIT RESULT →</button>
+        <div class="form-row" id="autoPnlRow" style="display:none;">
+          <label style="font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:2px;color:var(--text-dim);display:flex;align-items:center;gap:8px;text-transform:uppercase;">
+            <input type="checkbox" id="autoPnl" checked />
+            Auto-compute P&amp;L from pick units
+          </label>
+        </div>
+        <button class="submit-btn" id="submitResultBtn" onclick="submitResultUpdate()" disabled>SUBMIT RESULT →</button>
       </div>
     </div>
 
@@ -539,6 +606,7 @@
         <button class="raw-tab" data-tab="proptrends" onclick="setRawTab('proptrends',this)">Prop Trends</button>
         <button class="raw-tab" data-tab="situations" onclick="setRawTab('situations',this)">Situations</button>
         <button class="raw-tab" data-tab="calibration" onclick="setRawTab('calibration',this)">Calibration</button>
+        <button class="raw-tab" data-tab="gidmap" onclick="setRawTab('gidmap',this)">Game ID Map</button>
         <button class="raw-tab" data-tab="odds" onclick="setRawTab('odds',this)">Odds API</button>
         <button class="raw-tab" data-tab="espn" onclick="setRawTab('espn',this)">ESPN</button>
       </div>
@@ -608,6 +676,10 @@
       showToast('Decision mode: ' + (next === 'ai_assisted' ? 'AI-Assisted' : 'Deterministic'), next === 'ai_assisted' ? 'blue' : '');
     }
 
+    // ============================================================
+    // FULL REFRESH
+    // ============================================================
+
     async function runFullRefresh() {
       const btn = document.getElementById('runFullRefreshBtn');
       const logEl = document.getElementById('fullRefreshLog');
@@ -619,35 +691,44 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/10 · Power Ratings');
+      log('Stage 1/13 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/10 · Build Rosters');
+      log('Stage 2/13 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/10 · Enrich Rosters');
+      log('Stage 3/13 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/10 · Build ATS & H2H');
+      log('Stage 4/13 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/10 · Backfill Scores');
+      log('Stage 5/13 · Backfill Scores');
       try { await runScoreBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/10 · Backfill & Calibration');
+      log('Stage 6/13 · Backfill & Calibration');
       try { await runBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 7/10 · Build Trends');
+      log('Stage 7/13 · Build Trends');
       try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 8/10 · Pull Player Stats');
+      log('Stage 8/13 · Pull Player Stats');
       try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 9/10 · Build Prop Trends');
+      log('Stage 9/13 · Build Prop Trends');
       try { await runPropTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 10/10 · Refresh Injuries');
+      log('Stage 10/13 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 11/13 · Backfill Game ID Map');
+      try { await runGameIdBackfill(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 12/13 · Grade Shadow Picks');
+      try { await runShadowGrader(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 13/13 · Grade Sim Bets');
+      try { await runSimGrader(true); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
       btn.disabled = false;
@@ -671,6 +752,7 @@
       try {
         const result = await window.EDGE_ORCHESTRATOR.run({
           games,
+          grade: true,
           onProgress: (msg) => {
             logEl.textContent += msg + '\n';
             logEl.scrollTop = logEl.scrollHeight;
@@ -774,7 +856,9 @@
 
       if (!silent) {
         btn.disabled = false;
+        const preserved = result.totals.preserved || 0;
         logEl.textContent += `\n✓ ${result.teams_processed} teams · ${result.players_processed} players`;
+        if (preserved) logEl.textContent += ` · ${preserved} ratings preserved`;
         showToast(`✓ ${result.players_processed} players rated`, '');
       }
       return result;
@@ -795,8 +879,11 @@
 
       if (!silent) {
         btn.disabled = false;
-        logEl.textContent += `\n✓ ${result.totals.enriched} players enriched`;
-        showToast(`✓ ${result.totals.enriched} players enriched`, '');
+        const t = result.totals;
+        logEl.textContent += `\n✓ ${t.enriched} players enriched`;
+        if (t.no_current_stats) logEl.textContent += ` · ${t.no_current_stats} no current-season stats`;
+        if (t.no_metrics) logEl.textContent += ` · ${t.no_metrics} no applicable metrics`;
+        showToast(`✓ ${t.enriched} players enriched`, '');
       }
       return result;
     }
@@ -817,6 +904,7 @@
       if (!silent) {
         btn.disabled = false;
         logEl.textContent += `\n✓ ${result.totals.teams} team rows · ${result.totals.matchups} matchup rows`;
+        if (result.totals.scores_written) logEl.textContent += ` · ${result.totals.scores_written} scores written`;
         showToast(`✓ ATS: ${result.totals.teams} teams · ${result.totals.matchups} matchups`, '');
       }
       return result;
@@ -839,8 +927,13 @@
       if (!silent) {
         btn.disabled = false;
         let total = 0;
-        Object.values(result).forEach(r => { total += (r.updated || 0); });
+        let noMatch = 0;
+        Object.values(result).forEach(r => {
+          total += (r.updated || 0);
+          noMatch += (r.no_match || 0);
+        });
         logEl.textContent += `\n✓ ${total} games scored`;
+        if (noMatch) logEl.textContent += ` · ${noMatch} had no ESPN id`;
         showToast(`✓ ${total} games scored`, '');
       }
       return result;
@@ -918,7 +1011,9 @@
         btn.disabled = false;
         const rows = result.totals.rows || 0;
         const games = result.totals.games || 0;
+        const failed = result.totals.failed || 0;
         logEl.textContent += `\n✓ ${games} games · ${rows} player rows`;
+        if (failed) logEl.textContent += ` · ${failed} failed`;
         showToast(`✓ ${rows} player rows written`, '');
       }
       return result;
@@ -959,6 +1054,322 @@
       btn.disabled = false;
       showToast('Injury cache cleared', '');
     }
+
+    // ============================================================
+    // GAME ID MAP
+    // ============================================================
+
+    async function runGameIdBackfill(silent = false) {
+      const btn = document.getElementById('runGidMapBtn');
+      const logEl = document.getElementById('gidMapLog');
+      if (!window.EDGE_GAME_ID_MAP) { showToast('game-id-map.js not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Linking game ids…\n'; }
+
+      const log = (msg) => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      const probe = await window.EDGE_GAME_ID_MAP.probe();
+      if (!probe.table) {
+        log('game_id_map table missing. Run the SQL:');
+        log('');
+        log(window.EDGE_GAME_ID_MAP.schemaSql());
+        if (!silent) { btn.disabled = false; showToast('game_id_map table missing', 'error'); }
+        return null;
+      }
+
+      let result;
+      try {
+        result = await window.EDGE_GAME_ID_MAP.populate({
+          sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+          onProgress: log,
+        });
+      } catch (e) {
+        log('failed: ' + e.message);
+        if (!silent) { btn.disabled = false; showToast('Game id backfill failed', 'error'); }
+        return null;
+      }
+
+      if (!silent) {
+        btn.disabled = false;
+        const linked = result?.summary?.totals?.linked || 0;
+        const unmatched = result?.summary?.totals?.unmatched || 0;
+        log(`\n✓ ${linked} linked · ${unmatched} unmatched`);
+        showToast(`✓ ${linked} game id links written`, '');
+      }
+      return result;
+    }
+
+    // ============================================================
+    // SHADOW GRADER
+    // ============================================================
+
+    async function runShadowGrader(silent = false) {
+      const btn = document.getElementById('runShadowGradeBtn');
+      const logEl = document.getElementById('shadowGradeLog');
+      if (!window.EDGE_SHADOW_GRADER) { showToast('shadow-grader.js not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Grading ungraded picks…\n'; }
+
+      const log = (msg) => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      let result;
+      try {
+        result = await window.EDGE_SHADOW_GRADER.run({ onProgress: log });
+      } catch (e) {
+        log('failed: ' + e.message);
+        if (!silent) { btn.disabled = false; showToast('Grader failed', 'error'); }
+        return null;
+      }
+
+      if (!result.ok) {
+        log('failed: ' + (result.error || 'unknown'));
+        if (result.sql) log('\n' + result.sql);
+        if (!silent) { btn.disabled = false; showToast('Grader failed', 'error'); }
+        return result;
+      }
+
+      if (!silent) {
+        btn.disabled = false;
+        log(`\n✓ ${result.graded} graded · ${result.unresolved} unresolved · ${result.pending_no_score} awaiting score`);
+        showToast(`✓ ${result.graded} picks graded`, '');
+      }
+      return result;
+    }
+
+    // ============================================================
+    // SIM GRADER
+    // ============================================================
+
+    async function runSimGrader(silent = false) {
+      const btn = document.getElementById('runSimGradeBtn');
+      const logEl = document.getElementById('simGradeLog');
+      if (!window.EDGE_SIM_GRADER) { showToast('sim-grader.js not loaded', 'error'); return; }
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Grading sim bets…\n'; }
+
+      const log = (msg) => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      let result;
+      try {
+        result = await window.EDGE_SIM_GRADER.run({ onProgress: log });
+      } catch (e) {
+        log('failed: ' + e.message);
+        if (!silent) { btn.disabled = false; showToast('Sim grader failed', 'error'); }
+        return null;
+      }
+
+      if (!result.ok) {
+        log('failed: ' + (result.error || 'unknown'));
+        if (result.sql) log('\n' + result.sql);
+        if (!silent) { btn.disabled = false; showToast('Sim grader failed', 'error'); }
+        return result;
+      }
+
+      if (!silent) {
+        btn.disabled = false;
+        const legacy = result.legacy || 0;
+        log(`\n✓ ${result.graded} graded · ${result.pending_score} awaiting score`);
+        if (legacy) log(`  ${legacy} legacy-format rows skipped`);
+        showToast(`✓ ${result.graded} sim bets graded`, '');
+      }
+      return result;
+    }
+
+    // ============================================================
+    // MANUAL RESULT ENTRY
+    //
+    // Grades a shadow_picks row that the automatic grader could
+    // not resolve, or that the operator wants to correct by hand.
+    // The old version wrote to a `picks` table that nothing else
+    // in the app reads — History, Performance and the learning
+    // loop all read shadow_picks. This form searches shadow_picks
+    // for candidates, lets the operator pick one, and patches the
+    // result directly.
+    // ============================================================
+
+    let selectedPick = null;
+    let searchResults = [];
+
+    function onResultDateChange() {
+      searchResults = [];
+      selectedPick = null;
+      document.getElementById('candidateList').innerHTML = '';
+      document.getElementById('candidateNote').textContent = '';
+      document.getElementById('resultEntryRow').style.display = 'none';
+      document.getElementById('autoPnlRow').style.display = 'none';
+      document.getElementById('submitResultBtn').disabled = true;
+    }
+
+    function onResultSearchChange() {
+      searchResults = [];
+      selectedPick = null;
+      document.getElementById('candidateList').innerHTML = '';
+      document.getElementById('candidateNote').textContent = '';
+      document.getElementById('resultEntryRow').style.display = 'none';
+      document.getElementById('autoPnlRow').style.display = 'none';
+      document.getElementById('submitResultBtn').disabled = true;
+    }
+
+    async function searchPendingPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Connect Supabase first', 'error'); return; }
+
+      const date = document.getElementById('resultDate').value;
+      const term = (document.getElementById('resultSearch').value || '').trim().toLowerCase();
+      if (!date) { showToast('Pick a date first', 'error'); return; }
+      if (!term) { showToast('Enter a team name', 'error'); return; }
+
+      const list = document.getElementById('candidateList');
+      const note = document.getElementById('candidateNote');
+      list.innerHTML = '<div class="candidate">Searching…</div>';
+      note.textContent = '';
+
+      const dayStart = `${date}T00:00:00`;
+      const dayEnd = `${date}T23:59:59`;
+
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/shadow_picks?select=id,created_at,sport,home_team,away_team,side_team,direction,decision,confidence,units,result,pnl,market_spread` +
+          `&created_at=gte.${dayStart}&created_at=lte.${dayEnd}` +
+          `&order=confidence.desc&limit=100`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) {
+          list.innerHTML = '';
+          note.textContent = 'Search failed: HTTP ' + res.status;
+          return;
+        }
+        const rows = await res.json();
+
+        const matches = rows.filter(r =>
+          (r.home_team || '').toLowerCase().includes(term) ||
+          (r.away_team || '').toLowerCase().includes(term) ||
+          (r.side_team || '').toLowerCase().includes(term)
+        );
+
+        searchResults = matches;
+
+        if (!matches.length) {
+          list.innerHTML = '';
+          note.textContent = rows.length
+            ? `${rows.length} picks on this date, none matching "${term}".`
+            : 'No picks on this date. The pipeline writes picks when it runs; check a different date.';
+          return;
+        }
+
+        note.textContent = `${matches.length} matching pick${matches.length === 1 ? '' : 's'} on ${date}. Click one to select.`;
+
+        list.innerHTML = matches.map((r, i) => {
+          const res = r.result || 'PENDING';
+          const resCls = r.result === 'W' ? 'color:var(--green)' : r.result === 'L' ? 'color:var(--red)' : 'color:var(--text-dim)';
+          return `
+            <div class="candidate" id="candidate-${i}" onclick="selectPick(${i})">
+              <span class="c-sport">${r.sport || '—'}</span>
+              <span class="c-match">${r.away_team || '?'} @ ${r.home_team || '?'}</span>
+              <span class="c-side">${r.side_team || r.direction || '—'}</span>
+              <span class="c-conf">${Math.round(r.confidence || 0)}% · ${r.units || 0}u</span>
+              <span style="${resCls};font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1.5px;">${res}</span>
+            </div>`;
+        }).join('');
+      } catch (e) {
+        logEdgeError('admin.searchPendingPicks', e);
+        list.innerHTML = '';
+        note.textContent = 'Search error: ' + e.message;
+      }
+    }
+
+    function selectPick(index) {
+      const pick = searchResults[index];
+      if (!pick) return;
+
+      document.querySelectorAll('.candidate').forEach(c => c.classList.remove('selected'));
+      const el = document.getElementById('candidate-' + index);
+      if (el) el.classList.add('selected');
+
+      selectedPick = pick;
+
+      document.getElementById('resultEntryRow').style.display = 'flex';
+      document.getElementById('autoPnlRow').style.display = 'flex';
+      document.getElementById('submitResultBtn').disabled = false;
+
+      const note = document.getElementById('candidateNote');
+      const existing = pick.result
+        ? `Already graded ${pick.result} (${pick.pnl != null ? pick.pnl : 0}u). Submitting will overwrite.`
+        : `Ungraded. Enter the outcome.`;
+      note.textContent = `${pick.away_team} @ ${pick.home_team} · ${pick.side_team || pick.direction} · ${existing}`;
+    }
+
+    async function submitResultUpdate() {
+      if (!selectedPick) { showToast('Select a pick first', 'error'); return; }
+
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Connect Supabase first', 'error'); return; }
+
+      const outcome = document.getElementById('resultOutcome').value;
+      if (!outcome) { showToast('Choose W, L, or P', 'error'); return; }
+
+      const autoPnl = document.getElementById('autoPnl').checked;
+      let pnl;
+      if (autoPnl) {
+        const units = parseFloat(selectedPick.units) || 0;
+        pnl = outcome === 'W' ? Math.round(units * 0.909 * 100) / 100
+            : outcome === 'L' ? -units
+            : 0;
+      } else {
+        pnl = parseFloat(document.getElementById('resultPnl').value || '0');
+      }
+
+      const btn = document.getElementById('submitResultBtn');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${selectedPick.id}`, {
+          method: 'PATCH',
+          headers: {
+            apikey: key, Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            result: outcome,
+            pnl,
+          }),
+        });
+
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          showToast('Update failed: HTTP ' + res.status, 'error');
+          logEdgeError('admin.submitResultUpdate', new Error(body.slice(0, 200)));
+          btn.disabled = false;
+          return;
+        }
+
+        showToast(`Graded ${outcome} · ${pnl > 0 ? '+' : ''}${pnl}u`);
+        selectedPick = null;
+        searchResults = [];
+        document.getElementById('candidateList').innerHTML = '';
+        document.getElementById('candidateNote').textContent = 'Result written. Run another search to grade another.';
+        document.getElementById('resultEntryRow').style.display = 'none';
+        document.getElementById('autoPnlRow').style.display = 'none';
+        document.getElementById('resultSearch').value = '';
+      } catch (e) {
+        logEdgeError('admin.submitResultUpdate.network', e);
+        showToast('Update failed: ' + e.message, 'error');
+        btn.disabled = false;
+      }
+    }
+
+    // ============================================================
+    // KEYS
+    // ============================================================
 
     function saveKey(storageKey, inputId, dotId, statusId) {
       const val = document.getElementById(inputId).value.trim();
@@ -1067,39 +1478,9 @@
       } catch (e) { logEdgeError('admin.testClaude', e); showToast('Claude API error', 'error'); }
     }
 
-    async function submitResult() {
-      const matchup = document.getElementById('resultMatchup').value.trim();
-      const pick    = document.getElementById('resultPick').value.trim();
-      const outcome = document.getElementById('resultOutcome').value;
-      const pnl     = parseFloat(document.getElementById('resultPnl').value || '0');
-      const date    = document.getElementById('resultDate').value;
-      const type    = document.getElementById('resultType').value;
-
-      if (!matchup || !pick || !outcome || !date) { showToast('Fill in all fields', 'error'); return; }
-
-      const record = { matchup, pick_label: pick, pick_type: type, result: outcome, pnl, date, created_at: new Date().toISOString() };
-
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-
-      if (url && key) {
-        try {
-          await fetch(`${url}/rest/v1/picks`, {
-            method: 'POST',
-            headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-            body: JSON.stringify(record),
-          });
-          showToast('Result saved');
-        } catch (e) { logEdgeError('admin.submitResult', e); showToast('Saved locally', 'error'); }
-      } else {
-        const existing = JSON.parse(localStorage.getItem('edge_picks_local') || '[]');
-        existing.unshift(record);
-        localStorage.setItem('edge_picks_local', JSON.stringify(existing));
-        showToast('Saved locally');
-      }
-
-      setTimeout(() => { window.location.href = 'index.html'; }, 1200);
-    }
+    // ============================================================
+    // RAW DATA
+    // ============================================================
 
     let currentRawTab = 'storage';
 
@@ -1201,6 +1582,12 @@
           out.textContent = JSON.stringify(await res.json(), null, 2);
           return;
         }
+        if (currentRawTab === 'gidmap') {
+          if (!url || !key) { out.textContent = 'Supabase not connected'; return; }
+          const res = await fetch(`${url}/rest/v1/game_id_map?select=*&limit=30&order=created_at.desc`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          out.textContent = JSON.stringify(await res.json(), null, 2);
+          return;
+        }
         if (currentRawTab === 'odds') {
           const oddsKey = localStorage.getItem('edge_odds_api_key');
           if (!oddsKey) { out.textContent = 'No Odds API key'; return; }
@@ -1218,6 +1605,10 @@
         out.textContent = 'Error: ' + e.message;
       }
     }
+
+    // ============================================================
+    // DANGER
+    // ============================================================
 
     function clearAllKeys() {
       ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key',
@@ -1255,12 +1646,13 @@
       } else {
         localStorage.removeItem('edge_weather_cache_v1');
         localStorage.removeItem('edge_schedule_cache_v1');
+        localStorage.removeItem('edge_schedule_cache_v2');
         showToast('Context cache cleared (fallback)');
       }
     }
 
     function clearLocalStorage() {
-      const keep = ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key','edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name'];
+      const keep = ['edge_supabase_url','edge_supabase_key','edge_odds_api_key','edge_espn_api_key','edge_claude_api_key','edge_sportsbook_api_key','edge_sportsbook_name','edge_book_key'];
       const saved = {};
       keep.forEach(k => { const v = localStorage.getItem(k); if (v) saved[k] = v; });
       localStorage.clear();
