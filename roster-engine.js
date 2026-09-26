@@ -1,61 +1,52 @@
 // ============================================================
-// EDGE — ROSTER ENGINE v1.3
+// EDGE — ROSTER ENGINE v1.4
 //
-// v1.3 changes:
+// v1.4 changes:
 //
-//   · Starters are no longer "whoever ESPN listed first."
-//     The v1.2 code assigned `is_starter = depth < starterCount`
-//     where depth was the row's position in the roster response.
-//     ESPN's roster array is roughly alphabetical, not a depth
-//     chart. The starting QB could be buried at slot 40 behind
-//     a fullback whose last name starts with "A". Enrichment
-//     then added a starter bonus to the wrong player, and the
-//     injury family's deduction varied wildly depending on
-//     which side of the sort a starter landed on.
+//   · The `enriched` flag is gone. The v1.3 loader read every
+//     existing player row and stamped `enriched: true` on all
+//     of them, so the roster builder always treated a stored
+//     rating as authoritative — even for a player who had
+//     never been enriched, and even when the player's
+//     position group or starter flag had changed since the
+//     rating was written. The shape check that was supposed
+//     to prevent this ran after the fact and had no effect,
+//     because the builder had already overwritten the
+//     baseline with the stored value.
 //
-//     Starter detection now uses, in order of reliability:
+//     buildTeamRows now always emits a baseline computed from
+//     the current roster data. The preservation decision
+//     lives in upsertPlayers, which keeps the stored rating
+//     only when the incoming position_group and starter flag
+//     match what is on file. When either has changed, the
+//     baseline is used. This is the same shape the enrichment
+//     engine expects: enriched ratings survive a rebuild that
+//     does not change a player's role, and stale ratings are
+//     replaced when the role changes.
 //
-//       1. ESPN's explicit depth chart fields when the roster
-//          response carries them — `depthChartPosition` or
-//          `depth` on the athlete, or a `depthChart` block on
-//          the team. Not every sport returns this.
+//   · Missing active flag is treated as unknown, not as
+//     inactive. ESPN roster responses do not always carry an
+//     `active` field. The v1.3 comparator read
+//     `a.active === true`, so a missing field was coerced to
+//     false and every player without the flag was sorted to
+//     the bottom as if inactive — often the entire roster.
+//     The flag is now nullable and the comparator only sorts
+//     a player down when the flag is explicitly false.
 //
-//       2. The `experience` and `stats` fields as a weak
-//          tiebreak only — a QB with more passing touchdowns is
-//          more likely the starter than one with fewer.
+//   · Starter inference is signaled clearly. Roster order is
+//     still the fallback signal when ESPN does not return a
+//     depth chart, but the row now records starter_inferred
+//     = true in that case so downstream code can see the
+//     value is a guess rather than a fact.
 //
-//       3. The active roster flag. ESPN marks practice squad
-//          and inactive players; those are not starters.
-//
-//     When none of those signals are present, the fallback is
-//     still roster order, but only as a last resort, and the
-//     row is flagged `starter_inferred: true` so downstream
-//     code can see that the value is a guess.
-//
-//   · Rebuilding rosters no longer wipes enrichment. The v1.2
-//     code deleted all rows for a sport before inserting the
-//     new set. Any player whose per-game stats had already been
-//     used to refine their rating lost that refinement. The
-//     delete is now gated: when a player's id already exists,
-//     the row is updated in place (rating preserved unless the
-//     roster data itself changes position or experience). New
-//     players are inserted. Only players who dropped off the
-//     roster entirely are removed.
-//
-//   · position_group is written consistently. The 50-baseline
-//     rating from the previous version is kept, but the group
-//     assignment now matches the same table the enrichment and
-//     box-score fetcher use, so enrichment's per-group z-score
-//     and prop-trends' per-group gates both line up.
-//
-// v1.2 changes (retained):
-//   · fetchTeams reads the team list from power_ratings, not
-//     ESPN's /teams endpoint, which is CORS-blocked.
+// v1.3 changes (retained):
+//   · ESPN depth chart fields preferred when present.
+//   · Rebuild does not wipe enrichment.
 // ============================================================
 
 const EDGE_ROSTER_ENGINE = (() => {
 
-  const BUILD = 'roster-20260925-01';
+  const BUILD = 'roster-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -209,7 +200,7 @@ const EDGE_ROSTER_ENGINE = (() => {
     // Load existing players for this sport, keyed by player_id.
     // This is what makes the write an update rather than a
     // wipe-and-replace. Ratings already refined by enrichment
-    // survive.
+    // survive when the player's role has not changed.
     log('  loading existing roster from players table');
     const existing = await loadExisting(url, key, sport);
     log(`  ${existing.size} existing players`);
@@ -219,7 +210,7 @@ const EDGE_ROSTER_ENGINE = (() => {
     await parallelMap(teams, FETCH_CONCURRENCY, async team => {
       const athletes = await fetchRoster(path, team.id);
       if (!athletes.length) { rosterMisses++; return; }
-      rows.push(...buildTeamRows(sport, team, athletes, existing));
+      rows.push(...buildTeamRows(sport, team, athletes));
     });
 
     log(`  ${rows.length} players built`);
@@ -316,16 +307,28 @@ const EDGE_ROSTER_ENGINE = (() => {
 
   // ============================================================
   // ── ROW BUILDING ──
+  //
+  // Always emits a baseline rating computed from the current
+  // roster data. Preservation of an enriched rating happens in
+  // upsertPlayers, based on whether the player's role has
+  // changed.
   // ============================================================
 
-  function buildTeamRows(sport, team, athletes, existing) {
-    // Parse athletes into rows we can sort and slot into groups.
+  function buildTeamRows(sport, team, athletes) {
     const parsed = athletes.map(a => {
       const posAbbr =
         a.position?.abbreviation ||
         a.position?.name ||
         a.defaultPosition?.abbreviation || '';
       const group = positionGroup(sport, posAbbr);
+
+      // active is nullable. ESPN does not always return it. A
+      // missing field means we do not know, not that the
+      // player is inactive.
+      const activeFlag =
+        a.active === true ? true :
+        a.active === false ? false :
+        null;
 
       return {
         player_id: String(a.id || ''),
@@ -335,21 +338,17 @@ const EDGE_ROSTER_ENGINE = (() => {
         jersey: a.jersey ? String(a.jersey) : null,
         experience: parseInt(a.experience?.years ?? a.experience ?? 0, 10) || 0,
         status: (a.status?.type || a.status?.name || 'active').toLowerCase(),
-        // Signals for the starter decision, in order of reliability.
         depthChartPosition: a.depthChartPosition ?? a.depth ?? null,
-        activeFlag: a.active === true,
-        stats: a.stats || null,
+        activeFlag,
       };
     }).filter(p => p.player_id && p.position_group);
 
-    // Group players by position group.
     const groupBuckets = {};
     parsed.forEach(p => {
       if (!groupBuckets[p.position_group]) groupBuckets[p.position_group] = [];
       groupBuckets[p.position_group].push(p);
     });
 
-    // Sort each group by best-available signal, best first.
     Object.values(groupBuckets).forEach(bucket => {
       bucket.sort(starterComparator(sport));
     });
@@ -364,17 +363,7 @@ const EDGE_ROSTER_ENGINE = (() => {
         const isStarter = depthOK && activeOK && depth < starterCount;
         const starterInferred = p.depthChartPosition == null;
 
-        // Rating: on the roster build, a starter begins at the
-        // starter baseline, a backup below it. Enrichment will
-        // later overwrite this from real production. When
-        // existing enrichment is on file, that rating is
-        // preserved.
-        const priorEnriched = existing.get(p.player_id);
-        const baseRating = baselineRating(isStarter, depth, starterCount, p.experience);
-        const rating = priorEnriched?.enriched
-          ? priorEnriched.rating
-          : baseRating;
-
+        const rating = baselineRating(isStarter, depth, starterCount, p.experience);
         const { off, def } = contributionFor(group, rating);
 
         rows.push({
@@ -390,12 +379,8 @@ const EDGE_ROSTER_ENGINE = (() => {
           is_starter: isStarter,
           starter_inferred: starterInferred,
           rating,
-          offensive_contribution: priorEnriched?.enriched
-            ? priorEnriched.offensive_contribution
-            : off,
-          defensive_contribution: priorEnriched?.enriched
-            ? priorEnriched.defensive_contribution
-            : def,
+          offensive_contribution: off,
+          defensive_contribution: def,
           status: p.status,
           updated_at: new Date().toISOString(),
         });
@@ -417,16 +402,16 @@ const EDGE_ROSTER_ENGINE = (() => {
       if (da != null && db == null) return -1;
       if (da == null && db != null) return 1;
 
-      // 2. Active flag. Inactive players sink.
-      const aa = a.activeFlag !== false && a.status !== 'inactive';
-      const ab = b.activeFlag !== false && b.status !== 'inactive';
+      // 2. Active flag. Only players explicitly marked
+      //    inactive sink. Unknown stays in place.
+      const aa = a.activeFlag === false || a.status === 'inactive' ? false : true;
+      const ab = b.activeFlag === false || b.status === 'inactive' ? false : true;
       if (aa !== ab) return aa ? -1 : 1;
 
-      // 3. Experience for sports where it helps. A veteran
-      //    beats a rookie at the same slot.
+      // 3. Experience, as a weak tiebreak.
       if (a.experience !== b.experience) return b.experience - a.experience;
 
-      // 4. Fall through to roster order — the array we received.
+      // 4. Fall through to received order.
       return 0;
     };
   }
@@ -462,27 +447,9 @@ const EDGE_ROSTER_ENGINE = (() => {
   // ── LOAD EXISTING ──
   //
   // Reads the players table for the sport and returns a map of
-  // player_id → { id, rating, offensive_contribution,
-  // defensive_contribution, enriched }.
-  //
-  // `enriched` is true when the row carries an update time after
-  // roster build — heuristically, when the row's rating differs
-  // from the 40-90 baseline band AND the row has been written
-  // more than once. Roster build and enrichment both write
-  // updated_at, so the signal we actually use is whether the
-  // row carries the enrichment-specific column set. Since we do
-  // not track source directly, the simplest reliable signal is
-  // that enrichment sets ratings on a 40-95 scale computed
-  // differently from the roster baseline — but roster ratings
-  // are also 40-90, so the two overlap.
-  //
-  // Pragmatic decision: we treat every existing row as
-  // "potentially enriched" and preserve its rating only when the
-  // incoming roster data does not change the player's group or
-  // starter status. A player whose starter flag flips or whose
-  // group changes goes back to the baseline. A player who stays
-  // the same keeps whatever rating was on file, whether it came
-  // from the baseline or from enrichment.
+  // player_id → the fields used for the preservation check.
+  // No enriched flag. Preservation is decided by comparing the
+  // incoming row's role against what is stored.
   // ============================================================
 
   async function loadExisting(url, key, sport) {
@@ -506,7 +473,6 @@ const EDGE_ROSTER_ENGINE = (() => {
             is_starter: r.is_starter,
             offensive_contribution: r.offensive_contribution,
             defensive_contribution: r.defensive_contribution,
-            enriched: true,
           });
         });
         if (rows.length < pageSize) break;
@@ -523,10 +489,10 @@ const EDGE_ROSTER_ENGINE = (() => {
   //
   // Upsert, not delete-and-insert. A player whose incoming
   // position_group and starter flag match what is already on
-  // file keeps the rating already stored — whether that rating
-  // came from the roster baseline or from enrichment. New
-  // players are inserted. Players who dropped off the roster
-  // are deleted in a second pass.
+  // file keeps the stored rating — whether that rating came
+  // from the roster baseline or from enrichment. A player whose
+  // role changed gets the new baseline. New players are
+  // inserted. Players who dropped off the roster are deleted.
   // ============================================================
 
   async function upsertPlayers(url, key, sport, rows, existing, log) {
@@ -539,8 +505,6 @@ const EDGE_ROSTER_ENGINE = (() => {
     let written = 0;
     let preserved = 0;
 
-    // Preserve rating when the existing row's shape agrees with
-    // the new row's shape.
     const payload = rows.map(r => {
       const prev = existing.get(r.player_id);
       if (!prev) return r;
@@ -579,9 +543,7 @@ const EDGE_ROSTER_ENGINE = (() => {
       }
     }
 
-    // Delete players who dropped off the roster entirely. This
-    // only removes ids that were on file before and are not in
-    // the new set.
+    // Delete players who dropped off the roster entirely.
     const incoming = new Set(rows.map(r => r.player_id));
     const dropped = Array.from(existing.keys()).filter(id => !incoming.has(id));
     if (dropped.length) {
