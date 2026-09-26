@@ -719,17 +719,21 @@
     // ── LINE SNAPSHOTS ──
     //
     // Every row written to line_history now records the source
-    // of the price. `source` is either 'book:<book_key>' when
-    // the price came from the user's chosen sportsbook, or
-    // 'consensus' when it came from the median of the books
-    // returned for that game. Before this column existed, rows
-    // from different books sat in the same table with no way to
-    // tell which was which, so switching books manufactured
-    // fake line movement and the steam and RLM flags fired on
-    // noise.
+    // of the price and the actual kickoff time.
     //
-    // The read path in context-builder and lines.html filters
-    // by source before computing open/current/movement.
+    // `source` is either 'book:<book_key>' when the price came
+    // from the user's chosen sportsbook, or 'consensus' when it
+    // came from the median of the books returned for that game.
+    // Before this column existed, rows from different books sat
+    // in the same table with no way to tell which was which, so
+    // switching books manufactured fake line movement and the
+    // steam and RLM flags fired on noise.
+    //
+    // `commence_time` is the kickoff time, not the time the
+    // snapshot was taken. game-id-map.js matches kickoff against
+    // ESPN's game_date. Matching on created_at only worked when
+    // the user happened to open Matchups within a couple of days
+    // of kickoff, which for NFL was almost never.
     async function saveLineSnapshots(games) {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -761,6 +765,7 @@
         home: g.home_team, away: g.away_team,
         spread: g.spread, total: g.total, ml: g.ml,
         source,
+        commence_time: g.commence_time || null,
       }));
 
       if (!rows.length) return;
@@ -770,7 +775,7 @@
           method: 'POST',
           headers: {
             apikey: key, Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json', Prefer: 'return:minimal',
+            'Content-Type': 'application/json', Prefer: 'return=minimal',
           },
           body: JSON.stringify(rows),
         });
