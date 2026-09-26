@@ -1,44 +1,42 @@
 // ============================================================
-// EDGE — ATS + H2H TRACKER v3.0
+// EDGE — ATS + H2H TRACKER v3.1
 //
 // Odds sources, in priority order:
 //   1. historical_odds in Supabase       (cached from earlier runs)
 //   2. ESPN core API per-event odds      (close → current → open)
 //   3. line_history                      (games seen live)
 //
-// v3.0 changes:
+// v3.1 changes:
 //
-//   · Scores are now written with every historical_odds row.
-//     parseEvent already reads homeScore and awayScore off the
-//     ESPN event. They were being discarded before the write.
-//     score-backfill.js becomes a fallback for the rare row that
-//     arrived before this change, not the primary path.
+//   · The power-engine fetch path now requests regularOnly:
+//     false. The filter inside power-engine has two forms —
+//     isCompletedEvent (drops preseason, keeps playoff) and
+//     isRegularSeason (drops both). ats-tracker needs playoff
+//     games in historical_odds even though they should not
+//     count toward team ratings, so it asks for the fuller
+//     set. The rating exclusion happens downstream in the
+//     team_ats row builder, which only grades regular-season
+//     meetings.
 //
-//   · line_history merge now resolves Odds API ids to ESPN ids
-//     through game-id-map.js. The two tables were keyed on
-//     different id systems, so the merge silently found
-//     nothing. With the resolver, a game seen live in
-//     Matchups can seed the spread for the ESPN row that
-//     ats-tracker writes.
+//   · Before this change, October baseball and September
+//     WNBA playoff games were silently missing from
+//     historical_odds — the same filter that served the
+//     rating engine was also filtering the scoreboard that
+//     ATS and trends read from. Postseason games now get a
+//     row and can be graded against the closing line.
 //
+// v3.0 changes (retained):
+//   · Scores are written with every historical_odds row.
+//   · line_history merge resolves Odds API ids to ESPN ids
+//     through game-id-map.js.
 //   · Fetches route through power-engine's fetchGamesBetween
-//     when available. That function already chunks the season
-//     into day windows and has a day-by-day fallback, which
-//     sidesteps the 1,000-event cap on a single ESPN
-//     response. The local fallback remains for pages that load
-//     this file without power-engine; limit is bumped to 2,000
-//     so the truncation is less severe even then.
-//
-//   · seasonLabel matches power-engine's convention. This file
-//     previously wrote NFL as "2026-27" while power-engine and
-//     trends-engine wrote "2026". Cross-year sports now carry
-//     the year they started, single-year sports carry the
-//     calendar year, and WNBA no longer splits across two.
+//     when available.
+//   · seasonLabel matches power-engine's convention.
 // ============================================================
 
 const EDGE_ATS = (() => {
 
-  const BUILD = 'ats-20260925-01';
+  const BUILD = 'ats-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -796,20 +794,25 @@ const EDGE_ATS = (() => {
   // ============================================================
   // ── FETCH ──
   //
-  // Power-engine's fetchGamesBetween chunks the season into day
-  // windows and has a day-by-day fallback, which sidesteps the
-  // 1,000-event cap on a single ESPN year request. When that
-  // function is available, this file uses it. The local fetch
-  // below remains for pages that load ats-tracker without
-  // power-engine, and bumps the limit to 2,000 so truncation is
-  // at least less severe when it is hit.
+  // Power-engine's fetchGamesBetween is the primary path. It
+  // chunks the season and sidesteps the 1,000-event cap on a
+  // single ESPN year request. regularOnly: false is passed so
+  // playoff games flow into historical_odds — the rating
+  // engine never uses them, but ATS grading and trends do.
+  //
+  // The local fallback below remains for pages that load
+  // ats-tracker without power-engine, and bumps the limit to
+  // 2,000 so truncation is less severe when it is hit.
   // ============================================================
 
   async function fetchRangeChunked(path, start, end, log, sport) {
     if (window.EDGE_POWER && typeof window.EDGE_POWER.fetchGamesBetween === 'function') {
       try {
-        const events = await window.EDGE_POWER.fetchGamesBetween(sport, start, end, { raw: true });
-        if (log) log(`  fetched ${events.length} events via power-engine`);
+        const events = await window.EDGE_POWER.fetchGamesBetween(sport, start, end, {
+          raw: true,
+          regularOnly: false,
+        });
+        if (log) log(`  fetched ${events.length} events via power-engine (regular + playoff)`);
         return events;
       } catch (e) {
         logEdgeError('ats.fetchRangeChunked.powerEngine.' + sport, e);
