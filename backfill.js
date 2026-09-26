@@ -1,34 +1,44 @@
 // ============================================================
-// EDGE — BACKFILL & CALIBRATION v1.0
+// EDGE — BACKFILL & CALIBRATION v1.1
 //
 // One historical pull, three jobs that all depend on it:
 //
 //   1. CARRY-OVER    Rate each completed prior season in order,
-//                    carrying the end state forward. Without this
-//                    every season opens with the whole league at
-//                    1500 and a week-1 rating rests on one game.
+//                    carrying the end state forward.
 //
 //   2. ERROR         Walk each season forward a period at a time —
 //                    rate on what came before, project the next
-//                    period, record how far off it was. Those
-//                    residuals are the model's standard error, and
-//                    without them a spread cannot be turned into a
-//                    probability.
+//                    period, record how far off it was.
 //
 //   3. CONSTANTS     Home advantage, scoring rate and margin scale
-//                    are defaults until measured. Every projection
-//                    rests on them, so they get fitted to real
-//                    results rather than assumed.
+//                    are defaults until measured.
 //
-// The walk-forward in step 2 matters. Measuring error on games the
-// ratings were built from would flatter the model badly — it would
-// be scoring its own homework. Every residual here comes from a
-// game the ratings had not yet seen.
+// v1.1 changes:
+//
+//   · WNBA is a first-class sport. It was omitted from
+//     SEASON_BOUNDS, STEP_DAYS and MIN_PRIOR_GAMES, so
+//     runSport('WNBA') returned { ok: false } and no
+//     calibration row was written for it. Added across the
+//     board, with the season bound matching the league's
+//     calendar (May–October, single-year).
+//
+//   · fetchGamesBetween is now called with an explicit
+//     regularOnly: true. The default is already true, but
+//     calibration should never accidentally absorb playoff
+//     games into the constants fit — a postseason game is
+//     not the same distribution as a regular-season one.
+//
+//   · seasonWindow had a dead if/else where both branches ran
+//     the same assignment. Simplified. No behavior change.
+//
+//   · The default sports list now includes WNBA. NCAAB is
+//     still excluded by default because the walk-forward is
+//     slow for a league with 350+ teams.
 // ============================================================
 
 const EDGE_BACKFILL = (() => {
 
-  const BUILD = 'bf-20260916';
+  const BUILD = 'bf-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -38,7 +48,9 @@ const EDGE_BACKFILL = (() => {
   // dial between accuracy and how long the run takes.
   const DEFAULT_SEASONS = 3;
 
-  // Season boundaries, by month and day.
+  // Season boundaries, by month and day. WNBA plays inside a
+  // calendar year the same way MLB does — it is not a
+  // cross-year sport.
   const SEASON_BOUNDS = {
     NFL:   { start: [9, 1],   end: [2, 15]  },
     NCAAF: { start: [8, 15],  end: [1, 15]  },
@@ -47,14 +59,17 @@ const EDGE_BACKFILL = (() => {
     NHL:   { start: [10, 1],  end: [6, 30]  },
     MLB:   { start: [3, 20],  end: [11, 5]  },
     MLS:   { start: [2, 20],  end: [12, 15] },
+    WNBA:  { start: [5, 1],   end: [10, 15] },
   };
 
   // Games per evaluation step when walking a season forward.
-  const STEP_DAYS = { NFL: 7, NCAAF: 7, NBA: 7, NCAAB: 7, NHL: 7, MLB: 7, MLS: 14 };
+  const STEP_DAYS = { NFL: 7, NCAAF: 7, NBA: 7, NCAAB: 7, NHL: 7, MLB: 7, MLS: 14, WNBA: 7 };
 
   // Enough games must precede a step for its projections to mean
   // anything. Below this the ratings are still noise.
-  const MIN_PRIOR_GAMES = { NFL: 48, NCAAF: 150, NBA: 120, NCAAB: 200, NHL: 120, MLB: 300, MLS: 60 };
+  const MIN_PRIOR_GAMES = {
+    NFL: 48, NCAAF: 150, NBA: 120, NCAAB: 200, NHL: 120, MLB: 300, MLS: 60, WNBA: 80,
+  };
 
   return {
     BUILD,
@@ -71,7 +86,7 @@ const EDGE_BACKFILL = (() => {
 
   async function run(options = {}) {
     const {
-      sports = ['NFL', 'NCAAF', 'NBA', 'NHL', 'MLB', 'MLS'],
+      sports = ['NFL', 'NCAAF', 'NBA', 'NHL', 'MLB', 'MLS', 'WNBA'],
       seasons = DEFAULT_SEASONS,
       onProgress = null,
     } = options;
@@ -120,7 +135,10 @@ const EDGE_BACKFILL = (() => {
 
     for (const w of windows) {
       log(`  ${w.label}: fetching ${fmt(w.from)} → ${fmt(w.to)}`);
-      const games = await P.fetchGamesBetween(sport, w.from, w.to);
+      // Calibration is measured on regular-season games only.
+      // Playoffs are a different distribution and would bias
+      // the constants fit toward late-season environments.
+      const games = await P.fetchGamesBetween(sport, w.from, w.to, { regularOnly: true });
       const closing = await loadClosingLines(sport, w.from, w.to);
       if (Object.keys(closing).length) {
         log(`  ${w.label}: ${Object.keys(closing).length} closing lines on file`);
@@ -166,9 +184,6 @@ const EDGE_BACKFILL = (() => {
     const error = summariseResiduals(residuals);
 
     // ── Information beyond the closing line ──
-    // Error against the final margin says how accurate the model is.
-    // It says nothing about whether it beats the market, because the
-    // market is accurate too. This is the measure that matters.
     const paired = residuals
       .filter(x => x.market != null)
       .map(x => ({ model: x.projected, market: x.market, actual: x.actual }));
@@ -195,9 +210,6 @@ const EDGE_BACKFILL = (() => {
 
   // ============================================================
   // ── WALK-FORWARD ──
-  // Rate on everything before a cutoff, project the games after it,
-  // record the miss. Repeat across the season. Nothing is projected
-  // from a game the ratings have already absorbed.
   // ============================================================
 
   function walkForward(sport, games, seed, R, log, closing = {}) {
@@ -211,8 +223,7 @@ const EDGE_BACKFILL = (() => {
     const first = new Date(sorted[0].date);
     const last = new Date(sorted[sorted.length - 1].date);
 
-    let cutoff = new Date(first.getTime() + minPrior * 0 + step * 86400000);
-    // Advance the cutoff until enough games precede it.
+    let cutoff = new Date(first.getTime() + step * 86400000);
     while (sorted.filter(g => new Date(g.date) < cutoff).length < minPrior && cutoff < last) {
       cutoff = new Date(cutoff.getTime() + step * 86400000);
     }
@@ -226,7 +237,6 @@ const EDGE_BACKFILL = (() => {
       });
 
       if (upcoming.length && prior.length >= minPrior) {
-        // Ratings as they would have stood before these games.
         const state = R.rateGlicko(sport, prior, { seed });
         const ad = R.attackDefense(sport, prior);
         const league = ad._league;
@@ -237,7 +247,6 @@ const EDGE_BACKFILL = (() => {
           const proj = R.projectScore(sport, h, a, league, { neutral: g.neutral });
           if (!proj) return;
           const actual = g.homeScore - g.awayScore;
-          // Market margin from the home side: a -3 spread is +3.
           const close = closing[g.id];
           const marketMargin = (close != null && isFinite(close)) ? -close : null;
 
@@ -274,14 +283,10 @@ const EDGE_BACKFILL = (() => {
     const sigma = Math.sqrt(r.reduce((s, v) => s + (v - m) ** 2, 0) / r.length);
     const mae = mean(r.map(Math.abs));
 
-    // Bias matters separately from spread. A model that is off by the
-    // same amount every time is fixable; noise is not.
     const totalResiduals = residuals
       .filter(x => x.projected_total != null)
       .map(x => x.actual_total - x.projected_total);
 
-    // Error should fall as the ratings settle. If it does not, the
-    // rating deviation is not carrying real information.
     const settled = residuals.filter(x => (x.home_rd ?? 999) < 120 && (x.away_rd ?? 999) < 120);
     const unsettled = residuals.filter(x => (x.home_rd ?? 0) >= 180 || (x.away_rd ?? 0) >= 180);
 
@@ -311,10 +316,11 @@ const EDGE_BACKFILL = (() => {
     const y = now.getFullYear();
     const m = now.getMonth() + 1;
 
-    // Which season year is currently under way.
-    let currentSeasonYear;
-    if (crossesYear) currentSeasonYear = (m >= b.start[0]) ? y : y - 1;
-    else currentSeasonYear = (m >= b.start[0]) ? y : y - 1;
+    // Which season year is currently under way. For a
+    // cross-year sport (NFL, NBA, NHL, NCAAF, NCAAB) the
+    // season year is the year it started. For a single-year
+    // sport (MLB, MLS, WNBA) it is the calendar year.
+    const currentSeasonYear = (m >= b.start[0]) ? y : y - 1;
 
     const seasonYear = currentSeasonYear - seasonsBack;
     const from = new Date(seasonYear, b.start[0] - 1, b.start[1]);
@@ -365,7 +371,6 @@ const EDGE_BACKFILL = (() => {
     }
   }
 
-  // Closing lines for a window, keyed by game id.
   async function loadClosingLines(sport, from, to) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     const out = {};
@@ -403,8 +408,6 @@ const EDGE_BACKFILL = (() => {
       sample_residuals: error.n ?? null,
       seasons_used: perSeason.map(s => s.season).join(','),
 
-      // Market comparison. Until these are populated a cover
-      // probability is the model marking its own homework.
       market_lambda: blend?.ok ? blend.lambda : null,
       market_sigma: blend?.ok ? blend.market_sigma : null,
       blend_sigma: blend?.ok ? blend.blend_sigma : null,
@@ -437,8 +440,6 @@ const EDGE_BACKFILL = (() => {
     }
   }
 
-  // Read back by the pipeline, so projections use measured numbers
-  // rather than the defaults compiled into the rating core.
   async function loadCalibration(sport = null) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     if (!url || !key) return null;
