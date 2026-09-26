@@ -19,21 +19,20 @@
   <script src="claude.js"></script>
   <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="prop-trends-engine.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
-  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situation-results.js"></script>
   <script src="situations-engine.js"></script>
+  <script src="situation-results.js"></script>
+  <script src="trends-engine.js"></script>
+  <script src="game-id-map.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -541,6 +540,7 @@
         applyWindow();
 
         await saveLineSnapshots(allGames);
+        await populateGameIdLinks(allGames);
         await loadContextIndexes();
         writeFilteredToStorage();
         renderGames();
@@ -578,10 +578,10 @@
       const pick = (marketKey) => {
         if (mine) {
           const mkt = mine.markets?.find(k => k.key === marketKey);
-          if (mkt?.outcomes?.length) return { outcomes: mkt.outcomes, source: 'book' };
+          if (mkt?.outcomes?.length) return { outcomes: mkt.outcomes, source: 'book', book_key: mine.key, book_title: mine.title };
         }
         const consensus = consensusMarket(books, marketKey);
-        return consensus ? { outcomes: consensus, source: 'consensus' } : null;
+        return consensus ? { outcomes: consensus, source: 'consensus', book_key: null, book_title: 'Consensus' } : null;
       };
 
       const spreadPick = pick('spreads');
@@ -603,6 +603,8 @@
       const awayML     = h2hMkt?.find(o => o.name === raw.away_team)?.price ?? null;
 
       const priceSource = spreadPick?.source || 'consensus';
+      const priceBookKey = spreadPick?.book_key || null;
+      const priceBookTitle = spreadPick?.book_title || (books[0]?.title) || '—';
 
       return {
         id: raw.id,
@@ -615,8 +617,8 @@
         total, over_price: overPrice, under_price: underPrice,
         ml: homeML, home_ml: homeML, away_ml: awayML,
         bookmaker_count: books.length,
-        bookmaker: mine?.title || books[0]?.title || '—',
-        book_key: mine?.key || books[0]?.key || null,
+        bookmaker: priceBookTitle,
+        book_key: priceBookKey,
         price_source: priceSource,
         book_link: mine?.link || null,
         last_update: mine?.last_update || books[0]?.last_update || null,
@@ -686,18 +688,58 @@
       } catch { return null; }
     }
 
+    // ── GAME ID MAP ──
+    // After refresh, populate the link between the Odds API event
+    // id and the ESPN event id, so anything that resolves one
+    // from the other has a row to find. The resolver walks
+    // line_history and historical_odds. This call is best-effort
+    // — a failure here does not affect the current page.
+    async function populateGameIdLinks(games) {
+      if (!window.EDGE_GAME_ID_MAP) return;
+      try {
+        const probe = await EDGE_GAME_ID_MAP.probe();
+        if (!probe.table) return;
+
+        const results = await EDGE_GAME_ID_MAP.populate({
+          sports: Array.from(new Set(games.map(g => g._sport || g.sport).filter(Boolean))),
+          maxDaysBack: 14,
+        });
+        if (results?.ok) {
+          const linked = results.summary?.totals?.linked || 0;
+          if (linked) logEdgeError('matchups.gidLinks', new Error(`linked ${linked}`));
+        }
+      } catch (e) {
+        logEdgeError('matchups.populateGameIdLinks', e);
+      }
+    }
+
     // ── LINE SNAPSHOTS ──
+    //
+    // Every row written to line_history now records the source
+    // of the price. `source` is either 'book:<book_key>' when
+    // the price came from the user's chosen sportsbook, or
+    // 'consensus' when it came from the median of the books
+    // returned for that game. Before this column existed, rows
+    // from different books sat in the same table with no way to
+    // tell which was which, so switching books manufactured
+    // fake line movement and the steam and RLM flags fired on
+    // noise.
+    //
+    // The read path in context-builder and lines.html filters
+    // by source before computing open/current/movement.
     async function saveLineSnapshots(games) {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key || !games.length) return;
+
+      const source = activeBook() ? `book:${activeBook()}` : 'consensus';
 
       const latest = {};
       try {
         const inList = games.map(g => g.id).filter(Boolean).map(id => `"${id}"`).join(',');
         if (inList) {
           const res = await fetch(
-            `${url}/rest/v1/line_history?select=game_id,spread,total,ml,created_at&game_id=in.(${inList})&order=created_at.desc`,
+            `${url}/rest/v1/line_history?select=game_id,spread,total,ml,source,created_at&game_id=in.(${inList})&source=eq.${encodeURIComponent(source)}&order=created_at.desc`,
             { headers: { apikey: key, Authorization: `Bearer ${key}` } }
           );
           if (res.ok) {
@@ -715,6 +757,7 @@
         game_id: g.id, sport: g._sport,
         home: g.home_team, away: g.away_team,
         spread: g.spread, total: g.total, ml: g.ml,
+        source,
       }));
 
       if (!rows.length) return;
@@ -724,7 +767,7 @@
           method: 'POST',
           headers: {
             apikey: key, Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json', Prefer: 'return=minimal',
+            'Content-Type': 'application/json', Prefer: 'return:minimal',
           },
           body: JSON.stringify(rows),
         });
@@ -743,10 +786,12 @@
       const gameIds = allGames.map(g => g.id).filter(Boolean);
       if (!gameIds.length) return;
 
+      const source = activeBook() ? `book:${activeBook()}` : 'consensus';
+
       try {
         const inList = gameIds.map(id => `"${id}"`).join(',');
         const res = await fetch(
-          `${url}/rest/v1/line_history?select=game_id,spread,total,ml,created_at&game_id=in.(${inList})&order=created_at.asc`,
+          `${url}/rest/v1/line_history?select=game_id,spread,total,ml,source,created_at&game_id=in.(${inList})&source=eq.${encodeURIComponent(source)}&order=created_at.asc`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (res.ok) {
