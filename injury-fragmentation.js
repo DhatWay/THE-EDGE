@@ -1,40 +1,44 @@
 // ============================================================
-// EDGE — INJURY FRAGMENTATION v1.3
+// EDGE — INJURY FRAGMENTATION v1.4
 //
 // Reads ESPN injuries for today's slate, looks up each injured
 // player in the players table, subtracts their offensive and
 // defensive contribution from the team's effective strength.
 //
-// v1.3 changes:
+// v1.4 changes:
 //
-//   · team_name is loaded. The v1.2 code selected a fixed set
-//     of columns from the players table and left team_name
-//     out — but then grouped the rows by p.team_name. Every
-//     player landed under a single undefined key, so the
-//     per-team lookup that follows never matched an injury to
-//     a roster. Injury deductions were always zero. team_name
-//     is now in the select, in both the slate path and the
-//     single-team path.
+//   · Team names are normalized on both sides before any
+//     lookup. The previous version used the game's own team
+//     name — The Odds API spelling — as the key into a table
+//     that is written by ESPN and keyed by ESPN's spelling.
+//     "LA Clippers" in the game did not match "Los Angeles
+//     Clippers" in the roster; "D.C. United" did not match
+//     "DC United". Every injury lookup for every team whose
+//     two spellings differed returned an empty roster and
+//     reported zero deductions. Every team in every sport now
+//     goes through EDGE_TEAMS.normalize before matching.
 //
-//   · Position group is loaded too, so a future matchup panel
-//     can show the group alongside the injury.
+//   · loadRosterForTeams loads the sport's full roster once
+//     and groups by normalized team name, instead of asking
+//     the database for an in-list built from raw game team
+//     names. A single query against players table, small
+//     enough to run on every pipeline stage.
 //
-//   · Roster read is resilient to a missing team_name column
-//     in the response — the module logs once and returns empty
-//     rather than silently grouping everything under
-//     undefined.
+//   · fetchEspnInjuries builds a normalized team filter so
+//     the per-team core API fallback still runs against the
+//     right team ids. Without it, an Odds-API-spelled team
+//     name in the filter would never match the power_ratings
+//     row that carries the ESPN id, and the fallback would
+//     request every team in the sport.
 //
-// v1.2 changes (retained):
-//   · Team list comes from power_ratings, not ESPN's /teams
-//     endpoint.
-//   · WNBA added.
-//   · League-wide injury endpoints tried first, per-team core
-//     API only if those fail.
+// v1.3 changes (retained):
+//   · team_name is loaded in the roster select.
+//   · Position group is loaded too.
 // ============================================================
 
 const EDGE_INJURY = (() => {
 
-  const BUILD = 'inj-20260925-01';
+  const BUILD = 'inj-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -66,6 +70,18 @@ const EDGE_INJURY = (() => {
     'probable': 0.05,
   };
 
+  const PLAYER_COLUMNS =
+    'player_id,name,position,position_group,team_name,rating,' +
+    'offensive_contribution,defensive_contribution,is_starter';
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
+  }
+
   return {
     BUILD,
     fragment,
@@ -87,13 +103,19 @@ const EDGE_INJURY = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return out;
 
+    // Collect the distinct teams in the slate per sport. The
+    // set is used both to filter the injury fetch and to build
+    // the roster index — normalized so the Odds API spelling
+    // and the ESPN spelling land on the same key.
     const teamsBySport = {};
     games.forEach(g => {
       const sport = g._sport || g.sport;
       if (!ESPN_MAP[sport]) return;
       if (!teamsBySport[sport]) teamsBySport[sport] = new Set();
-      teamsBySport[sport].add(g.home_team || g.home);
-      teamsBySport[sport].add(g.away_team || g.away);
+      const home = g.home_team || g.home;
+      const away = g.away_team || g.away;
+      if (home) teamsBySport[sport].add(home);
+      if (away) teamsBySport[sport].add(away);
     });
 
     const sports = Object.keys(teamsBySport);
@@ -106,7 +128,7 @@ const EDGE_INJURY = (() => {
 
     const rosterBySport = {};
     await Promise.all(sports.map(async sport => {
-      rosterBySport[sport] = await loadRosterForTeams(sport, Array.from(teamsBySport[sport]), url, key);
+      rosterBySport[sport] = await loadRosterIndex(sport, url, key);
     }));
 
     games.forEach(g => {
@@ -115,11 +137,14 @@ const EDGE_INJURY = (() => {
       const away = g.away_team || g.away;
       if (!home || !away || !ESPN_MAP[sport]) return;
 
-      const rawInjuries = injuryResults[sport] || {};
+      const injuries = injuryResults[sport] || {};
       const roster = rosterBySport[sport] || {};
 
-      const homeInjuries = matchInjuriesToRoster(rawInjuries[home] || [], roster[home] || []);
-      const awayInjuries = matchInjuriesToRoster(rawInjuries[away] || [], roster[away] || []);
+      const homeNorm = normalizeTeam(sport, home);
+      const awayNorm = normalizeTeam(sport, away);
+
+      const homeInjuries = matchInjuriesToRoster(injuries[homeNorm] || [], roster[homeNorm] || []);
+      const awayInjuries = matchInjuriesToRoster(injuries[awayNorm] || [], roster[awayNorm] || []);
 
       const homeOff = sumDeduction(homeInjuries, 'offensive_contribution');
       const homeDef = sumDeduction(homeInjuries, 'defensive_contribution');
@@ -157,14 +182,8 @@ const EDGE_INJURY = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return null;
 
-    const rosterRes = await fetch(
-      `${url}/rest/v1/players?sport=eq.${sport}&team_name=eq.${encodeURIComponent(teamName)}` +
-      `&select=player_id,name,position,position_group,team_name,rating,offensive_contribution,defensive_contribution,is_starter`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-    );
-    if (!rosterRes.ok) return null;
-    const roster = await rosterRes.json();
-
+    const rosterIndex = await loadRosterIndex(sport, url, key);
+    const roster = rosterIndex[normalizeTeam(sport, teamName)] || [];
     const matched = matchInjuriesToRoster(injuries || [], roster);
 
     return {
@@ -175,49 +194,45 @@ const EDGE_INJURY = (() => {
   }
 
   // ============================================================
-  // ── ROSTER LOADING ──
+  // ── ROSTER INDEX ──
   //
-  // team_name and position_group are both selected. Without
-  // team_name the per-team grouping below collapsed every
-  // player under a single undefined key — the injury family
-  // was reading an empty roster for every team and reporting
-  // zero deductions on every game.
+  // Loads the sport's full roster in one query and groups by
+  // normalized team name. This is what makes the injured-player
+  // lookup work whether the game carries the Odds API spelling
+  // or ESPN's own. The player table for any single sport is a
+  // few thousand rows — small enough to fetch on every
+  // pipeline stage.
   // ============================================================
 
-  async function loadRosterForTeams(sport, teamNames, url, key) {
-    if (!teamNames.length) return {};
-    const inList = teamNames.map(n => `"${n}"`).join(',');
+  async function loadRosterIndex(sport, url, key) {
+    const out = {};
+    const pageSize = 1000;
 
-    try {
-      const res = await fetch(
-        `${url}/rest/v1/players?sport=eq.${sport}&team_name=in.(${inList})` +
-        `&select=player_id,name,position,position_group,team_name,rating,offensive_contribution,defensive_contribution,is_starter`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      if (!res.ok) return {};
-      const rows = await res.json();
-
-      // Guard against a response where team_name is not
-      // present. If every row lacks it, the select shape is
-      // wrong and the caller needs to know — grouping under
-      // undefined is what the previous version did silently.
-      if (rows.length && rows[0].team_name === undefined) {
-        logEdgeError('injury.loadRosterForTeams', new Error(
-          'players response has no team_name column — check the select'));
-        return {};
+    for (let offset = 0; offset < 200000; offset += pageSize) {
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/players?sport=eq.${sport}` +
+          `&select=${PLAYER_COLUMNS}` +
+          `&order=id.asc&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) break;
+        const rows = await res.json();
+        rows.forEach(p => {
+          if (!p.team_name) return;
+          const k = normalizeTeam(sport, p.team_name);
+          if (!k) return;
+          if (!out[k]) out[k] = [];
+          out[k].push(p);
+        });
+        if (rows.length < pageSize) break;
+      } catch (e) {
+        logEdgeError('injury.loadRosterIndex.' + sport, e);
+        break;
       }
-
-      const byTeam = {};
-      rows.forEach(p => {
-        if (!p.team_name) return;
-        if (!byTeam[p.team_name]) byTeam[p.team_name] = [];
-        byTeam[p.team_name].push(p);
-      });
-      return byTeam;
-    } catch (e) {
-      logEdgeError('injury.loadRosterForTeams.fetch', e);
-      return {};
     }
+
+    return out;
   }
 
   // ============================================================
@@ -288,8 +303,21 @@ const EDGE_INJURY = (() => {
     return round(injuries.reduce((s, i) => s + (i[field] || 0), 0), 2);
   }
 
+  function normalizeTeam(sport, name) {
+    if (!name) return '';
+    if (window.EDGE_TEAMS && typeof window.EDGE_TEAMS.normalize === 'function') {
+      try { return window.EDGE_TEAMS.normalize(name, sport); }
+      catch {}
+    }
+    return String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
   // ============================================================
   // ── ESPN INJURY FETCH ──
+  //
+  // Injuries come back keyed by ESPN displayName. They are
+  // re-keyed by normalized name so the lookup from the game
+  // object, which carries The Odds API spelling, matches.
   // ============================================================
 
   async function getCachedInjuries(sport, teamFilter) {
@@ -314,6 +342,15 @@ const EDGE_INJURY = (() => {
     const cfg = ESPN_MAP[sport];
     if (!cfg) return {};
 
+    // Normalize the caller's team filter once. Any lookup below
+    // against ESPN display names goes through the same
+    // normalization, so an Odds API spelling matches an ESPN
+    // spelling.
+    const wantedNorm = new Set();
+    if (teamFilter && teamFilter.size) {
+      teamFilter.forEach(t => wantedNorm.add(normalizeTeam(sport, t)));
+    }
+
     const leagueUrls = [
       `https://site.web.api.espn.com/apis/site/v2/sports/${cfg.site}/injuries`,
       `https://site.api.espn.com/apis/site/v2/sports/${cfg.site}/injuries`,
@@ -325,27 +362,34 @@ const EDGE_INJURY = (() => {
         if (res.headers.get('x-edge-offline') === '1') continue;
         if (!res.ok) continue;
         const data = await res.json();
-        const byTeam = parseEspnInjuries(data);
+        const byTeam = parseEspnInjuries(sport, data);
         if (Object.keys(byTeam).length) return byTeam;
       } catch {}
     }
 
+    // Fallback: per-team core API. Uses the power_ratings table
+    // for the ESPN team ids, filtered to just the teams in this
+    // slate after normalization.
     const teams = await fetchTeamsFromDb(sport);
     if (!teams.length) return {};
 
-    const wanted = teamFilter && teamFilter.size
-      ? teams.filter(t => teamFilter.has(t.name))
+    const wanted = wantedNorm.size
+      ? teams.filter(t => wantedNorm.has(normalizeTeam(sport, t.name)))
       : teams;
 
     const [espnSport, espnLeague] = cfg.core;
-    const byTeam = {};
+    const byNorm = {};
 
     await parallelMap(wanted, 5, async team => {
       const list = await fetchTeamInjuries(espnSport, espnLeague, team.id);
-      if (list.length) byTeam[team.name] = list;
+      if (!list.length) return;
+      const norm = normalizeTeam(sport, team.name);
+      if (!norm) return;
+      if (!byNorm[norm]) byNorm[norm] = [];
+      byNorm[norm].push(...list);
     });
 
-    return byTeam;
+    return byNorm;
   }
 
   async function fetchTeamsFromDb(sport) {
@@ -420,9 +464,14 @@ const EDGE_INJURY = (() => {
 
   // ============================================================
   // ── PARSE LEAGUE-WIDE RESPONSE ──
+  //
+  // Re-keys the ESPN response, which is keyed by display name,
+  // into a normalized key. This is what makes the game lookup
+  // work — the game object carries The Odds API spelling, and
+  // the two only line up after both sides are normalized.
   // ============================================================
 
-  function parseEspnInjuries(data) {
+  function parseEspnInjuries(sport, data) {
     const byTeam = {};
     if (!data) return byTeam;
 
@@ -441,9 +490,12 @@ const EDGE_INJURY = (() => {
         null;
       if (!teamName) return;
 
+      const norm = normalizeTeam(sport, teamName);
+      if (!norm) return;
+
       const injuries = Array.isArray(entry.injuries) ? entry.injuries : [entry];
 
-      if (!byTeam[teamName]) byTeam[teamName] = [];
+      if (!byTeam[norm]) byTeam[norm] = [];
 
       injuries.forEach(inj => {
         const athlete = inj.athlete || entry.athlete;
@@ -459,7 +511,7 @@ const EDGE_INJURY = (() => {
         if (!name) return;
         if (!status) return;
 
-        byTeam[teamName].push({ name, position, status });
+        byTeam[norm].push({ name, position, status });
       });
     });
 
@@ -488,14 +540,6 @@ const EDGE_INJURY = (() => {
         await fn(item);
       }
     }));
-  }
-
-  function logEdgeError(where, err) {
-    try {
-      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
-      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
-      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
-    } catch {}
   }
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
