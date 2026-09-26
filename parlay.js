@@ -1,46 +1,43 @@
 // ============================================================
-// EDGE — TREND BET / PARLAY ENGINE v1.2
+// EDGE — TREND BET / PARLAY ENGINE v1.3
+//
 // Mines graded shadow_picks for repeatable trends, then builds
 // correlation-safe parlays out of today's qualifying picks.
 // Deterministic. No Claude. Pure math.
 //
-// v1.2 — three fixes:
+// v1.3 changes:
 //
-//   1. line_moved_with_us. The trend test looked only at the
-//      market family's vote in the governor breakdown. On the
-//      live board the market family frequently votes neutral
-//      because it reads line_history, and line_history does not
-//      carry an open until a snapshot has been captured — which
-//      for a fresh game is never. The trend now checks the pick's
-//      own market_snapshot (spread vs open_spread) first, and
-//      only falls back to the family vote when the snapshot is
-//      absent. Under the old code this trend almost never fired.
+//   · Context is passed to trends-engine. The old code called
+//     EDGE_TRENDS.trendsForGame(game) with no second argument.
+//     Rest, season-opener, previous-result, revenge and
+//     late-season situations all read from a context object,
+//     so without one they never matched a live game. A team
+//     coming off a bye did not trigger the off-bye trend, a
+//     season opener did not trigger the opener trend, and a
+//     revenge spot never fired. historicalTrendsFor and
+//     buildTrendLegs now accept a context and pass it through.
 //
-//   2. legOdds. Spread picks are what the pipeline produces, and
-//      their price is the spread price — normally -110. The old
-//      code read market_home_ml / market_away_ml, which are the
-//      moneyline prices. For a home spread pick on a heavy
-//      favourite, that could be -180 while the spread pays -110.
-//      Reading ML as the spread price inflated the payout and
-//      made every parlay look better than it was. Spread legs
-//      now take the spread price if the pick carries one, else
-//      default to -110. The ML price is used for nothing in
-//      parlay sizing.
+//   · buildTrendBets accepts a context argument. When the
+//     orchestrator runs the pipeline, it can pass the same
+//     context it built at stage 3 — line history, rest, h2h,
+//     injuries — so the live trends and the live picks share
+//     the same inputs. Callers that do not have a context can
+//     still call this; the trends engine falls back to whatever
+//     the game object itself carries.
 //
-//   3. legProbability fallback. When posterior_home_prob was
-//      missing, the old code computed 0.5 + confidence/200. A
-//      confidence of 65 became 0.825 — a probability the model
-//      had never claimed. The fallback now reads confidence/100,
-//      which is what the number is: a percent-scale probability.
+//   · lineMovedTowardPick checks physics_output.market_snapshot
+//     first, then market_snapshot, then the governor's own
+//     market family vote. Unchanged from v1.2.
 //
-// v1.1 — logEdgeError. Previously a failed Supabase read returned
-// an empty array and the page said "no trends" — indistinguishable
-// from "the query succeeded and found nothing".
+// v1.2 changes (retained):
+//   · line_moved_with_us reads the pick's own market snapshot.
+//   · legOdds uses the spread price, not the moneyline.
+//   · legProbability falls back to confidence/100.
 // ============================================================
 
 const EDGE_PARLAY = (() => {
 
-  const BUILD = 'parlay-20260924-01';
+  const BUILD = 'parlay-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -98,15 +95,7 @@ const EDGE_PARLAY = (() => {
       label: 'Line moved toward our side',
       describe: 'Closing line value confirmed the model before kickoff',
       test: p => {
-        // Prefer direct market movement. physics.js carries
-        // market_snapshot.open_spread and market_snapshot.spread
-        // on every persisted pick, so this check works even when
-        // the market family voted neutral for lack of line data.
         if (lineMovedTowardPick(p)) return true;
-
-        // Fall back to the market family vote. Kept so picks
-        // persisted before market_snapshot was populated still
-        // get a chance to qualify on this rule.
         const bd = p.governor_snapshot?.breakdown || [];
         const market = bd.find(b => b.family === 'market');
         return !!market && market.vote !== 'neu' && num(market.confidence) >= 0.7;
@@ -227,10 +216,6 @@ const EDGE_PARLAY = (() => {
 
   // ============================================================
   // ── LINE MOVEMENT HELPER ──
-  // Reads the market snapshot physics persists onto every pick.
-  // A pick qualifies if the number moved toward the side we took.
-  // Market spread is signed from the home perspective, so a move
-  // toward home means the number got more negative.
   // ============================================================
 
   function lineMovedTowardPick(p) {
@@ -410,8 +395,16 @@ const EDGE_PARLAY = (() => {
     return clamp(blended, 0.05, TREND_MAX_PROB);
   }
 
+  // buildTrendLegs now accepts a context and passes it to the
+  // trends engine. Without it, rest, opener, revenge and
+  // late-season trends never matched the live game.
   async function buildTrendLegs(games, options = {}) {
-    const { minSample = TREND_MIN_SAMPLE_LEG, minHitRate = 0.65, minStreak = 4 } = options;
+    const {
+      minSample = TREND_MIN_SAMPLE_LEG,
+      minHitRate = 0.65,
+      minStreak = 4,
+      context = null,
+    } = options;
     if (!window.EDGE_TRENDS) return [];
 
     const legs = [];
@@ -420,7 +413,9 @@ const EDGE_PARLAY = (() => {
       if (!isFinite(start) || start <= Date.now()) continue;
 
       let t;
-      try { t = await window.EDGE_TRENDS.trendsForGame(game); }
+      try {
+        t = await window.EDGE_TRENDS.trendsForGame(game, { context });
+      }
       catch (e) { logEdgeError('parlay.buildTrendLegs.trendsForGame', e); continue; }
 
       [['home', t.home], ['away', t.away]].forEach(([side, block]) => {
@@ -493,7 +488,10 @@ const EDGE_PARLAY = (() => {
     return rebuilt;
   }
 
-  async function historicalTrendsFor(picks) {
+  // historicalTrendsFor passes the context through. This is the
+  // path the parlay page uses to fetch the live trend detail
+  // for today's picks.
+  async function historicalTrendsFor(picks, context = null) {
     if (!window.EDGE_TRENDS) return {};
     const byGame = {};
     await Promise.all(picks.map(async p => {
@@ -503,8 +501,22 @@ const EDGE_PARLAY = (() => {
           id: p.game_id, sport: p.sport,
           home_team: p.home_team, away_team: p.away_team,
           spread: p.market_spread,
+          open_spread: p.open_spread ?? null,
           commence_time: p.commence_time,
-        });
+          home_rest_days: p.home_rest_days ?? null,
+          away_rest_days: p.away_rest_days ?? null,
+          home_prev_result: p.home_prev_result ?? null,
+          away_prev_result: p.away_prev_result ?? null,
+          home_prev_margin: p.home_prev_margin ?? null,
+          away_prev_margin: p.away_prev_margin ?? null,
+          home_game_of_season: p.home_game_of_season ?? null,
+          away_game_of_season: p.away_game_of_season ?? null,
+          home_home_game_of_season: p.home_home_game_of_season ?? null,
+          played_before: p.played_before ?? null,
+          home_lost_last_meeting: p.home_lost_last_meeting ?? null,
+          away_lost_last_meeting: p.away_lost_last_meeting ?? null,
+          season_progress: p.season_progress ?? null,
+        }, { context });
         byGame[p.game_id] = t;
       } catch (e) { logEdgeError('parlay.historicalTrendsFor', e); }
     }));
@@ -522,12 +534,16 @@ const EDGE_PARLAY = (() => {
       .slice(0, 4);
   }
 
+  // buildTrendBets threads a context through both trend
+  // resolution calls. When the orchestrator calls this, it can
+  // pass the same context it built for the picks.
   async function buildTrendBets(todaysPicks, options = {}) {
     const {
       maxLegs = MAX_LEGS,
       minLegs = MIN_LEGS,
       trendScores = null,
       minLegConfidence = 0,
+      context = null,
     } = options;
 
     const scores = trendScores || await scoreTrends();
@@ -539,7 +555,7 @@ const EDGE_PARLAY = (() => {
     try { await attachMatchupTrends(playable); }
     catch (e) { logEdgeError('parlay.buildTrendBets.attachMatchup', e); }
 
-    const histByGame = await historicalTrendsFor(playable);
+    const histByGame = await historicalTrendsFor(playable, context);
     playable.forEach(p => {
       p.historical_trends = supportingTrends(p, histByGame[p.game_id]);
     });
@@ -757,8 +773,9 @@ const EDGE_PARLAY = (() => {
   }
 
   // Picks in the pipeline are spread picks. Their price is the
-  // spread price — normally -110 — not the moneyline. Reading the
-  // ML price as the payout on a spread leg overstates every parlay.
+  // spread price — normally -110 — not the moneyline. Reading
+  // the ML price as the payout on a spread leg overstates every
+  // parlay. The ML price is used only for moneyline legs.
   function legOdds(p) {
     if (p.direction === 'home' && num(p.home_spread_price)) return num(p.home_spread_price);
     if (p.direction === 'away' && num(p.away_spread_price)) return num(p.away_spread_price);
@@ -774,17 +791,14 @@ const EDGE_PARLAY = (() => {
   }
 
   function legProbability(pick) {
-    // Prefer the governor's own posterior — it is the number the
-    // pipeline actually bet on. Only use it when it is a genuine
-    // probability in (0,1).
     const posterior = num(pick.governor_snapshot?.posterior_home_prob);
     if (posterior > 0 && posterior < 1) {
       return pick.direction === 'home' ? posterior : 1 - posterior;
     }
 
-    // Fall back to confidence. This is a percent-scale number
-    // already, so 65 becomes 0.65, not 0.825. The old formula
-    // 0.5 + conf/200 treated a moderate pick as a strong one.
+    // Confidence is a percent-scale number, so 65 becomes 0.65.
+    // The old formula 0.5 + conf/200 treated a moderate pick as
+    // a strong one.
     const conf = num(pick.confidence);
     if (conf > 0) {
       const prob = clamp(conf / 100, 0.05, 0.95);
