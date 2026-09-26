@@ -1,20 +1,40 @@
 // ============================================================
-// EDGE — INJURY FRAGMENTATION v1.2
+// EDGE — INJURY FRAGMENTATION v1.3
 //
 // Reads ESPN injuries for today's slate, looks up each injured
 // player in the players table, subtracts their offensive and
 // defensive contribution from the team's effective strength.
 //
-// v1.2 changes:
-//   · Team list now comes from power_ratings, not ESPN's /teams
-//     endpoint — which is CORS-blocked in the browser (same
-//     bug that hit the roster engine). No more fetchTeamList.
+// v1.3 changes:
+//
+//   · team_name is loaded. The v1.2 code selected a fixed set
+//     of columns from the players table and left team_name
+//     out — but then grouped the rows by p.team_name. Every
+//     player landed under a single undefined key, so the
+//     per-team lookup that follows never matched an injury to
+//     a roster. Injury deductions were always zero. team_name
+//     is now in the select, in both the slate path and the
+//     single-team path.
+//
+//   · Position group is loaded too, so a future matchup panel
+//     can show the group alongside the injury.
+//
+//   · Roster read is resilient to a missing team_name column
+//     in the response — the module logs once and returns empty
+//     rather than silently grouping everything under
+//     undefined.
+//
+// v1.2 changes (retained):
+//   · Team list comes from power_ratings, not ESPN's /teams
+//     endpoint.
 //   · WNBA added.
-//   · League-wide injuries endpoints tried first; per-team core
-//     API only if those fail. Avoids 60+ HTTP calls per sport.
+//   · League-wide injury endpoints tried first, per-team core
+//     API only if those fail.
 // ============================================================
 
 const EDGE_INJURY = (() => {
+
+  const BUILD = 'inj-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -47,6 +67,7 @@ const EDGE_INJURY = (() => {
   };
 
   return {
+    BUILD,
     fragment,
     getInjuriesForGame,
     getTeamFragmentation,
@@ -66,7 +87,6 @@ const EDGE_INJURY = (() => {
     const key = SUPABASE_KEY();
     if (!url || !key) return out;
 
-    // Which sports and which teams are on the slate
     const teamsBySport = {};
     games.forEach(g => {
       const sport = g._sport || g.sport;
@@ -79,19 +99,16 @@ const EDGE_INJURY = (() => {
     const sports = Object.keys(teamsBySport);
     if (!sports.length) return out;
 
-    // Fetch injuries per sport, in parallel
     const injuryResults = {};
     await Promise.all(sports.map(async sport => {
       injuryResults[sport] = await getCachedInjuries(sport, teamsBySport[sport]);
     }));
 
-    // Load rosters for the teams on the slate
     const rosterBySport = {};
     await Promise.all(sports.map(async sport => {
       rosterBySport[sport] = await loadRosterForTeams(sport, Array.from(teamsBySport[sport]), url, key);
     }));
 
-    // Build the fragmentation per game
     games.forEach(g => {
       const sport = g._sport || g.sport;
       const home = g.home_team || g.home;
@@ -141,7 +158,8 @@ const EDGE_INJURY = (() => {
     if (!url || !key) return null;
 
     const rosterRes = await fetch(
-      `${url}/rest/v1/players?sport=eq.${sport}&team_name=eq.${encodeURIComponent(teamName)}&select=player_id,name,position,position_group,rating,offensive_contribution,defensive_contribution,is_starter`,
+      `${url}/rest/v1/players?sport=eq.${sport}&team_name=eq.${encodeURIComponent(teamName)}` +
+      `&select=player_id,name,position,position_group,team_name,rating,offensive_contribution,defensive_contribution,is_starter`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } }
     );
     if (!rosterRes.ok) return null;
@@ -158,27 +176,48 @@ const EDGE_INJURY = (() => {
 
   // ============================================================
   // ── ROSTER LOADING ──
+  //
+  // team_name and position_group are both selected. Without
+  // team_name the per-team grouping below collapsed every
+  // player under a single undefined key — the injury family
+  // was reading an empty roster for every team and reporting
+  // zero deductions on every game.
   // ============================================================
 
   async function loadRosterForTeams(sport, teamNames, url, key) {
     if (!teamNames.length) return {};
     const inList = teamNames.map(n => `"${n}"`).join(',');
+
     try {
       const res = await fetch(
         `${url}/rest/v1/players?sport=eq.${sport}&team_name=in.(${inList})` +
-        `&select=player_id,name,position,position_group,rating,offensive_contribution,defensive_contribution,is_starter`,
+        `&select=player_id,name,position,position_group,team_name,rating,offensive_contribution,defensive_contribution,is_starter`,
         { headers: { apikey: key, Authorization: `Bearer ${key}` } }
       );
       if (!res.ok) return {};
       const rows = await res.json();
 
+      // Guard against a response where team_name is not
+      // present. If every row lacks it, the select shape is
+      // wrong and the caller needs to know — grouping under
+      // undefined is what the previous version did silently.
+      if (rows.length && rows[0].team_name === undefined) {
+        logEdgeError('injury.loadRosterForTeams', new Error(
+          'players response has no team_name column — check the select'));
+        return {};
+      }
+
       const byTeam = {};
       rows.forEach(p => {
+        if (!p.team_name) return;
         if (!byTeam[p.team_name]) byTeam[p.team_name] = [];
         byTeam[p.team_name].push(p);
       });
       return byTeam;
-    } catch { return {}; }
+    } catch (e) {
+      logEdgeError('injury.loadRosterForTeams.fetch', e);
+      return {};
+    }
   }
 
   // ============================================================
@@ -275,7 +314,6 @@ const EDGE_INJURY = (() => {
     const cfg = ESPN_MAP[sport];
     if (!cfg) return {};
 
-    // ── Try league-wide endpoints first ──
     const leagueUrls = [
       `https://site.web.api.espn.com/apis/site/v2/sports/${cfg.site}/injuries`,
       `https://site.api.espn.com/apis/site/v2/sports/${cfg.site}/injuries`,
@@ -284,6 +322,7 @@ const EDGE_INJURY = (() => {
     for (const url of leagueUrls) {
       try {
         const res = await fetch(url, { cache: 'no-store' });
+        if (res.headers.get('x-edge-offline') === '1') continue;
         if (!res.ok) continue;
         const data = await res.json();
         const byTeam = parseEspnInjuries(data);
@@ -291,7 +330,6 @@ const EDGE_INJURY = (() => {
       } catch {}
     }
 
-    // ── Fall back to per-team core API ──
     const teams = await fetchTeamsFromDb(sport);
     if (!teams.length) return {};
 
@@ -333,6 +371,7 @@ const EDGE_INJURY = (() => {
     let items = [];
     try {
       const res = await fetch(base, { cache: 'no-store' });
+      if (res.headers.get('x-edge-offline') === '1') return [];
       if (!res.ok) return [];
       const data = await res.json();
       items = data.items || [];
@@ -449,6 +488,14 @@ const EDGE_INJURY = (() => {
         await fn(item);
       }
     }));
+  }
+
+  function logEdgeError(where, err) {
+    try {
+      const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+      list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+      localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+    } catch {}
   }
 
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
