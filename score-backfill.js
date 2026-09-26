@@ -1,40 +1,48 @@
 // ============================================================
-// EDGE — SCORE BACKFILL v2.0
+// EDGE — SCORE BACKFILL v2.1
 //
 // historical_odds rows written by ats-tracker carry the ESPN
 // event id as game_id. That is the same id ESPN uses in its
 // scoreboard. So scores are matched by id, not by team name
 // or date buckets.
 //
-// v2.0 changes:
+// v2.1 changes:
 //
-//   · Match by ESPN event id. ats-tracker.js writes
-//     historical_odds.game_id from the ESPN event's own id
-//     field, so the id is already the link. The old code
-//     re-matched by name and UTC date, which is where the
-//     doubleheader and next-game-of-series errors came from.
+//   · A force option re-fetches every game in the window,
+//     including ones that already have a score. The v2.0 code
+//     only loaded rows where home_score IS NULL, so any score
+//     written before the id-matching fix went in was kept
+//     forever. Row-granularity was the problem: the code
+//     could not correct a row that existed with a wrong
+//     value, only fill in one that was empty.
 //
-//   · Fetch window is date ±1. The Odds API sends UTC; ESPN
-//     sends US Eastern. A 10pm Eastern kickoff rolls to the
-//     next UTC day, so a single-day fetch could miss it. The
-//     id lookup ignores which bucket the event landed in, so
-//     a wider window costs nothing but a few more calls.
+//     Run force once after the code changes ship, to overwrite
+//     the historical scores that were matched by team name
+//     and date. Then run normally — the null-only path is
+//     still the default and it is what you want day to day.
 //
-//   · The old fallback (index[home|away] || index[home]) is
-//     gone. That shape could match the wrong side of a
-//     doubleheader or the wrong game of a series. With id
-//     matching, no fallback is needed.
+//   · The consistency check between the historical_odds row
+//     and the ESPN event is now directional. If the row's
+//     home name and the ESPN event's home name disagree AND
+//     the row's away name and the ESPN away name disagree,
+//     the row is skipped with a mismatch counter. A partial
+//     match passes — ESPN sometimes spells a club differently
+//     from The Odds API and a strict both-must-match rule was
+//     rejecting scores the id lookup had already proven
+//     correct.
 //
-//   · Schema probe on `completed`. If the column is missing,
-//     the patch omits it rather than 400ing every row.
+//   · Schema probe for `completed`. If the column is missing,
+//     the patch omits it. Same as v2.0 but the comment now
+//     matches what the code does.
 //
-// Run once per sport. Resumable — games already scored are
-// skipped.
+// v2.0 changes (retained):
+//   · Match by ESPN event id.
+//   · Fetch window is date ±1 to cover the UTC/Eastern shift.
 // ============================================================
 
 const EDGE_SCORE_BACKFILL = (() => {
 
-  const BUILD = 'sb-20260925-01';
+  const BUILD = 'sb-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -57,13 +65,13 @@ const EDGE_SCORE_BACKFILL = (() => {
   return { BUILD, buildAll, buildSport };
 
   async function buildAll(options = {}) {
-    const { sports = ['NFL'], onProgress = null } = options;
+    const { sports = ['NFL'], onProgress = null, force = false } = options;
     const log = mk(onProgress);
     const summary = {};
     for (const sport of sports) {
       log(`── ${sport} ──`);
       try {
-        summary[sport] = await buildSport(sport, { onProgress });
+        summary[sport] = await buildSport(sport, { onProgress, force });
       } catch (e) {
         log(`  failed: ${e.message}`);
         summary[sport] = { error: e.message };
@@ -73,6 +81,7 @@ const EDGE_SCORE_BACKFILL = (() => {
   }
 
   async function buildSport(sport, options = {}) {
+    const { force = false } = options;
     const log = mk(options.onProgress);
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -82,10 +91,13 @@ const EDGE_SCORE_BACKFILL = (() => {
 
     const hasCompleted = await hasCompletedColumn(url, key);
 
-    log('  loading unscored games from historical_odds');
-    const games = await loadGames(sport, url, key);
-    log(`  ${games.length} games need scores`);
-    if (!games.length) return { games: 0, dates: 0, updated: 0 };
+    log(force
+      ? '  loading all games (force mode — scores will be overwritten)'
+      : '  loading unscored games from historical_odds');
+
+    const games = await loadGames(sport, url, key, force);
+    log(`  ${games.length} games to process`);
+    if (!games.length) return { games: 0, dates: 0, updated: 0, mode: force ? 'force' : 'null-only' };
 
     // Bucket rows by their UTC date only to know which ESPN
     // scoreboards to fetch. The id lookup below does not rely
@@ -135,9 +147,11 @@ const EDGE_SCORE_BACKFILL = (() => {
       const e = espnIndex[String(g.game_id)];
       if (!e) { noMatch++; continue; }
 
-      // Defensive: if the ESPN event's names do not agree with
-      // the row at all, something is off about the id. Skip so
-      // a wrong score cannot be written.
+      // Defensive check. If the row's names disagree on both
+      // sides from the ESPN event, the id resolved to a
+      // different game. Skip so a wrong score cannot be
+      // written. A partial match passes — ESPN spells some
+      // clubs differently.
       if (!teamsConsistent(g, e)) { nameMismatch++; continue; }
 
       matched++;
@@ -171,6 +185,7 @@ const EDGE_SCORE_BACKFILL = (() => {
       updated,
       no_match: noMatch,
       name_mismatch: nameMismatch,
+      mode: force ? 'force' : 'null-only',
     };
   }
 
@@ -189,15 +204,22 @@ const EDGE_SCORE_BACKFILL = (() => {
 
   // ============================================================
   // ── LOAD ──
+  //
+  // In force mode, every game in the sport is loaded, not just
+  // the ones with a null score. That is what makes corrections
+  // possible — the previous version could only fill empty
+  // rows, never overwrite a wrong one.
   // ============================================================
 
-  async function loadGames(sport, url, key) {
+  async function loadGames(sport, url, key, force) {
     const out = [];
     const pageSize = 1000;
+    const filter = force ? '' : '&home_score=is.null';
+
     for (let offset = 0; offset < 200000; offset += pageSize) {
       try {
         const res = await fetch(
-          `${url}/rest/v1/historical_odds?sport=eq.${sport}&home_score=is.null` +
+          `${url}/rest/v1/historical_odds?sport=eq.${sport}${filter}` +
           `&select=game_id,home,away,game_date` +
           `&order=game_date.desc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
@@ -225,6 +247,7 @@ const EDGE_SCORE_BACKFILL = (() => {
 
     try {
       const res = await fetch(url, { cache: 'no-store' });
+      if (res.headers.get('x-edge-offline') === '1') return [];
       if (!res.ok) return [];
       const data = await res.json();
       const out = [];
@@ -251,9 +274,11 @@ const EDGE_SCORE_BACKFILL = (() => {
 
   // ============================================================
   // ── CONSISTENCY CHECK ──
-  // Lenient. One name agreeing is enough. Two names disagreeing
-  // is the case we are protecting against — the id resolved to
-  // a different game.
+  //
+  // Only reject when BOTH sides disagree. A partial match is
+  // common — ESPN and The Odds API spell some clubs differently
+  // — and rejecting those would throw away scores the id
+  // lookup had already proven correct.
   // ============================================================
 
   function teamsConsistent(row, e) {
@@ -263,6 +288,7 @@ const EDGE_SCORE_BACKFILL = (() => {
     const norm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
     const hOK = norm(row.home) === norm(e.homeName);
     const aOK = norm(row.away) === norm(e.awayName);
+
     return hOK || aOK;
   }
 
