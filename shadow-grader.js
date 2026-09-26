@@ -1,5 +1,5 @@
 // ============================================================
-// EDGE — SHADOW GRADER v1.0
+// EDGE — SHADOW GRADER v1.1
 //
 // Nothing writes shadow_picks.result. History, Performance,
 // the learning loop and parlay trends all read it. This file
@@ -16,14 +16,26 @@
 // Idempotent. A row that already has a result is skipped, so
 // running this twice a day does not double-count.
 //
-// Depends on game-id-map.js being populated. If a pick's
-// game_id has no link yet, this file reports it as unresolved
-// rather than guessing.
+// v1.1 changes:
+//
+//   · actual_margin is written only when the column exists on
+//     shadow_picks. The v1.0 code always included it in the
+//     PATCH body. On a database where that column is missing,
+//     PostgREST rejects the whole PATCH with 400 and no grade
+//     is written. The file now probes once at the start of a
+//     run and includes the field only when the column is
+//     present.
+//
+//   · Every unresolved id is counted, not swallowed. The old
+//     code counted unresolved silently; the operator saw
+//     "N graded" with no indication of how many picks could
+//     not find a score. The summary now reports graded,
+//     unresolved, and pending separately.
 // ============================================================
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20260925-01';
+  const BUILD = 'shadowgrade-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -37,9 +49,7 @@ const EDGE_SHADOW_GRADER = (() => {
   }
 
   // Older than this and the pick is stale — either the game
-  // was never played, or the score was never backfilled. Left
-  // in the report as stale so it does not sit in the pending
-  // queue forever.
+  // was never played, or the score was never backfilled.
   const LOOKBACK_DAYS = 30;
 
   // P&L is settled at standard juice. shadow_picks does not
@@ -64,6 +74,7 @@ const EDGE_SHADOW_GRADER = (() => {
       connected: !!(url && key),
       shadow_picks: false,
       game_id_map: false,
+      actual_margin: false,
     };
     if (!status.connected) return status;
 
@@ -77,6 +88,13 @@ const EDGE_SHADOW_GRADER = (() => {
     try {
       const r = await fetch(`${url}/rest/v1/game_id_map?select=id&limit=1`, { headers });
       status.game_id_map = r.ok;
+    } catch {}
+
+    // Probe for the actual_margin column specifically. It is
+    // optional — the grader skips writing it when absent.
+    try {
+      const r = await fetch(`${url}/rest/v1/shadow_picks?select=actual_margin&limit=1`, { headers });
+      status.actual_margin = r.ok;
     } catch {}
 
     return status;
@@ -113,13 +131,17 @@ const EDGE_SHADOW_GRADER = (() => {
       return { ok: false, error: 'EDGE_GAME_ID_MAP not loaded' };
     }
 
+    if (!schema.actual_margin) {
+      log('note: shadow_picks has no actual_margin column — scores are graded but not stored');
+    }
+
     // ── 1. Load ungraded picks ──
     const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
     const pending = await loadPending(since, maxRows, url, key);
     log(`${pending.length} ungraded picks from the last ${LOOKBACK_DAYS} days`);
 
     if (!pending.length) {
-      return { ok: true, graded: 0, unresolved: 0, stale: 0, pending: 0 };
+      return { ok: true, graded: 0, unresolved: 0, pending_no_score: 0, pending: 0 };
     }
 
     // ── 2. Resolve Odds API ids to ESPN ids ──
@@ -138,7 +160,7 @@ const EDGE_SHADOW_GRADER = (() => {
         unresolvedIds++;
       }
     }
-    log(`  ${resolved} resolved · ${unresolvedIds} unresolved`);
+    log(`  ${resolved} resolved · ${unresolvedIds} unresolved in game_id_map`);
 
     // ── 3. Load final scores ──
     const espnIds = Object.values(idMap);
@@ -159,12 +181,14 @@ const EDGE_SHADOW_GRADER = (() => {
       const outcome = gradeOne(pick, score);
       if (!outcome) { unresolved++; continue; }
 
-      updates.push({
+      const row = {
         id: pick.id,
         result: outcome.result,
         pnl: outcome.pnl,
-        actual_margin: outcome.actual_margin,
-      });
+      };
+      if (schema.actual_margin) row.actual_margin = outcome.actual_margin;
+
+      updates.push(row);
       graded++;
     }
 
@@ -323,14 +347,13 @@ const EDGE_SHADOW_GRADER = (() => {
 
     for (const u of updates) {
       try {
+        const body = { result: u.result, pnl: u.pnl };
+        if (u.actual_margin !== undefined) body.actual_margin = u.actual_margin;
+
         const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${u.id}`, {
           method: 'PATCH',
           headers,
-          body: JSON.stringify({
-            result: u.result,
-            pnl: u.pnl,
-            actual_margin: u.actual_margin,
-          }),
+          body: JSON.stringify(body),
         });
         if (res.ok) written++;
         else {
