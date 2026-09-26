@@ -17,20 +17,24 @@
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
+  <script src="trends-engine.js"></script>
+  <script src="prop-trends-engine.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
+  <script src="box-score-fetcher.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
+  <script src="situations-engine.js"></script>
+  <script src="game-id-map.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -66,6 +70,17 @@
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
     .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px,11vw,68px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
+
+    /* SOURCE BAR */
+    .source-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 20px; background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--text-dim); gap: 10px; flex-wrap: wrap;
+    }
+    .source-bar .src-value { color: var(--gold); }
 
     /* ALERT STRIP */
     .alert-strip { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
@@ -149,9 +164,6 @@
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
@@ -177,10 +189,6 @@
       box-shadow: var(--lift-high);
       transform: translateY(-2px);
     }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
-    }
     @media (prefers-reduced-motion: reduce) {
       .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
       .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
@@ -196,7 +204,6 @@
       }
     }
 
-    /* ── OFFLINE BANNER ── */
     .offline-bar {
       position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
       background: #2A1F08; border-bottom: 1px solid var(--border-bright);
@@ -235,16 +242,19 @@
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
     <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
-    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <a href="lines.html" class="active"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+    <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
+    <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
+    <a href="test-espn.html"><span class="ico">⌬</span> ESPN Test</a>
   </div>
 
   <main>
@@ -252,6 +262,11 @@
     <div class="page-header">
       <div class="page-eye">Sharp Money Tracker</div>
       <div class="page-title">LINE <em>MOVEMENT</em></div>
+    </div>
+
+    <div class="source-bar">
+      <span>Price source: <span class="src-value" id="sourceLabel">Consensus</span></span>
+      <span id="sourceNote">Open and current both from the same source</span>
     </div>
 
     <div class="alert-strip">
@@ -301,10 +316,39 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
+    function logEdgeError(where, err) {
+      try {
+        const list = JSON.parse(localStorage.getItem('edge_errors') || '[]');
+        list.unshift({ t: Date.now(), where, msg: err && err.message ? err.message : String(err) });
+        localStorage.setItem('edge_errors', JSON.stringify(list.slice(0, 50)));
+      } catch {}
+    }
+
     // ── STATE ──
     let currentFilter = 'all';
     let allLines = [];
+    let currentSource = 'consensus';
     const CACHE_TTL_MS = 5 * 60 * 1000;
+
+    function activeBook() {
+      return (localStorage.getItem('edge_book_key') || '').trim().toLowerCase();
+    }
+    function activeBookLabel() {
+      return (localStorage.getItem('edge_sportsbook_name') || '').trim() || 'Consensus';
+    }
+    function computeSource() {
+      const book = activeBook();
+      return book ? `book:${book}` : 'consensus';
+    }
+
+    function updateSourceBar() {
+      currentSource = computeSource();
+      const book = activeBook();
+      document.getElementById('sourceLabel').textContent = book ? activeBookLabel() : 'Consensus';
+      document.getElementById('sourceNote').textContent = book
+        ? 'Only rows from this book are compared'
+        : 'Median across books returned per market';
+    }
 
     // ── FILTER TABS ──
     document.querySelectorAll('.ftab').forEach(tab => {
@@ -328,9 +372,10 @@
       const sbUrl = localStorage.getItem('edge_supabase_url');
       const sbKey = localStorage.getItem('edge_supabase_key');
 
+      updateSourceBar();
+
       if (!oddsKey) { renderLines(); return; }
 
-      // Serve cache if fresh and not forced
       if (!force) {
         try {
           const cached = JSON.parse(localStorage.getItem('edge_lines_cache') || 'null');
@@ -355,13 +400,16 @@
         { key: 'soccer_usa_mls',         label: 'MLS' },
       ];
 
+      const book = activeBook();
       const current = [];
       let failedSports = 0;
 
       for (const s of sports) {
         try {
+          let query = 'regions=us&markets=spreads,h2h,totals&oddsFormat=american';
+          if (book) query += `&bookmakers=${encodeURIComponent(book)}&includeLinks=true`;
           const res = await fetch(
-            `https://api.the-odds-api.com/v4/sports/${s.key}/odds/?apiKey=${oddsKey}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`,
+            `https://api.the-odds-api.com/v4/sports/${s.key}/odds/?apiKey=${oddsKey}&${query}`,
             { cache: 'no-store' }
           );
           if (!res.ok) { failedSports++; continue; }
@@ -370,15 +418,18 @@
         } catch { failedSports++; }
       }
 
-      // Load line history from Supabase
+      // Load line history from Supabase, filtered to this
+      // source only. Two books writing to the same table no
+      // longer blend into one another.
       let history = {};
       if (sbUrl && sbKey) {
         try {
           const gameIds = current.map(g => g.id).filter(Boolean);
           if (gameIds.length) {
             const inList = gameIds.map(id => `"${id}"`).join(',');
+            const srcFilter = `&source=eq.${encodeURIComponent(currentSource)}`;
             const res = await fetch(
-              `${sbUrl}/rest/v1/line_history?select=*&game_id=in.(${inList})&order=created_at.asc`,
+              `${sbUrl}/rest/v1/line_history?select=*&game_id=in.(${inList})${srcFilter}&order=created_at.asc`,
               { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
             );
             if (res.ok) {
@@ -392,16 +443,27 @@
         } catch {}
       }
 
-      // Build line objects
+      // Build line objects. Price comes from the book if set,
+      // otherwise the consensus median. Never bookmakers[0].
       allLines = current.map(g => {
-        const bk = g.bookmakers?.[0];
-        const spreadMkt = bk?.markets?.find(m => m.key === 'spreads');
-        const totalMkt  = bk?.markets?.find(m => m.key === 'totals');
-        const h2hMkt    = bk?.markets?.find(m => m.key === 'h2h');
+        const mine = book ? (g.bookmakers || []).find(b => b.key === book) : null;
 
-        const currentSpread = spreadMkt?.outcomes?.find(o => o.name === g.home_team)?.point ?? null;
-        const currentTotal  = totalMkt?.outcomes?.find(o => o.name === 'Over')?.point ?? null;
-        const currentML     = h2hMkt?.outcomes?.find(o => o.name === g.home_team)?.price ?? null;
+        const pickMarket = (marketKey) => {
+          if (mine) {
+            const mkt = mine.markets?.find(m => m.key === marketKey);
+            if (mkt?.outcomes?.length) return { outcomes: mkt.outcomes, book_title: mine.title };
+          }
+          const consensus = consensusMarket(g.bookmakers || [], marketKey);
+          return consensus ? { outcomes: consensus, book_title: 'Consensus' } : null;
+        };
+
+        const spreadPick = pickMarket('spreads');
+        const totalPick  = pickMarket('totals');
+        const h2hPick    = pickMarket('h2h');
+
+        const currentSpread = spreadPick?.outcomes?.find(o => o.name === g.home_team)?.point ?? null;
+        const currentTotal  = totalPick?.outcomes?.find(o => o.name === 'Over')?.point ?? null;
+        const currentML     = h2hPick?.outcomes?.find(o => o.name === g.home_team)?.price ?? null;
 
         const hist = history[g.id];
         const openSpread = hist?.open?.spread ?? currentSpread;
@@ -413,12 +475,13 @@
         const totalMoved  = currentTotal  !== null && openTotal  !== null && currentTotal  !== openTotal;
         const spreadDiff  = spreadMoved ? Math.abs(currentSpread - openSpread) : 0;
 
-        // Steam move: rapid, large spread movement
         const isSteam = spreadDiff >= 2;
-        // RLM: public heavily on home, but line moved away from home
         const isRLM = spreadMoved && publicPct != null && publicPct > 60 && currentSpread > openSpread;
-        // Sharp: spread moved 0.5-2 pts, less dramatic than steam
         const isSharp = spreadMoved && !isSteam && spreadDiff >= 0.5;
+
+        const bookmakerTitle = spreadPick?.book_title
+                            || (mine?.title)
+                            || 'Consensus';
 
         return {
           id: g.id,
@@ -432,15 +495,14 @@
           spreadMoved, totalMoved, spreadDiff,
           isSteam, isRLM, isSharp,
           publicPct, sharpPct,
-          bookmaker: bk?.title || '—',
+          bookmaker: bookmakerTitle,
           bookmaker_count: g.bookmakers?.length || 1,
+          source: currentSource,
         };
       });
 
-      // Save current snapshot to line_history
-      if (sbUrl && sbKey) saveSnapshots(allLines, sbUrl, sbKey);
+      if (sbUrl && sbKey) saveSnapshots(allLines, sbUrl, sbKey, currentSource);
 
-      // Cache locally
       try {
         localStorage.setItem('edge_lines_cache', JSON.stringify({
           ts: Date.now(),
@@ -453,18 +515,56 @@
       document.getElementById('refreshBtn').disabled = false;
     }
 
+    // ── CONSENSUS MEDIAN ──
+    function consensusMarket(books, marketKey) {
+      if (!books.length) return null;
+      const nameMap = new Map();
+      books.forEach(b => {
+        const mkt = b.markets?.find(m => m.key === marketKey);
+        if (!mkt) return;
+        mkt.outcomes?.forEach(o => {
+          if (!nameMap.has(o.name)) nameMap.set(o.name, []);
+          nameMap.get(o.name).push({ point: o.point, price: o.price });
+        });
+      });
+      if (!nameMap.size) return null;
+      const out = [];
+      nameMap.forEach((vals, name) => {
+        const points = vals.map(v => v.point).filter(p => typeof p === 'number');
+        const prices = vals.map(v => v.price).filter(p => typeof p === 'number');
+        out.push({
+          name,
+          point: points.length ? median(points) : null,
+          price: prices.length ? Math.round(median(prices)) : null,
+        });
+      });
+      return out;
+    }
+
+    function median(arr) {
+      if (!arr.length) return null;
+      const sorted = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
     // ── SAVE SNAPSHOTS ──
-    async function saveSnapshots(lines, url, key) {
+    // Rows carry the source tag so the read path can filter.
+    async function saveSnapshots(lines, url, key, source) {
       if (!lines.length) return;
-      const rows = lines.map(l => ({
-        game_id: l.id,
-        sport: l.sport,
-        home: l.home,
-        away: l.away,
-        spread: l.currentSpread,
-        total: l.currentTotal,
-        ml: l.currentML,
-      }));
+      const rows = lines
+        .filter(l => l.currentSpread !== null || l.currentTotal !== null || l.currentML !== null)
+        .map(l => ({
+          game_id: l.id,
+          sport: l.sport,
+          home: l.home,
+          away: l.away,
+          spread: l.currentSpread,
+          total: l.currentTotal,
+          ml: l.currentML,
+          source,
+        }));
+      if (!rows.length) return;
       try {
         await fetch(`${url}/rest/v1/line_history`, {
           method: 'POST',
@@ -476,7 +576,7 @@
           },
           body: JSON.stringify(rows),
         });
-      } catch {}
+      } catch (e) { logEdgeError('lines.saveSnapshots', e); }
     }
 
     // ── ALERT COUNTS ──
@@ -623,7 +723,7 @@
     function scheduleRefresh() {
       setTimeout(() => {
         fetchLines().then(scheduleRefresh);
-      }, 60000); // every 60s
+      }, 60000);
     }
 
     // ── INIT ──
@@ -632,7 +732,6 @@
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
