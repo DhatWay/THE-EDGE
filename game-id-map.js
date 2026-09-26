@@ -1,36 +1,26 @@
 // ============================================================
-// EDGE — GAME ID MAP v1.1
+// EDGE — GAME ID MAP v1.2
 //
 // The bridge between The Odds API event ids and ESPN event ids.
 // Every lookup that crosses the two systems goes through this
 // module: shadow grader, sim grader, closing line value, and
 // the line_history merge in ats-tracker.
 //
+// v1.2 changes:
+//   · schemaSql() now emits the RLS policy, matching the
+//     owner_only pattern used elsewhere in the app.
+//
 // v1.1 changes:
-//
-//   · Unique indexes are non-partial. The v1.0 header proposed
-//     `where odds_api_id is not null` partial predicates, but
-//     PostgREST's on_conflict clause cannot name a partial
-//     index. Postgres treats NULL as distinct in a unique
-//     index, so a non-partial index already allows multiple
-//     NULL id rows — the partial predicate was unnecessary.
-//
+//   · Non-partial unique indexes. PostgREST cannot target a
+//     partial index in its on_conflict clause.
 //   · Date matching prefers commence_time over created_at.
-//     line_history writes its first snapshot for a game several
-//     days before kickoff, so created_at is far outside any
-//     useful window. commence_time is the kickoff time. The
-//     window is 2 days, wide enough for a West Coast kickoff
-//     that lands on the next UTC day.
-//
-//   · loadOddsSide probes for the commence_time column and
-//     falls back to the created_at-only shape if the column is
-//     not yet present, so this file works before and after the
-//     line_history migration.
+//   · loadOddsSide probes for commence_time and falls back
+//     gracefully if the column is not yet present.
 // ============================================================
 
 const EDGE_GAME_ID_MAP = (() => {
 
-  const BUILD = 'gidmap-20260926-01';
+  const BUILD = 'gidmap-20260926-02';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -69,7 +59,13 @@ create unique index game_id_map_espn_idx on public.game_id_map (espn_id);
 create index if not exists game_id_map_lookup_idx
   on public.game_id_map (sport, home_norm, away_norm);
 
-alter table public.game_id_map disable row level security;`;
+alter table public.game_id_map enable row level security;
+
+drop policy if exists owner_only on public.game_id_map;
+create policy owner_only on public.game_id_map
+  for all to authenticated
+  using ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text)
+  with check ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text);`;
 
   return {
     BUILD,
@@ -332,11 +328,6 @@ alter table public.game_id_map disable row level security;`;
 
   async function loadOddsSide(sport, since, url, key) {
     const seen = new Map();
-
-    // line_history is the primary source. It tries commence_time
-    // first; if the column is not yet on the table, it falls
-    // back to a select without it, so this file works before
-    // and after the line_history migration.
     const pageSize = 1000;
     let hasCommence = true;
 
