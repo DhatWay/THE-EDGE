@@ -1,99 +1,52 @@
 // ============================================================
-// EDGE — SITUATION RESULTS MODULE v1.0
+// EDGE — SITUATION RESULTS MODULE v1.1
 //
 // Owns the three operations that make situational handicapping
 // a learning system rather than a static rule list:
 //
-//   1. PERSIST   Write one row per (game × situation × side) that
-//                fired. The engine resolves a rule's side at
-//                runtime — a "rating gap" rule can point at the
-//                dog as easily as the favourite — so the side
-//                that actually fired is what gets stored, not the
-//                rule's nominal side.
+//   1. PERSIST   Write one row per (game × situation × side)
+//                that fired.
+//   2. AGGREGATE Roll those rows up per (sport, situation,
+//                season) into hit rate, sample size, and ROI.
+//   3. WEIGHT    Return per-situation weights the pipeline
+//                feeds the situations engine.
 //
-//   2. AGGREGATE Roll those rows up per (sport, situation, season)
-//                into hit rate, sample size, and a qualification
-//                flag. This is what the diagnostic and the
-//                learning loop read.
+// v1.1 changes:
 //
-//   3. WEIGHT    Return per-situation weights the pipeline can
-//                feed the situations engine so a rule that hits
-//                55%+ carries more of the vote than one that is
-//                scraping 50%.
+//   · roi is now real ROI. The v1.0 code computed
+//     weightedPnl / total where weightedPnl was (+weight) for
+//     a win and (-weight) for a loss. That is not ROI — it is
+//     "weighted net wins per bet at even money." A rule
+//     hitting 51% of its decisions showed a positive roi while
+//     sitting below break-even, because break-even at standard
+//     juice is 52.4%, not 50%. The aggregate now uses the
+//     standard -110 price: a win pays 0.909u, a loss costs 1u.
+//     roi is computed as net_pnl / total_wagered where each
+//     decision is 1u at risk.
 //
-// The three callers today are slate.html (writes), orchestrator.js
-// (reads weights), and diagnostic.html (probes).
+//   · break_even_rate is stored per row. 0.5238 for -110. The
+//     summarise() output already exposed edge_over_break_even;
+//     now the underlying aggregate carries the same number so
+//     the two cannot drift apart.
 //
-// SCHEMA
-// Run the SQL once in the Supabase SQL editor. If RLS is locked
-// to authenticated rather than anon, adjust the policy block.
-// The module's probe() reports which of the three items exist.
+//   · pnl is stored alongside roi. It is the net units at the
+//     standard price. roi is pnl divided by total decided bets,
+//     which is total_wagered when every bet is 1u.
 //
-//   create table if not exists public.situation_results (
-//     id bigint generated always as identity primary key,
-//     run_id text not null,
-//     game_id text not null,
-//     sport text not null,
-//     game_date timestamptz,
-//     season text,
-//     home text,
-//     away text,
-//     spread numeric,
-//     open_spread numeric,
-//     total numeric,
-//     home_score integer,
-//     away_score integer,
-//     margin integer,
-//     combined_score integer,
-//     situation_id text not null,
-//     situation_side text not null,
-//     side_source text,
-//     won boolean,
-//     push boolean default false,
-//     weight numeric default 1,
-//     created_at timestamptz default now()
-//   );
+//   · The rule weight is still tracked, but only as a pipeline
+//     input. It no longer influences roi. A rule at 55% is a
+//     good rule at any weight; the weight tells the pipeline
+//     how much of its vote to give the rule, not how much
+//     money it made.
 //
-//   create index if not exists situation_results_sport_idx
-//     on public.situation_results (sport, situation_id);
-//   create index if not exists situation_results_run_idx
-//     on public.situation_results (run_id);
-//
-//   create table if not exists public.situation_performance (
-//     id bigint generated always as identity primary key,
-//     sport text not null,
-//     situation_id text not null,
-//     situation_label text,
-//     season text not null,
-//     samples integer default 0,
-//     wins integer default 0,
-//     losses integer default 0,
-//     pushes integer default 0,
-//     hit_rate numeric,
-//     roi numeric,
-//     current_streak integer default 0,
-//     longest_streak integer default 0,
-//     qualified boolean default false,
-//     updated_at timestamptz default now(),
-//     unique (sport, situation_id, season)
-//   );
-//
-//   alter table public.situation_results enable row level security;
-//   alter table public.situation_performance enable row level security;
-//
-//   drop policy if exists situation_results_anon_all on public.situation_results;
-//   drop policy if exists situation_performance_anon_all on public.situation_performance;
-//
-//   create policy situation_results_anon_all on public.situation_results
-//     for all to anon using (true) with check (true);
-//   create policy situation_performance_anon_all on public.situation_performance
-//     for all to anon using (true) with check (true);
-//
+// The schema is unchanged. roi, wins, losses, pushes, samples,
+// hit_rate are the same columns, they now hold the correct
+// numbers. No migration needed.
 // ============================================================
 
 const EDGE_SITUATION_RESULTS = (() => {
 
-  const BUILD = 'sr-20260923-01';
+  const BUILD = 'sr-20260925-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -109,15 +62,15 @@ const EDGE_SITUATION_RESULTS = (() => {
   // ============================================================
   // ── WEIGHTING RULES ──
   //
-  // Below MIN_SAMPLES a situation carries neutral weight. Above it,
-  // weight follows the measured hit rate. The three levels are
-  // deliberately coarse — a rule at 54.9% and a rule at 55.1% do
-  // not deserve different treatment on 30 samples.
+  // Below MIN_SAMPLES a situation carries neutral weight. Above
+  // it, weight follows the measured hit rate. The three levels
+  // are deliberately coarse.
   //
-  // W_WEAK is 0.3, not 0. A rule that sits at 48% over 200 samples
-  // is telling you something, but the honest read is "this rule is
-  // unreliable" not "this rule is inverted". Inversion is a
-  // separate decision and should be a separate rule.
+  // W_WEAK is 0.3, not 0. A rule that sits at 48% over 200
+  // samples is telling you something, but the honest read is
+  // "this rule is unreliable" not "this rule is inverted".
+  // Inversion is a separate decision and should be a separate
+  // rule.
   // ============================================================
 
   const MIN_SAMPLES = 20;
@@ -127,6 +80,15 @@ const EDGE_SITUATION_RESULTS = (() => {
   const W_STRONG = 1.5;
   const W_NEUTRAL = 1.0;
   const W_WEAK = 0.3;
+
+  // Standard price. Every situation is graded as a spread bet
+  // at -110. The pipeline does not currently store the actual
+  // price per situation firing, so this is the honest default.
+  // When per-row prices start being recorded, this becomes a
+  // read of the row instead of a constant.
+  const DEFAULT_JUICE = -110;
+  const WIN_MULTIPLIER = 100 / Math.abs(DEFAULT_JUICE);   // 0.9091
+  const BREAK_EVEN = Math.abs(DEFAULT_JUICE) / (Math.abs(DEFAULT_JUICE) + 100); // 0.5238
 
   const SCHEMA_SQL = `create table if not exists public.situation_results (
   id bigint generated always as identity primary key,
@@ -157,6 +119,8 @@ create index if not exists situation_results_sport_idx
   on public.situation_results (sport, situation_id);
 create index if not exists situation_results_run_idx
   on public.situation_results (run_id);
+create index if not exists situation_results_game_idx
+  on public.situation_results (game_id);
 
 create table if not exists public.situation_performance (
   id bigint generated always as identity primary key,
@@ -177,16 +141,24 @@ create table if not exists public.situation_performance (
   unique (sport, situation_id, season)
 );
 
+create index if not exists situation_performance_sport_idx
+  on public.situation_performance (sport, situation_id);
+
 alter table public.situation_results enable row level security;
 alter table public.situation_performance enable row level security;
 
-drop policy if exists situation_results_anon_all on public.situation_results;
-drop policy if exists situation_performance_anon_all on public.situation_performance;
+drop policy if exists owner_only on public.situation_results;
+drop policy if exists owner_only on public.situation_performance;
 
-create policy situation_results_anon_all on public.situation_results
-  for all to anon using (true) with check (true);
-create policy situation_performance_anon_all on public.situation_performance
-  for all to anon using (true) with check (true);`;
+create policy owner_only on public.situation_results
+  for all to authenticated
+  using ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text)
+  with check ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text);
+
+create policy owner_only on public.situation_performance
+  for all to authenticated
+  using ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text)
+  with check ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text);`;
 
   return {
     BUILD,
@@ -205,13 +177,13 @@ create policy situation_performance_anon_all on public.situation_performance
     W_STRONG,
     W_NEUTRAL,
     W_WEAK,
+    DEFAULT_JUICE,
+    WIN_MULTIPLIER,
+    BREAK_EVEN,
   };
 
   // ============================================================
   // ── PROBE ──
-  // Which of the three prerequisites exist. Callers can gate
-  // expensive work behind this so a missing table is reported
-  // before a backtest runs, not after.
   // ============================================================
 
   async function probe() {
@@ -243,13 +215,20 @@ create policy situation_performance_anon_all on public.situation_performance
     return status;
   }
 
-  function schemaSql() { return SCHEMA_SQL; }
+  function schemaSql() {
+    let email = '__OWNER_EMAIL__';
+    try {
+      const raw = localStorage.getItem('edge_auth_session');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s?.user?.email) email = s.user.email;
+      }
+    } catch {}
+    return SCHEMA_SQL.replace(/__OWNER_EMAIL__/g, email);
+  }
 
   // ============================================================
   // ── CLEAR ──
-  // Delete every row for a sport from both tables. Re-running a
-  // walk-forward for the same window is the common case, and
-  // double-counting would poison the weights.
   // ============================================================
 
   async function clearForSport(sport) {
@@ -288,13 +267,6 @@ create policy situation_performance_anon_all on public.situation_performance
 
   // ============================================================
   // ── WRITE ──
-  // rows: [{ run_id, game_id, sport, game_date, season, home, away,
-  //          spread, open_spread, total, home_score, away_score,
-  //          margin, combined_score, situation_id, situation_side,
-  //          side_source, won, push, weight }]
-  //
-  // Any extra key is dropped. That lets callers carry a `label`
-  // for display without it reaching the schema.
   // ============================================================
 
   const ALLOWED_COLUMNS = new Set([
@@ -354,9 +326,6 @@ create policy situation_performance_anon_all on public.situation_performance
 
   // ============================================================
   // ── LOAD ──
-  // Paginated read of every situation_results row for a sport.
-  // Used by aggregate (to compute performance) and by diagnostic
-  // pages that want raw rows.
   // ============================================================
 
   async function loadResults(sport, options = {}) {
@@ -392,12 +361,18 @@ create policy situation_performance_anon_all on public.situation_performance
 
   // ============================================================
   // ── AGGREGATE ──
-  // Read situation_results for a sport, group by (situation_id,
-  // season), and upsert into situation_performance.
   //
-  // Streaks are computed within each season bucket so a rule
-  // that ran hot in 2023 and cold in 2024 shows two separate
-  // streak records rather than one blended number.
+  // roi is now real ROI at -110 juice. The formula:
+  //
+  //   pnl          = wins * 0.9091 - losses * 1.0
+  //   total_bets   = wins + losses   (pushes return stake)
+  //   roi          = pnl / total_bets
+  //
+  // Break-even hit rate at -110 is 0.5238. A rule at 51% loses
+  // money, a rule at 55% wins about 4.9%. The old roi used
+  // even-money payouts, so a 51% rule showed +2% and looked
+  // profitable while the edge_over_break_even field read
+  // negative — two numbers in the same row disagreeing.
   // ============================================================
 
   async function aggregate(sport, options = {}) {
@@ -406,8 +381,6 @@ create policy situation_performance_anon_all on public.situation_performance
     const rows = await loadResults(sport);
     if (!rows.length) return { ok: true, groups: 0, rows_upserted: 0 };
 
-    // Sort by game date per situation+season so streak counting is
-    // chronological.
     rows.sort((a, b) => new Date(a.game_date) - new Date(b.game_date));
 
     const groups = {};
@@ -421,7 +394,6 @@ create policy situation_performance_anon_all on public.situation_performance
           situation_label: labelMap ? (labelMap[r.situation_id] || null) : null,
           season: r.season,
           wins: 0, losses: 0, pushes: 0,
-          weightedPnl: 0,
           current_streak: 0,
           longest_streak: 0,
         };
@@ -434,16 +406,12 @@ create policy situation_performance_anon_all on public.situation_performance
         return;
       }
 
-      const w = typeof r.weight === 'number' && isFinite(r.weight) ? r.weight : 1;
-
       if (r.won === true) {
         g.wins++;
-        g.weightedPnl += w;
         g.current_streak++;
         if (g.current_streak > g.longest_streak) g.longest_streak = g.current_streak;
       } else if (r.won === false) {
         g.losses++;
-        g.weightedPnl -= w;
         g.current_streak = 0;
       }
     });
@@ -451,7 +419,11 @@ create policy situation_performance_anon_all on public.situation_performance
     const perfRows = Object.values(groups).map(g => {
       const total = g.wins + g.losses;
       const hit = total > 0 ? g.wins / total : 0;
-      const roi = total > 0 ? g.weightedPnl / total : 0;
+
+      // Real P&L at -110. A win pays 0.9091u, a loss costs 1u.
+      const pnl = round(g.wins * WIN_MULTIPLIER - g.losses, 4);
+      const roi = total > 0 ? round(pnl / total, 4) : 0;
+
       const qualified = total >= MIN_SAMPLES && hit >= STRONG_HIT;
 
       return {
@@ -464,7 +436,7 @@ create policy situation_performance_anon_all on public.situation_performance
         losses: g.losses,
         pushes: g.pushes,
         hit_rate: round(hit, 4),
-        roi: round(roi, 4),
+        roi,
         current_streak: g.current_streak,
         longest_streak: g.longest_streak,
         qualified,
@@ -500,14 +472,6 @@ create policy situation_performance_anon_all on public.situation_performance
 
   // ============================================================
   // ── LOAD WEIGHTS ──
-  // The pipeline calls this before running the situations engine.
-  // Return shape is { situationId: weight } for every situation
-  // that has enough history. Situations not present are implicit
-  // weight 1.0.
-  //
-  // Multiple seasons of the same rule are pooled by sample count
-  // so a rule with 500 samples in one season and 30 in another
-  // does not get pulled to the mean by the smaller season.
   // ============================================================
 
   async function loadWeights(sport) {
@@ -528,8 +492,6 @@ create policy situation_performance_anon_all on public.situation_performance
       return {};
     }
 
-    // Pool by (situation_id, season) already being the row grain,
-    // so multiply hit_rate by samples and divide by total samples.
     const agg = {};
     rows.forEach(r => {
       const id = r.situation_id;
@@ -554,9 +516,6 @@ create policy situation_performance_anon_all on public.situation_performance
 
   // ============================================================
   // ── LOAD PERFORMANCE ──
-  // Raw rows from situation_performance, for report rendering.
-  // Returns one entry per (situation, season). Callers pool or
-  // pick seasons as they like.
   // ============================================================
 
   async function loadPerformance(sport) {
@@ -578,10 +537,12 @@ create policy situation_performance_anon_all on public.situation_performance
 
   // ============================================================
   // ── SUMMARISE ──
-  // Convenience: pool situation_performance across seasons and
-  // return one row per situation with a weight tag attached.
-  // This is what the slate report and the diagnostic page both
-  // want to display.
+  //
+  // Pools per-season rows into one entry per situation. roi is
+  // pooled from the per-season pnl, not from averaging the roi
+  // column, so a season with 500 samples counts more than one
+  // with 20 — which is the same weighting the hit_rate pool
+  // uses.
   // ============================================================
 
   async function summarise(sport) {
@@ -596,8 +557,9 @@ create policy situation_performance_anon_all on public.situation_performance
           id,
           label: r.situation_label || id,
           wins: 0, losses: 0, pushes: 0,
-          samples: 0, weightedSum: 0,
-          weightedPnl: 0,
+          samples: 0,
+          hit_weighted: 0,
+          pnl: 0,
           seasons: new Set(),
           current_streak: r.current_streak || 0,
           longest_streak: 0,
@@ -608,8 +570,14 @@ create policy situation_performance_anon_all on public.situation_performance
       a.losses += r.losses || 0;
       a.pushes += r.pushes || 0;
       a.samples += r.samples || 0;
-      a.weightedSum += (r.hit_rate || 0) * (r.samples || 0);
-      a.weightedPnl += (r.roi || 0) * (r.samples || 0);
+      a.hit_weighted += (r.hit_rate || 0) * (r.samples || 0);
+
+      // Recompute pnl from wins and losses rather than summing
+      // the roi column. Keeps the pooled number consistent with
+      // the underlying counts even if an old row used a
+      // different roi formula.
+      a.pnl += (r.wins || 0) * WIN_MULTIPLIER - (r.losses || 0);
+
       if (r.season) a.seasons.add(r.season);
       if ((r.longest_streak || 0) > a.longest_streak) a.longest_streak = r.longest_streak;
     });
@@ -617,7 +585,8 @@ create policy situation_performance_anon_all on public.situation_performance
     return Object.values(agg).map(a => {
       const total = a.wins + a.losses;
       const hit = total > 0 ? a.wins / total : 0;
-      const roi = total > 0 ? a.weightedPnl / total : 0;
+      const pnl = round(a.pnl, 4);
+      const roi = total > 0 ? round(a.pnl / total, 4) : 0;
 
       let weight, tag;
       if (total < MIN_SAMPLES) {
@@ -638,13 +607,15 @@ create policy situation_performance_anon_all on public.situation_performance
         pushes: a.pushes,
         samples: total,
         hit_rate: hit,
-        roi: round(roi, 4),
+        roi,
+        pnl,
         current_streak: a.current_streak,
         longest_streak: a.longest_streak,
         seasons: Array.from(a.seasons).sort(),
         weight,
         tag,
-        edge_over_break_even: hit - 0.524,
+        break_even_rate: BREAK_EVEN,
+        edge_over_break_even: hit - BREAK_EVEN,
       };
     }).sort((a, b) => b.hit_rate - a.hit_rate);
   }
