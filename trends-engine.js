@@ -1,47 +1,47 @@
 // ============================================================
-// EDGE — TRENDS ENGINE v2.0
+// EDGE — TRENDS ENGINE v2.1
 //
 // A trend is a repeatable situation with a track record — not
 // a pattern in your own pick history.
 //
-// v2.0 changes:
-//
-//   · Fetch uses power-engine's chunked fetch when available.
-//     The v1.x code requested a whole year with limit=1000.
-//     MLB is 2,430 games a year, the NBA and NHL about 1,300
-//     each, D-I basketball several thousand. Trends were built
-//     from less than half the schedule in those sports. The
-//     fallback below the power-engine path chunks by month so
-//     the limit is under even a full month of NCAAB.
+// v2.1 changes:
 //
 //   · Rest and previous result no longer cross season
-//     boundaries. The old code looked at the prior game in the
-//     list regardless of season, so a season opener counted as
-//     "off a bye" against the summer break and "after a loss"
-//     against last season's final game. Both reset when the
-//     season key changes.
+//     boundaries. The v2.0 code read the prior game in the
+//     chronological list regardless of which season it
+//     belonged to. A season opener therefore counted as
+//     "off a bye" against the summer break, and as "after a
+//     loss" or "after a win" against the final game of the
+//     previous season. Both fields now reset to null at a
+//     season boundary, so opener and post-bye rules can only
+//     fire on games that actually sit inside the same season
+//     as their predecessor.
 //
 //   · A hot streak no longer qualifies a losing record. The
-//     old rule was `rate >= MIN_HIT_RATE OR streak >= MIN_STREAK`.
-//     A team sitting at 6-20 with a four-game cover streak
-//     qualified. A streak now needs the sample to be there
-//     first, and the rate to at least be above a floor.
+//     v2.0 rule was `rate >= MIN_HIT_RATE OR streak >=
+//     MIN_STREAK`, so a team sitting at 6-20 with a four-game
+//     cover streak qualified. A streak now requires the
+//     underlying sample to be large enough AND the overall
+//     hit rate to be at least at a floor, which stops a
+//     single good run from qualifying a trend that has been
+//     losing money all season.
 //
-//   · Season labels match ats-tracker v3.0 and the rest of the
-//     pipeline. Cross-year sports carry the year the season
-//     started. Single-year sports carry the calendar year.
+//   · The context passed from buildContext carries the
+//     previous-result, opener and season-progress fields the
+//     live path needs. When the caller supplies a context,
+//     the engine reads from it; when the caller does not, the
+//     game object's own fields are used.
 //
-//   · trendsForGame builds context itself when the caller has
-//     none. parlay.js passed no context, so rest, opener,
-//     revenge and late-season situations never applied to
-//     today's games. The engine can now build a minimal context
-//     from the game object and the rest-by-team index if one is
-//     passed in, without requiring the caller to know the shape.
+// v2.0 changes (retained):
+//   · Chunked fetch via power-engine.
+//   · Rank-based thresholds for top-10 and bottom-10 rules.
+//   · Testability gate, per-rule weights, blocked rules
+//     declared.
 // ============================================================
 
 const EDGE_TRENDS = (() => {
 
-  const BUILD = 'trends-20260925-01';
+  const BUILD = 'trends-20260926-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -476,13 +476,6 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── APPLY TO TODAY ──
-  //
-  // trendsForGame accepts a context object. When the caller has
-  // none, the game object itself is used as the source of truth
-  // for anything it carries — rest days, previous result,
-  // previous margin, home game of season. parlay.js used to
-  // pass nothing, so rest, opener, revenge and late-season
-  // situations never matched today's games.
   // ============================================================
 
   async function trendsForGame(game, options = {}) {
@@ -538,8 +531,9 @@ const EDGE_TRENDS = (() => {
                           : (game.spread != null ? -game.spread : null);
 
     // Read the game object first, then fall back to the passed
-    // context. The game object is what parlay.js hands over and
-    // it now carries the fields the rest situations look for.
+    // context. The game object is what context-builder attaches
+    // fields to; the context is what a caller can supply when
+    // the game object does not carry them.
     const restDays = isHome
       ? (game.home_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null)
       : (game.away_rest_days ?? ctx?.restByTeam?.[teamKey] ?? null);
@@ -602,13 +596,6 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── FETCH ──
-  //
-  // Prefers power-engine's chunked fetch. That function walks
-  // the window in day-sized chunks and has a day-by-day
-  // fallback, which is what sidesteps the 1,000-event cap on a
-  // single ESPN year response. The fallback below the
-  // power-engine path chunks by month, so even a heavy NCAAB
-  // month lands under the cap.
   // ============================================================
 
   async function fetchRange(sport, start, end, log) {
@@ -617,7 +604,10 @@ const EDGE_TRENDS = (() => {
 
     if (window.EDGE_POWER && typeof window.EDGE_POWER.fetchGamesBetween === 'function') {
       try {
-        const events = await window.EDGE_POWER.fetchGamesBetween(sport, start, end, { raw: true });
+        const events = await window.EDGE_POWER.fetchGamesBetween(sport, start, end, {
+          raw: true,
+          regularOnly: true,
+        });
         if (log) log(`  fetched ${events.length} events via power-engine`);
         return filterRange(events, start, end);
       } catch (e) {
@@ -625,8 +615,6 @@ const EDGE_TRENDS = (() => {
       }
     }
 
-    // Fallback: month-by-month. A single month of any sport is
-    // under 1,000 events.
     const months = monthsBetween(start, end);
     if (log) log(`  fallback: fetching ${months.length} month${months.length === 1 ? '' : 's'}`);
 
@@ -773,10 +761,6 @@ const EDGE_TRENDS = (() => {
 
   // ============================================================
   // ── SEASON LABEL ──
-  //
-  // Matches ats-tracker v3.0, power-engine v4.3, and the rest
-  // of the pipeline. Cross-year sports carry the year the
-  // season started. Single-year sports carry the calendar year.
   // ============================================================
 
   function seasonOf(sport, date) {
