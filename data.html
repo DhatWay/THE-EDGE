@@ -620,7 +620,7 @@
           return false;
         }
 
-        const stamp = new Date().toISOString().slice(0, 10);
+        const stamp = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date());
         saveCsv(`edge-${tableId}-${stamp}.csv`, csv);
         showToast(`${tableId}: ${data.length.toLocaleString()} rows`);
         return true;
@@ -846,7 +846,7 @@
         return o;
       }));
 
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date());
       saveCsv(`edge-${t.id}-view-${stamp}.csv`, csv);
       showToast(`Exported ${list.length} rows`);
     }
