@@ -246,7 +246,7 @@ const EDGE_TRENDS = (() => {
         spread: homeSpread,
         coverMargin: homeSpread != null ? (hs - as) + homeSpread : null,
         total, combined: hs + as,
-        hour: when.getHours(),
+        hour: etHour(when),
         season: seasonOf(sport, when),
         qb: QB_SPORTS.has(sport) ? startingQb(home) : null,
       });
@@ -258,7 +258,7 @@ const EDGE_TRENDS = (() => {
         spread: homeSpread != null ? -homeSpread : null,
         coverMargin: homeSpread != null ? (as - hs) - homeSpread : null,
         total, combined: hs + as,
-        hour: when.getHours(),
+        hour: etHour(when),
         season: seasonOf(sport, when),
         qb: QB_SPORTS.has(sport) ? startingQb(away) : null,
       });
@@ -568,7 +568,7 @@ const EDGE_TRENDS = (() => {
       sport,
       isHome,
       spread,
-      hour: isNaN(when) ? null : when.getHours(),
+      hour: isNaN(when) ? null : etHour(when),
       restDays,
       prevResult,
       prevMargin,
@@ -680,17 +680,22 @@ const EDGE_TRENDS = (() => {
     }
   }
 
+  // Paged. Supabase returns at most 1,000 rows per request no
+  // matter what limit is asked for.
   async function loadClosingLines(sport, url, key) {
     const out = {};
+    const pageSize = 1000;
     try {
-      const res = await fetch(
-        `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=game_id,spread,total&limit=50000`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      if (res.ok) {
-        (await res.json()).forEach(r => {
-          if (r.spread != null) out[r.game_id] = r;
-        });
+      for (let offset = 0; offset < 500000; offset += pageSize) {
+        const res = await fetch(
+          `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=game_id,spread,total` +
+          `&order=game_id.asc&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) break;
+        const rows = await res.json();
+        rows.forEach(r => { if (r.spread != null) out[String(r.game_id)] = r; });
+        if (rows.length < pageSize) break;
       }
     } catch (e) { logEdgeError('trends.loadClosingLines.' + sport, e); }
     return out;
@@ -795,11 +800,32 @@ const EDGE_TRENDS = (() => {
     return (m) => { if (typeof onProgress === 'function') onProgress(m); };
   }
 
+  // ESPN's ?dates= is the US Eastern date.
   function fmtDate(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}${m}${day}`;
+    if (window.EDGE_TIME) return window.EDGE_TIME.espnDate(d);
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(d).replace(/-/g, '');
+    } catch {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}${m}${day}`;
+    }
+  }
+
+  // Kickoff hour on the Eastern clock. Primetime (8pm+) and
+  // afternoon (before 4pm) are Eastern ideas; the phone's own hour
+  // made them depend on where the phone was.
+  function etHour(d) {
+    if (window.EDGE_TIME) return window.EDGE_TIME.etHour(d);
+    try {
+      const h = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23',
+      }).format(d);
+      return Number(h) % 24;
+    } catch { return d.getHours(); }
   }
 
   function fmtMonth(d) {
