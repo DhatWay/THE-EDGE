@@ -29,7 +29,7 @@
 
 const EDGE_RATING = (() => {
 
-  const BUILD = 'rc-20260915-2325';
+  const BUILD = 'rc-20260927-01';
 
   // ── GLICKO-2 CONSTANTS ──
   const SCALE = 173.7178;          // Glicko-1 → Glicko-2 conversion
@@ -356,12 +356,24 @@ const EDGE_RATING = (() => {
   // ============================================================
   // ── MASSEY ──
   // r_i − r_j = margin, stacked across every game and solved by
-  // least squares with a sum-to-zero constraint so the system has
-  // a unique solution.
+  // least squares.
+  //
+  // Ridge term. The old single sum-to-zero constraint only makes the
+  // system solvable when every team is linked to every other through
+  // games. Two weeks into an NFL season the schedule splits into
+  // separate groups, the system is singular, and each group lands at
+  // an arbitrary level — Buffalo came out near −50 and the Chargers
+  // near +30 despite Buffalo leading on SRS, Elo and Glicko, which
+  // flipped the composite (and the rankings and model spread built
+  // on it). Each team now also carries `ridge` pseudo-games against
+  // an average opponent at a margin of 0: the system is always
+  // solvable, every group is anchored near average, and a team with
+  // a full schedule is shrunk only slightly (1 of 17 games in the
+  // NFL). Ratings are then centered on zero.
   // ============================================================
 
   function massey(sport, games, options = {}) {
-    const { marginCap = MARGIN_SCALE[sport] ? MARGIN_SCALE[sport] * 3 : 30 } = options;
+    const { marginCap = MARGIN_SCALE[sport] ? MARGIN_SCALE[sport] * 3 : 30, ridge = 1 } = options;
     const teams = teamList(games);
     const n = teams.length;
     if (n < 2) return {};
@@ -381,15 +393,14 @@ const EDGE_RATING = (() => {
       p[i] += margin; p[j] -= margin;
     });
 
-    // Replace the last equation with Σr = 0.
-    for (let k = 0; k < n; k++) M[n - 1][k] = 1;
-    p[n - 1] = 0;
+    for (let k = 0; k < n; k++) M[k][k] += ridge;
 
     const r = solve(M, p);
     if (!r) return {};
 
+    const mean = r.reduce((s, v) => s + v, 0) / n;
     const out = {};
-    teams.forEach((t, i) => { out[t] = round(r[i], 3); });
+    teams.forEach((t, i) => { out[t] = round(r[i] - mean, 3); });
     return out;
   }
 
