@@ -12,6 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -1249,13 +1250,18 @@
       list.innerHTML = '<div class="candidate">Searching…</div>';
       note.textContent = '';
 
-      const dayStart = `${date}T00:00:00`;
-      const dayEnd = `${date}T23:59:59`;
+      // The game's day on your calendar. A pick is written once, often
+      // days before kickoff, so searching by created_at (and by a UTC
+      // day at that) missed it.
+      const bounds = window.EDGE_TIME
+        ? EDGE_TIME.localDayBoundsIso(date)
+        : (() => { const [y, m, d] = date.split('-').map(Number);
+                   return { start: new Date(y, m - 1, d).toISOString(), end: new Date(y, m - 1, d + 1).toISOString() }; })();
 
       try {
         const res = await fetch(
-          `${url}/rest/v1/shadow_picks?select=id,created_at,sport,home_team,away_team,side_team,direction,decision,confidence,units,result,pnl,market_spread` +
-          `&created_at=gte.${dayStart}&created_at=lte.${dayEnd}` +
+          `${url}/rest/v1/shadow_picks?select=id,created_at,commence_time,sport,home_team,away_team,side_team,direction,decision,confidence,units,result,pnl,market_spread` +
+          `&commence_time=gte.${encodeURIComponent(bounds.start)}&commence_time=lt.${encodeURIComponent(bounds.end)}` +
           `&order=confidence.desc&limit=100`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
@@ -1716,7 +1722,7 @@
     }
 
     function init() {
-      document.getElementById('resultDate').value = new Date().toISOString().split('T')[0];
+      document.getElementById('resultDate').value = (window.EDGE_TIME ? EDGE_TIME.localDay() : (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date()));
       loadSavedIndicators();
       checkConnections();
       updatePipelineMode();
