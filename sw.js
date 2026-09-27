@@ -29,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v2';
+const VERSION = 'edge-v3';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -80,6 +80,7 @@ const SHELL_FILES = [
   './score-backfill.js',
 
   // Id bridge and graders. Added in v3.
+  './edge-time.js',
   './game-id-map.js',
   './shadow-grader.js',
   './sim-grader.js',
