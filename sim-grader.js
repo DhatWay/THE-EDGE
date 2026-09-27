@@ -252,8 +252,32 @@ const EDGE_SIM_GRADER = (() => {
   // ── LEGACY FORMAT ──
   // ============================================================
 
+  // "Away @ Home" or "Away vs Home" — the order every writer uses.
+  function sideFromMatchup(label, matchup) {
+    const parts = String(matchup || '').split(/\s+(?:@|vs\.?|at)\s+/i);
+    if (parts.length !== 2) return null;
+    const [awayName, homeName] = parts.map(x => x.trim());
+    if (sameTeam(label, homeName)) return 'home';
+    if (sameTeam(label, awayName)) return 'away';
+    return null;
+  }
+
+  function sameTeam(a, b) {
+    if (!a || !b) return false;
+    const norm = (s) => (window.EDGE_TEAMS && typeof window.EDGE_TEAMS.normalize === 'function')
+      ? window.EDGE_TEAMS.normalize(s)
+      : String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    try { return norm(a) === norm(b); } catch { return false; }
+  }
+
+  // Older Picks-page rows are HOME / AWAY spread bets with the home
+  // spread in `line`; they grade when the line is a number. Only an
+  // empty line (old auto-placed rows) cannot be graded.
   function isLegacyFormat(bet) {
-    if (bet.pick_type === 'HOME' || bet.pick_type === 'AWAY') return true;
+    if (bet.pick_type === 'HOME' || bet.pick_type === 'AWAY') {
+      const line = String(bet.line ?? '').trim();
+      return line === '' || !isFinite(Number(line));
+    }
     if (bet.pick_type == null) return true;
 
     if (bet.pick_type === 'ATS' || bet.pick_type === 'TOTAL') {
@@ -347,20 +371,32 @@ const EDGE_SIM_GRADER = (() => {
     const awayScore = Number(score.away_score);
     if (!isFinite(homeScore) || !isFinite(awayScore)) return null;
 
+    // Side. HOME / AWAY rows state it. Otherwise the label is
+    // matched against the bet's own matchup string first — both
+    // come from The Odds API, so the spelling agrees — then against
+    // the ESPN names on the score row, normalized.
     let side = null;
-    if (label === home) side = 'home';
-    else if (label === away) side = 'away';
-    else {
-      const l = label.toLowerCase();
-      if (home.toLowerCase().includes(l) || l.includes(home.toLowerCase())) side = 'home';
-      else if (away.toLowerCase().includes(l) || l.includes(away.toLowerCase())) side = 'away';
+    if (type === 'HOME' || type === 'AWAY') side = type.toLowerCase();
+    if (!side) side = sideFromMatchup(label, bet.matchup);
+    if (!side) {
+      if (sameTeam(label, home)) side = 'home';
+      else if (sameTeam(label, away)) side = 'away';
+      else {
+        const l = label.toLowerCase();
+        if (home.toLowerCase().includes(l) || l.includes(home.toLowerCase())) side = 'home';
+        else if (away.toLowerCase().includes(l) || l.includes(away.toLowerCase())) side = 'away';
+      }
     }
 
     if (!side) return null;
 
     const margin = homeScore - awayScore;
     const combined = homeScore + awayScore;
-    const odds = Number(bet.odds) || DEFAULT_SPREAD_PRICE;
+    // Older HOME / AWAY rows stored the home moneyline as the price
+    // of a spread bet; those settle at the standard spread price.
+    const odds = (type === 'HOME' || type === 'AWAY')
+      ? DEFAULT_SPREAD_PRICE
+      : (Number(bet.odds) || DEFAULT_SPREAD_PRICE);
     const winMultiplier = odds > 0 ? (odds / 100) : (100 / Math.abs(odds));
     const stake = Number(bet.amount) || 0;
 
