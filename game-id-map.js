@@ -25,7 +25,15 @@ const EDGE_GAME_ID_MAP = (() => {
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
 
-  const DATE_WINDOW_DAYS = 2;
+  // Kickoff (commence_time) and ESPN's game_date are both UTC, so
+  // the right game sits within hours. One day is ample.
+  const DATE_WINDOW_DAYS = 1;
+
+  // Without a kickoff time only the snapshot time is known. The game
+  // must fall in the week after the snapshot and be the only meeting
+  // of those two teams in it — a series or rematch is skipped, not
+  // guessed.
+  const SNAPSHOT_WINDOW_DAYS = 7;
 
   function logEdgeError(where, err) {
     try {
@@ -241,24 +249,35 @@ create policy owner_only on public.game_id_map
 
       const links = [];
       let unmatched = 0;
+      let ambiguous = 0;
 
       for (const odds of oddsRows) {
         const key2 = `${odds.home_norm}|${odds.away_norm}`;
         const candidates = espnIndex[key2];
         if (!candidates || !candidates.length) { unmatched++; continue; }
 
-        const oddsMs = new Date(odds.commence_time || odds.created_at || 0).getTime();
-        if (!isFinite(oddsMs)) { unmatched++; continue; }
-
         let best = null;
-        let bestGap = Infinity;
-        for (const c of candidates) {
-          const espnMs = new Date(c.game_date).getTime();
-          if (!isFinite(espnMs)) continue;
-          const gapDays = Math.abs(oddsMs - espnMs) / 86400000;
-          if (gapDays <= DATE_WINDOW_DAYS && gapDays < bestGap) {
-            best = c;
-            bestGap = gapDays;
+        let confidence = 'exact';
+        const kickoffMs = odds.commence_time ? new Date(odds.commence_time).getTime() : NaN;
+
+        if (isFinite(kickoffMs)) {
+          let bestGap = Infinity;
+          for (const c of candidates) {
+            const espnMs = new Date(c.game_date).getTime();
+            if (!isFinite(espnMs)) continue;
+            const gapDays = Math.abs(kickoffMs - espnMs) / 86400000;
+            if (gapDays <= DATE_WINDOW_DAYS && gapDays < bestGap) { best = c; bestGap = gapDays; }
+          }
+        } else {
+          const seenMs = new Date(odds.created_at || 0).getTime();
+          if (isFinite(seenMs) && seenMs > 0) {
+            const after = candidates.filter(c => {
+              const t = new Date(c.game_date).getTime();
+              return isFinite(t) && t >= seenMs - 6 * 3600000 && t <= seenMs + SNAPSHOT_WINDOW_DAYS * 86400000;
+            });
+            if (after.length > 1) { ambiguous++; continue; }
+            best = after[0] || null;
+            confidence = 'inferred';
           }
         }
 
@@ -274,12 +293,12 @@ create policy owner_only on public.game_id_map
           home_norm: best.home_norm,
           away_norm: best.away_norm,
           commence_time: odds.commence_time || null,
-          confidence: 'exact',
+          confidence,
           created_at: new Date().toISOString(),
         });
       }
 
-      log(`  ${links.length} to write · ${unmatched} unmatched`);
+      log(`  ${links.length} to write · ${unmatched} unmatched · ${ambiguous} ambiguous (skipped)`);
 
       const written = await writeLinks(links, url, key);
       log(`  ${written} rows written`);
@@ -341,7 +360,7 @@ create policy owner_only on public.game_id_map
           `${url}/rest/v1/line_history?sport=eq.${sport}` +
           `&created_at=gte.${since}` +
           `&select=${cols}` +
-          `&limit=${pageSize}&offset=${offset}`,
+          `&order=created_at.desc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
 
@@ -351,7 +370,7 @@ create policy owner_only on public.game_id_map
             `${url}/rest/v1/line_history?sport=eq.${sport}` +
             `&created_at=gte.${since}` +
             `&select=game_id,sport,home,away,created_at` +
-            `&limit=${pageSize}&offset=${offset}`,
+            `&order=created_at.desc&limit=${pageSize}&offset=${offset}`,
             { headers: { apikey: key, Authorization: `Bearer ${key}` } }
           );
         }
@@ -429,13 +448,22 @@ create policy owner_only on public.game_id_map
         const res = await fetch(`${url}/rest/v1/game_id_map?on_conflict=odds_api_id`, {
           method: 'POST', headers, body: JSON.stringify(chunk),
         });
-        if (res.ok || res.status === 409) {
+        if (res.ok) {
           written += chunk.length;
-        } else {
-          logEdgeError('gameIdMap.writeLinks.status', new Error('HTTP ' + res.status));
+          continue;
         }
+        logEdgeError('gameIdMap.writeLinks.status', new Error('HTTP ' + res.status));
       } catch (e) {
         logEdgeError('gameIdMap.writeLinks', e);
+      }
+
+      // The batch was rejected — usually one espn_id already linked
+      // to another odds id. That used to count all 400 rows as
+      // written. Write them one at a time so only the conflict is
+      // lost.
+      for (const row of chunk) {
+        const r = await link(row.odds_api_id, row.espn_id, row);
+        if (r.ok) written++;
       }
     }
 
