@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260926-01';
+  const BUILD = 'pe-20260927-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -122,6 +122,21 @@ const EDGE_POWER = (() => {
   // rating core in the sport's own margin units — NFL spreads
   // are measured in tens, MLB spreads in ones — so the raw
   // number is not comparable across sports without this map.
+  // ESPN's default page. Its college scoreboards answer a `limit`
+  // above their cap with this page instead of the full day — the
+  // ratings probe got 25 games back for a Saturday that has 65.
+  const ESPN_PAGE_SIZE = 25;
+
+  // Games each team needs before the attack/defense projection
+  // carries the model spread on its own. Before that it is blended
+  // with the composite rating (Glicko carried over from last season
+  // plus this season's results), because two weeks of scoring is
+  // mostly noise: in Week 3 the projection alone made the Chargers
+  // 4.7-point favorites at Buffalo against a market of Bills -7.
+  const PROJECTION_FULL_GAMES = {
+    NFL: 8, NCAAF: 6, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10,
+  };
+
   const COMPOSITE_TO_SCALE = {
     NFL: 2.0,
     NCAAF: 1.8,
@@ -552,20 +567,44 @@ const EDGE_POWER = (() => {
       return [];
     }
 
-    const suffix = group ? `&groups=${group}&limit=900` : '&limit=1000';
     const seen = new Map();
 
     await parallelDays(days, 6, async (day) => {
-      try {
-        const res = await fetch(`${base}?dates=${day}${suffix}`, { cache: 'no-store' });
-        if (res.headers.get('x-edge-offline') === '1') return;
-        if (!res.ok) return;
-        const data = await res.json();
-        (data.events || []).forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
-      } catch {}
+      const events = await fetchScoreboardDay(base, day, group);
+      (events || []).forEach(e => { if (e?.id && !seen.has(e.id)) seen.set(e.id, e); });
     });
 
     return Array.from(seen.values());
+  }
+
+  // One day's scoreboard. College asks without a limit first — a
+  // limit above ESPN's cap returned only the default 25 games. When
+  // the answer is a whole number of pages (25, 50…) it may still be
+  // cut off, so the day is asked again in other shapes and the
+  // results are merged by event id. Returns null when every request
+  // failed, so a failed day is not mistaken for a day without games.
+  async function fetchScoreboardDay(base, day, group) {
+    const shapes = group
+      ? [`&groups=${group}`, '', `&groups=${group}&limit=300`, `&groups=${group}&limit=500`]
+      : ['&limit=1000'];
+    const seen = new Map();
+    let answered = false;
+
+    for (let i = 0; i < shapes.length; i++) {
+      try {
+        const res = await fetch(`${base}?dates=${day}${shapes[i]}`, { cache: 'no-store' });
+        if (res.headers.get('x-edge-offline') === '1' || !res.ok) continue;
+        answered = true;
+        const data = await res.json();
+        const events = data.events || [];
+        events.forEach(e => {
+          const k = e?.id ?? `noid:${seen.size}`;
+          if (!seen.has(k)) seen.set(k, e);
+        });
+        if (i === 0 && events.length % ESPN_PAGE_SIZE !== 0) break;
+      } catch {}
+    }
+    return answered ? Array.from(seen.values()) : null;
   }
 
   function parseYmd(s) {
@@ -962,12 +1001,30 @@ const EDGE_POWER = (() => {
       if (projection) modelSpread = projection.model_spread;
     }
 
+    const projectionSpread = modelSpread;
+    const homePts = homeStats.composite_points;
+    const awayPts = awayStats.composite_points;
+    const compositeSpread = (homePts != null && awayPts != null)
+      ? round(-((homePts - awayPts) + (core?.HOME_POINTS?.[sport] ?? 2)), 2)
+      : null;
+
+    // Early in a season the projection rests on a handful of games.
+    // It is blended with the composite spread in proportion to the
+    // fewer games either team has played, reaching the projection
+    // alone at PROJECTION_FULL_GAMES.
+    let projectionWeight = null;
+    if (projectionSpread != null && compositeSpread != null) {
+      const gH = Number(homeStats.games_played);
+      const gA = Number(awayStats.games_played);
+      if (isFinite(gH) && isFinite(gA)) {
+        projectionWeight = clamp(Math.min(gH, gA) / (PROJECTION_FULL_GAMES[sport] ?? 10), 0, 1);
+        modelSpread = round(projectionWeight * projectionSpread + (1 - projectionWeight) * compositeSpread, 2);
+      }
+    }
+
     if (modelSpread === null) {
-      const homePts = homeStats.composite_points;
-      const awayPts = awayStats.composite_points;
-      if (homePts != null && awayPts != null) {
-        const hfa = core?.HOME_POINTS?.[sport] ?? 2;
-        modelSpread = round(-((homePts - awayPts) + hfa), 2);
+      if (compositeSpread != null) {
+        modelSpread = compositeSpread;
       } else {
         const ratingDelta = homeStats.overall - awayStats.overall;
         const spreadConv = {
@@ -1033,8 +1090,13 @@ const EDGE_POWER = (() => {
       model_spread: totalModelSpread,
       projection,
 
+      projection_spread: projectionSpread,
+      composite_spread: compositeSpread,
+      projection_weight: projectionWeight != null ? round(projectionWeight, 2) : null,
+
+      // Cover chance from the same blended margin as model_spread.
       cover: (core && projection && marketSpread !== null)
-        ? core.coverProbability(projection.margin, marketSpread,
+        ? core.coverProbability(-modelSpread, marketSpread,
             calib?.sigma_settled ?? calib?.projection_sigma ?? null,
             {
               lambda: calib?.market_lambda ?? null,
