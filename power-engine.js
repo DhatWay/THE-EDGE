@@ -185,6 +185,9 @@ const EDGE_POWER = (() => {
     SEASON_WINDOWS,
     MIN_GAMES_FOR_RATING,
     effectiveMinGames,
+    qualifiesForRating,
+    composeOverall,
+    coachAdjustmentPoints,
   };
 
   // ============================================================
@@ -229,13 +232,36 @@ const EDGE_POWER = (() => {
     return String(y);
   }
 
-  // Rating floor scales with how far into the season we are.
-  // Week 1: one game is enough. Week 3 and beyond: the normal
-  // three-game floor.
-  function effectiveMinGames(sport, daysIntoSeason) {
-    if (daysIntoSeason < 7)  return 1;
-    if (daysIntoSeason < 14) return 2;
-    return MIN_GAMES_FOR_RATING;
+  // The rating floor follows games played, not days on the
+  // calendar. Until the league's median team has played
+  // MIN_GAMES_FOR_RATING games, a team needs half the median (at
+  // least one). Counting days broke weekly sports: the NFL opens on
+  // a Thursday, so on the Friday and Saturday of week 3 (day 15-16)
+  // only the two Thursday teams had three games, and a ratings run
+  // then kept 2 teams and deleted 30.
+  // overall — the number the power page ranks on. Exported so the
+  // slate backtest builds the identical number.
+  function composeOverall(sport, parts = {}) {
+    const { compositePoints = null, pyth = 0.5, offense = 50, defense = 50, mov = 50 } = parts;
+    let overall;
+    if (compositePoints != null && isFinite(compositePoints)) {
+      const scale = COMPOSITE_TO_SCALE[sport] ?? COMPOSITE_TO_SCALE.DEFAULT;
+      const compositeScaled = clamp(50 + compositePoints * scale, 0, 100);
+      overall = (compositeScaled * 0.55) + (offense * 0.20) + (defense * 0.20) + (mov * 0.05);
+    } else {
+      // rating-core absent: the pythagorean-heavy shape.
+      overall = (pyth * 100 * 0.45) + (offense * 0.20) + (defense * 0.20) + (mov * 0.15);
+    }
+    return round(overall, 1);
+  }
+
+  function effectiveMinGames(medianGames) {
+    if (medianGames >= MIN_GAMES_FOR_RATING) return MIN_GAMES_FOR_RATING;
+    return Math.max(1, Math.floor(medianGames / 2));
+  }
+
+  function qualifiesForRating(games, medianGames) {
+    return games >= effectiveMinGames(medianGames);
   }
 
   // ============================================================
@@ -288,12 +314,10 @@ const EDGE_POWER = (() => {
         const { teamMap, chronological } = buildTeamStates(sport, events);
         if (!teamMap.size) { results.counts[sport] = 0; continue; }
 
-        // Days into the season is measured from the first game
-        // the window returned. Early-season ratings get a lower
-        // floor so the week-1 board is not empty.
-        const firstGame = chronological.length ? new Date(chronological[0].date) : now;
-        const daysIntoSeason = Math.floor((now - firstGame) / 86400000);
-        const minGames = effectiveMinGames(sport, daysIntoSeason);
+        // Floor from the league's median games played.
+        const gameCounts = Array.from(teamMap.values()).map(s => s.games).sort((a, b) => a - b);
+        const median = gameCounts[Math.floor(gameCounts.length / 2)] || 1;
+        const minGames = effectiveMinGames(median);
 
         let glickoState = {}, masseyMap = {}, colleyMap = {}, blended = {}, adMap = {};
         const core = window.EDGE_RATING;
@@ -318,9 +342,6 @@ const EDGE_POWER = (() => {
         // numbers now rather than Massey and Glicko.
         const srsMap = computeSRS(sport, teamMap);
         const eloMap = computeElo(sport, chronological);
-
-        const gameCounts = Array.from(teamMap.values()).map(s => s.games).sort((a, b) => a - b);
-        const median = gameCounts[Math.floor(gameCounts.length / 2)] || 1;
 
         for (const [teamName, state] of teamMap) {
           if (state.games < minGames) continue;
@@ -358,7 +379,7 @@ const EDGE_POWER = (() => {
         });
 
         if (minGames < MIN_GAMES_FOR_RATING) {
-          emit(`${sport}: day ${daysIntoSeason} of the season — using a ${minGames}-game floor`);
+          emit(`${sport}: median team has ${median} game(s) — using a ${minGames}-game floor`);
         }
       } catch (err) {
         results.errors.push({ sport, error: err.message });
@@ -767,29 +788,7 @@ const EDGE_POWER = (() => {
     // 0-100 display scale so a top MLB team and a top NFL team
     // end up in the same numeric range.
     const compositePoints = adjusted.blended?.composite_points;
-
-    let overall;
-    if (compositePoints != null) {
-      const scale = COMPOSITE_TO_SCALE[sport] ?? COMPOSITE_TO_SCALE.DEFAULT;
-      const compositeScaled = clamp(50 + compositePoints * scale, 0, 100);
-      overall = round(
-        (compositeScaled * 0.55) +
-        (offense * 0.20) +
-        (defense * 0.20) +
-        (mov * 0.05),
-        1
-      );
-    } else {
-      // rating-core absent. Fall back to the pythagorean-heavy
-      // shape the engine used before the composite path existed.
-      overall = round(
-        (pyth * 100 * 0.45) +
-        (offense * 0.20) +
-        (defense * 0.20) +
-        (mov * 0.15),
-        1
-      );
-    }
+    const overall = composeOverall(sport, { compositePoints, pyth, offense, defense, mov });
 
     const hasDraws = DRAWS_POSSIBLE.has(sport) && state.draws > 0;
     const rec = hasDraws
@@ -1277,6 +1276,16 @@ const EDGE_POWER = (() => {
       logEdgeError('powerEngine.replaceTable.noConstraint',
         new Error(`${table}: add a unique index on (sport, team_name) to enable safe writes`));
 
+      // Back up the rows being replaced, so a failed insert puts
+      // them back instead of leaving these sports empty.
+      let backup = [];
+      try {
+        const r = await fetch(`${url}/rest/v1/${table}?${sportsFilter}&select=*&limit=1000`, {
+          headers: { apikey: key, Authorization: `Bearer ${key}` },
+        });
+        if (r.ok) backup = await r.json();
+      } catch {}
+
       try {
         await fetch(`${url}/rest/v1/${table}?${sportsFilter}`, {
           method: 'DELETE',
@@ -1286,6 +1295,17 @@ const EDGE_POWER = (() => {
 
       written = await insertRows(url, key, table, payload, report, emit);
       emit(`${table}: ${written} rows written (delete+insert)`);
+
+      if (written < payload.length && backup.length) {
+        await fetch(`${url}/rest/v1/${table}?${sportsFilter}`, {
+          method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
+        }).catch(() => {});
+        const restoreRows = backup.map(({ id, ...rest }) => rest);
+        const restored = await insertRows(url, key, table, restoreRows, report, emit);
+        report.errors.push(`${table}: insert incomplete — restored ${restored} previous rows`);
+        emit(`${table}: insert incomplete — previous rows restored`);
+        return 0;
+      }
     } else {
       report.errors.push(`${table}: ${upsertResult.error}`);
       emit(`${table}: write rejected — existing rows left in place`);
@@ -1295,6 +1315,12 @@ const EDGE_POWER = (() => {
     // Drop anything for the current sports that this run did
     // not touch. Only current sports are affected — other
     // sports' rows are never in the filter.
+    // Clear rows this run did not write, only when every row landed.
+    if (written < payload.length) {
+      emit(`${table}: ${payload.length - written} rows not written — previous rows kept`);
+      return written;
+    }
+
     try {
       await fetch(
         `${url}/rest/v1/${table}?${sportsFilter}&updated_at=neq.${encodeURIComponent(runStamp)}`,
@@ -1476,11 +1502,20 @@ const EDGE_POWER = (() => {
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
+  // ESPN's ?dates= is the US Eastern date. The phone's local date
+  // is a day off near midnight anywhere outside Eastern time.
   function fmtDate(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}${m}${day}`;
+    if (window.EDGE_TIME) return window.EDGE_TIME.espnDate(d);
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(d).replace(/-/g, '');
+    } catch {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}${m}${day}`;
+    }
   }
 
 })();
