@@ -209,7 +209,7 @@ OUTPUT SCHEMA
   async function askBatch(batch, apiKey, floor, model) {
     const payload = {
       confidence_floor: floor,
-      slate_date: new Date().toISOString().slice(0, 10),
+      slate_date: (window.EDGE_TIME ? EDGE_TIME.localDay() : (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())),
       games: batch.map(buildSlateBundle),
     };
 
