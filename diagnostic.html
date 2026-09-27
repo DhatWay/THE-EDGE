@@ -33,8 +33,6 @@
   <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
   <script src="trends-engine.js"></script>
-  <script src="prop-trends-engine.js"></script>
-  <script src="box-score-fetcher.js"></script>
   <script src="game-id-map.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
@@ -126,25 +124,6 @@
                          letter-spacing:2px; text-transform:uppercase; padding:10px; cursor:pointer; border-radius:2px; }
     .cred-panel button.ghost { background:#222; color:var(--text-dim); border:1px solid var(--border); }
     .cred-msg { font-size:12px; color:var(--text-dim); margin-top:8px; line-height:1.5; }
-
-    /* Stage list */
-    .stages { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); }
-    .stages-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
-    .stages-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; color: var(--gold); }
-    .stages-title em { font-style: normal; }
-    .stages-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
-    .stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-    .stage-item { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); padding: 10px 12px; cursor: pointer; transition: border-color 0.2s; }
-    .stage-item:hover { border-color: var(--border-bright); }
-    .stage-item input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--gold); cursor: pointer; flex-shrink: 0; }
-    .stage-info { flex: 1; min-width: 0; }
-    .stage-name { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); }
-    .stage-table { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
-    .stage-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; padding: 2px 6px; border: 1px solid; flex-shrink: 0; }
-    .stage-badge.slow { border-color: rgba(231,76,60,0.4); color: var(--red); }
-    .stage-badge.fast { border-color: rgba(39,174,96,0.4); color: var(--green); }
-    .run-pipeline-row { display: flex; gap: 8px; }
-    .run-pipeline-row .btn { flex: 1; }
   </style>
 
   <main>
@@ -171,21 +150,6 @@
         <button class="btn secondary" id="copyBtn" onclick="copyAll()">⧉ COPY ALL</button>
         <button class="btn secondary" id="sqlBtn" onclick="copyPreflightSql()">⌗ COPY SQL</button>
         <button class="btn secondary" id="purgeBtn" onclick="purgeCache()">⟳ PURGE CACHE</button>
-      </div>
-    </div>
-
-    <!-- FULL PIPELINE TEST -->
-    <div class="stages">
-      <div class="stages-head">
-        <div class="stages-title">FULL <em>PIPELINE TEST</em></div>
-        <div class="stages-sub">Run each stage in order · verify the table got rows</div>
-      </div>
-      <div class="stage-grid" id="stageGrid"></div>
-      <div class="run-pipeline-row">
-        <button class="btn" id="runPipelineBtn" onclick="runPipelineTest()">▶ RUN SELECTED STAGES</button>
-        <button class="btn secondary" onclick="selectFastOnly()">Fast Only</button>
-        <button class="btn secondary" onclick="selectAll()">Select All</button>
-        <button class="btn secondary" onclick="selectNone()">Select None</button>
       </div>
     </div>
 
@@ -227,6 +191,14 @@
       setTimeout(() => t.className = 'toast', 2200);
     };
 
+    // ============================================================
+    // OWNER EMAIL
+    //
+    // Read from the signed-in session so generated SQL matches
+    // whichever account is authenticated. If auth.js hasn't
+    // stored a session, fall back to a placeholder and warn.
+    // ============================================================
+
     function ownerEmail() {
       try {
         const raw = localStorage.getItem('edge_auth_session');
@@ -243,369 +215,154 @@
     }
 
     // ============================================================
-    // FULL PIPELINE TEST — STAGE DEFINITIONS
-    //
-    // Each stage runs an engine and then verifies the table it
-    // writes to actually grew. Fast stages are on by default.
-    // Slow stages (Backfill & Calibration, Fetch Box Scores) are
-    // off by default because they take minutes.
+    // BACKFILL & CALIBRATION
     // ============================================================
 
-    const PIPELINE_STAGES = [
-      {
-        id: 'power',
-        label: 'Power Ratings',
-        table: 'power_ratings',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_POWER) return { ok: false, error: 'EDGE_POWER not loaded' };
-          const r = await window.EDGE_POWER.computeAllTeamRatings({});
-          const teams = Object.keys(r.teams || {}).length;
-          return { ok: teams > 0, detail: `${teams} teams`, raw: r };
-        },
-      },
-      {
-        id: 'rosters',
-        label: 'Build Rosters',
-        table: 'players',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_ROSTER) return { ok: false, error: 'EDGE_ROSTER not loaded' };
-          const r = await window.EDGE_ROSTER.buildAll({});
-          const players = r.totals?.players || 0;
-          return { ok: players > 0, detail: `${players} players`, raw: r };
-        },
-      },
-      {
-        id: 'enrich',
-        label: 'Enrich Rosters',
-        table: 'players',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_ROSTER_ENRICH) return { ok: false, error: 'EDGE_ROSTER_ENRICH not loaded' };
-          const r = await window.EDGE_ROSTER_ENRICH.enrichAll({});
-          const enriched = r.totals?.enriched || 0;
-          // Enrichment is often a zero-write if ratings did not move.
-          // Report success on completion, not on row delta.
-          return { ok: true, detail: `${enriched} enriched`, raw: r };
-        },
-      },
-      {
-        id: 'ats',
-        label: 'Build ATS & H2H',
-        table: 'team_ats',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_ATS) return { ok: false, error: 'EDGE_ATS not loaded' };
-          const r = await window.EDGE_ATS.buildAll({});
-          const teams = r.totals?.teams || 0;
-          const matchups = r.totals?.matchups || 0;
-          return { ok: teams > 0 || matchups > 0, detail: `${teams} teams · ${matchups} matchups`, raw: r };
-        },
-      },
-      {
-        id: 'scores',
-        label: 'Backfill Scores',
-        table: 'historical_odds',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_SCORE_BACKFILL) return { ok: false, error: 'EDGE_SCORE_BACKFILL not loaded' };
-          const r = await window.EDGE_SCORE_BACKFILL.buildAll({
-            sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
-            force: false,
-          });
-          let total = 0;
-          Object.values(r).forEach(x => { total += (x.updated || 0); });
-          return { ok: true, detail: `${total} games scored`, raw: r };
-        },
-      },
-      {
-        id: 'calibration',
-        label: 'Backfill & Calibration',
-        table: 'model_calibration',
-        slow: true,
-        run: async () => {
-          if (!window.EDGE_BACKFILL) return { ok: false, error: 'EDGE_BACKFILL not loaded' };
-          const r = await window.EDGE_BACKFILL.run({
-            sports: ['NFL', 'NCAAF', 'NBA', 'NHL', 'MLB', 'MLS', 'WNBA'],
-            seasons: 3,
-          });
-          const okSports = Object.values(r.sports || {}).filter(s => s && s.ok).length;
-          return { ok: okSports > 0, detail: `${okSports} sports calibrated`, raw: r };
-        },
-      },
-      {
-        id: 'trends',
-        label: 'Build Trends',
-        table: 'trends',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_TRENDS) return { ok: false, error: 'EDGE_TRENDS not loaded' };
-          const r = await window.EDGE_TRENDS.buildAll({});
-          const written = r.totals?.trends || 0;
-          const qualified = r.totals?.qualifying || 0;
-          return { ok: written > 0, detail: `${written} trends · ${qualified} qualifying`, raw: r };
-        },
-      },
-      {
-        id: 'boxscores',
-        label: 'Fetch Box Scores',
-        table: 'player_game_stats',
-        slow: true,
-        run: async () => {
-          if (!window.EDGE_BOXSCORE) return { ok: false, error: 'EDGE_BOXSCORE not loaded' };
-          const r = await window.EDGE_BOXSCORE.buildAll({
-            sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
-          });
-          const rows = r.totals?.rows || 0;
-          const games = r.totals?.games || 0;
-          return { ok: true, detail: `${games} games · ${rows} player rows`, raw: r };
-        },
-      },
-      {
-        id: 'proptrends',
-        label: 'Build Prop Trends',
-        table: 'prop_trends',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_PROP_TRENDS) return { ok: false, error: 'EDGE_PROP_TRENDS not loaded' };
-          const r = await window.EDGE_PROP_TRENDS.buildAll({
-            sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
-          });
-          const rows = r.totals?.rows || 0;
-          const qual = r.totals?.qualified || 0;
-          return { ok: true, detail: `${rows} prop trends · ${qual} qualifying`, raw: r };
-        },
-      },
-      {
-        id: 'gidmap',
-        label: 'Backfill Game ID Map',
-        table: 'game_id_map',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_GAME_ID_MAP) return { ok: false, error: 'EDGE_GAME_ID_MAP not loaded' };
-          const r = await window.EDGE_GAME_ID_MAP.populate({
-            sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
-          });
-          const linked = r.summary?.totals?.linked || 0;
-          return { ok: r.ok, detail: `${linked} links written`, raw: r };
-        },
-      },
-      {
-        id: 'shadowgrade',
-        label: 'Grade Shadow Picks',
-        table: 'shadow_picks',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_SHADOW_GRADER) return { ok: false, error: 'EDGE_SHADOW_GRADER not loaded' };
-          const r = await window.EDGE_SHADOW_GRADER.run({});
-          if (!r.ok) return { ok: false, error: r.error };
-          return { ok: true, detail: `${r.graded} graded · ${r.pending_no_score} awaiting score`, raw: r };
-        },
-      },
-      {
-        id: 'simgrade',
-        label: 'Grade Sim Bets',
-        table: 'bet_log',
-        slow: false,
-        run: async () => {
-          if (!window.EDGE_SIM_GRADER) return { ok: false, error: 'EDGE_SIM_GRADER not loaded' };
-          const r = await window.EDGE_SIM_GRADER.run({});
-          if (!r.ok) return { ok: false, error: r.error };
-          return { ok: true, detail: `${r.graded} graded · ${r.pending_score} awaiting score`, raw: r };
-        },
-      },
-      {
-        id: 'learning',
-        label: 'Learning Loop (updates weights)',
-        table: 'algorithm_weights',
-        slow: true,
-        run: async () => {
-          if (!window.EDGE_LEARNING) return { ok: false, error: 'EDGE_LEARNING not loaded' };
-          const r = await window.EDGE_LEARNING.run({ skipCLV: false });
-          const updated = r.families_updated || 0;
-          return { ok: true, detail: `${updated} families updated`, raw: r };
-        },
-      },
-    ];
-
-    // ── STAGE LIST UI ──
-
-    function renderStages() {
-      const grid = document.getElementById('stageGrid');
-      grid.innerHTML = PIPELINE_STAGES.map(s => `
-        <label class="stage-item">
-          <input type="checkbox" id="stage-${s.id}" ${s.slow ? '' : 'checked'} />
-          <div class="stage-info">
-            <div class="stage-name">${s.label}</div>
-            <div class="stage-table">→ ${s.table}</div>
-          </div>
-          <span class="stage-badge ${s.slow ? 'slow' : 'fast'}">${s.slow ? 'SLOW' : 'FAST'}</span>
-        </label>
-      `).join('');
+    // Report stamps on your own clock, with the zone named, instead
+    // of UTC — a report made at 11pm Eastern used to say tomorrow.
+    function localStamp(d = new Date()) {
+      let zone = '';
+      try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+      return d.toLocaleString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', second: '2-digit',
+      }) + (zone ? ` (${zone})` : '');
     }
 
-    function selectFastOnly() {
-      PIPELINE_STAGES.forEach(s => {
-        const el = document.getElementById('stage-' + s.id);
-        if (el) el.checked = !s.slow;
-      });
-    }
+    async function runBackfill() {
+      if (!window.EDGE_BACKFILL) {
+        showToast('backfill.js not loaded', true);
+        return;
+      }
+      const sports = prompt(
+        'Sports to backfill (comma separated).\nFewer is faster — each season is a full historical fetch.',
+        'NFL') || '';
+      const list = sports.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (!list.length) return;
 
-    function selectAll() {
-      PIPELINE_STAGES.forEach(s => {
-        const el = document.getElementById('stage-' + s.id);
-        if (el) el.checked = true;
-      });
-    }
+      const seasons = parseInt(prompt('How many completed seasons per sport?', '3') || '3', 10) || 3;
 
-    function selectNone() {
-      PIPELINE_STAGES.forEach(s => {
-        const el = document.getElementById('stage-' + s.id);
-        if (el) el.checked = false;
-      });
-    }
+      lines.length = 0;
+      document.getElementById('backfillBtn').disabled = true;
+      setStatus('Backfilling — this takes minutes…', true);
 
-    // ── ROW COUNT HELPER ──
+      out('EDGE BACKFILL & CALIBRATION');
+      out('Generated: ' + localStamp());
+      out('Sports: ' + list.join(', ') + ' · ' + seasons + ' seasons each');
+      out('');
+      out('Walk-forward: ratings are built only from games before each');
+      out('step, then the next step is projected and the miss recorded.');
+      out('Nothing is scored against games it already absorbed.');
 
-    async function tableCount(table) {
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) return null;
+      let result;
       try {
-        const res = await fetch(`${url}/rest/v1/${table}?select=id&limit=1`, {
-          headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'count=exact' },
+        result = await window.EDGE_BACKFILL.run({
+          sports: list, seasons,
+          onProgress: m => { out(m); render(); },
         });
-        if (!res.ok) return null;
-        const range = res.headers.get('content-range') || '';
-        const parsed = parseInt(range.split('/')[1], 10);
-        return Number.isFinite(parsed) ? parsed : null;
-      } catch { return null; }
-    }
-
-    // ── PIPELINE RUNNER ──
-
-    async function runPipelineTest() {
-      const btn = document.getElementById('runPipelineBtn');
-      const selected = PIPELINE_STAGES.filter(s => {
-        const el = document.getElementById('stage-' + s.id);
-        return el && el.checked;
-      });
-
-      if (!selected.length) {
-        showToast('Select at least one stage', true);
+      } catch (e) {
+        bad('THREW', e.message);
+        document.getElementById('backfillBtn').disabled = false;
+        setStatus('Failed', false);
+        render();
         return;
       }
 
-      btn.disabled = true;
-      lines.length = 0;
-
-      out('EDGE FULL PIPELINE TEST');
-      out('Generated: ' + new Date().toISOString());
-      out(`Running ${selected.length} stage${selected.length === 1 ? '' : 's'}`);
-      out('');
-      out('Each stage runs the engine then checks the table the engine');
-      out('writes to. A stage that completes without writing rows is a');
-      out('failure even if it did not throw — that is the bug this page');
-      out('is designed to catch.');
-      render();
-
-      const results = [];
-      const startedAt = Date.now();
-
-      for (let i = 0; i < selected.length; i++) {
-        const stage = selected[i];
-        const n = `${i + 1}/${selected.length}`;
-        const stageStart = Date.now();
-
-        setStatus(`Stage ${n} · ${stage.label}…`, true);
-        out('');
-        out('────────────────────────────────────────────────────────');
-        out(`  ${n}  ${stage.label}  →  ${stage.table}`, 'section-title');
-        out('────────────────────────────────────────────────────────');
-
-        const before = await tableCount(stage.table);
-        out(`  rows before:  ${before != null ? before.toLocaleString() : '(unreadable)'}`);
-
-        let outcome = { ok: false, error: 'no result' };
-        try {
-          outcome = await stage.run();
-        } catch (e) {
-          outcome = { ok: false, error: e.message || String(e) };
-        }
-
-        const after = await tableCount(stage.table);
-        const delta = (before != null && after != null) ? after - before : null;
-
-        out(`  rows after:   ${after != null ? after.toLocaleString() : '(unreadable)'}`);
-        if (delta != null) out(`  delta:        ${delta >= 0 ? '+' : ''}${delta.toLocaleString()}`);
-
-        if (outcome.ok) {
-          out(`  ✓ ${outcome.detail || 'completed'}`, 'ok');
-        } else {
-          out(`  ✗ ${outcome.error}`, 'err');
-        }
-
-        const duration = Date.now() - stageStart;
-        out(`  duration:     ${(duration / 1000).toFixed(1)}s`);
-
-        results.push({
-          stage: stage.label,
-          table: stage.table,
-          before,
-          after,
-          delta,
-          ok: outcome.ok,
-          detail: outcome.detail || outcome.error || '',
-          duration_ms: duration,
-        });
-
-        render();
-      }
-
-      // ── VERDICT ──
-      const totalDuration = Date.now() - startedAt;
-      const passed = results.filter(r => r.ok).length;
-      const failed = results.filter(r => !r.ok);
-
-      out('');
-      out('════════════════════════════════════════════════════════════', 'section-title');
-      out('  VERDICT', 'section-title');
-      out('════════════════════════════════════════════════════════════', 'section-title');
-      out('');
-      out(`  ${passed}/${results.length} stages passed  ·  ${(totalDuration / 1000).toFixed(1)}s total`,
-          passed === results.length ? 'ok' : 'warn');
-
-      if (failed.length) {
-        out('');
-        out('  Failed stages:', 'err');
-        failed.forEach(r => out(`    ✗ ${r.stage} — ${r.detail}`, 'err'));
-      }
-
-      // Warnings for stages that ran but wrote nothing
-      const empty = results.filter(r => r.ok && r.delta != null && r.delta <= 0);
-      if (empty.length) {
-        out('');
-        out('  Ran but wrote no rows:', 'warn');
-        empty.forEach(r => out(`    ! ${r.stage} — no change in ${r.table}`, 'warn'));
-        out('    (This is normal for idempotent stages like Enrich Rosters');
-        out('     when no ratings changed. Not normal for Build stages.)', 'warn');
-      }
-
-      out('');
-      if (failed.length === 0) {
-        out('  Every selected stage completed.', 'ok');
+      section('CALIBRATION RESULTS');
+      if (!result.ok) {
+        bad('Failed', result.error);
       } else {
-        out('  Fix the failed stages above, then run again.', 'warn');
+        Object.entries(result.sports).forEach(([sport, r]) => {
+          out('');
+          out('  ── ' + sport, 'section-title');
+          if (!r.ok) { bad('failed', r.error); return; }
+
+          const c = r.constants, e = r.error;
+          out('      games used          ' + r.total_games);
+          out('      seasons             ' + r.seasons.map(s => s.season).join(', '));
+          out('');
+          ok('home advantage', c.home_advantage + '  (was using ' + c.default_home_advantage + ')');
+          ok('avg total', String(c.avg_total));
+          ok('margin sd', String(c.margin_sd));
+          ok('margin scale', c.margin_scale + '  (was using ' + c.default_margin_scale + ')');
+          out('');
+          if (e.sigma == null) {
+            warn('projection error', 'not enough walk-forward games to measure');
+          } else {
+            ok('projection sigma', e.sigma + ' points on ' + e.n + ' unseen games');
+            ok('mean abs error', String(e.mae));
+            const biasBad = Math.abs(e.bias) > 1;
+            out('   ' + (biasBad ? '!' : '\u2713') + ' ' + 'bias'.padEnd(30) + e.bias +
+                (biasBad ? '  — systematically off, worth investigating' : '  — no systematic lean'),
+                biasBad ? 'warn' : 'ok');
+
+            if (e.sigma_settled && e.sigma_unsettled) {
+              out('');
+              out('      settled ratings   sigma ' + e.sigma_settled + ' on ' + e.settled_n + ' games');
+              out('      unsettled ratings sigma ' + e.sigma_unsettled + ' on ' + e.unsettled_n + ' games');
+              if (e.sigma_settled < e.sigma_unsettled) {
+                out('      → Error falls as ratings settle. Rating deviation is', 'ok');
+                out('        carrying real information.', 'ok');
+              } else {
+                out('      → Error does NOT fall as ratings settle. The deviation', 'warn');
+                out('        is not telling you what it claims to.', 'warn');
+              }
+            }
+
+            out('');
+            out('      VERSUS THE CLOSING LINE', 'section-title');
+            if (!r.blend || !r.blend.ok) {
+              warn('market comparison', (r.blend && r.blend.reason) || 'unavailable');
+              out('      → Error against the final margin says how accurate the', 'warn');
+              out('        model is. It says nothing about beating the market,', 'warn');
+              out('        because the market is accurate too. Run Build ATS to', 'warn');
+              out('        collect closing lines, then run this again.', 'warn');
+            } else {
+              const bl = r.blend;
+              ok('model sigma', String(bl.model_sigma));
+              ok('market sigma', String(bl.market_sigma));
+              ok('blend sigma', String(bl.blend_sigma));
+              ok('improves on close by', bl.blend_improvement + ' points');
+              ok('lambda', bl.lambda + '  (weight your disagreement earns)');
+              out('');
+              out('      ' + bl.verdict, bl.blend_improvement >= 0.25 ? 'ok' : 'warn');
+              if (bl.blend_improvement < 0.05) {
+                out('      → Betting this model against the spread would be a', 'warn');
+                out('        coin flip minus the juice.', 'warn');
+              }
+            }
+
+            out('');
+            out('      What this means for a bet:', 'section-title');
+            const bl = r.blend && r.blend.ok ? r.blend : null;
+            const sd = bl ? bl.blend_sigma : (e.sigma_settled ?? e.sigma);
+            const lam = bl ? bl.lambda : null;
+            if (!bl) out('        (unanchored — these overstate the edge)', 'warn');
+            [[3, 5.5], [3, 7], [7, 10]].forEach(([spread, proj]) => {
+              const cp = window.EDGE_RATING.coverProbability(proj, -spread, sd,
+                { lambda: lam, blendSigma: bl ? bl.blend_sigma : null });
+              out('        project home by ' + proj + ', market -' + spread +
+                  '  →  ' + cp.side + ' ' + (cp.probability * 100).toFixed(1) + '%' +
+                  (cp.beats_vig ? '  clears -110' : '  below break-even'));
+            });
+            out('        Break-even at -110 juice is 52.4%.');
+          }
+        });
       }
 
       setStatus('Done · ' + new Date().toLocaleTimeString(), false);
-      btn.disabled = false;
+      document.getElementById('backfillBtn').disabled = false;
       render();
     }
 
     // ============================================================
     // RATINGS PROBE
+    //
+    // v1.1: step 3 runs a full ratings build, which on a slow
+    // connection or a large college dataset can take ten minutes
+    // or more. It used to fire without warning from a button that
+    // says "probe." Now it asks first, with an estimated duration,
+    // and skips cleanly if the operator declines.
     // ============================================================
 
     const ESPN_PATHS = {
@@ -624,13 +381,16 @@
       setStatus('Probing ratings build…', true);
 
       out('EDGE RATINGS PROBE');
-      out('Generated: ' + new Date().toISOString());
+      out('Generated: ' + localStamp());
 
       const sbUrl = localStorage.getItem('edge_supabase_url');
       const sbKey = localStorage.getItem('edge_supabase_key');
       if (!sbUrl || !sbKey) {
         out('');
         out('  ⚠ SUPABASE CREDENTIALS ARE MISSING', 'err');
+        out('    url ' + (sbUrl ? 'set' : 'MISSING') + ' · key ' + (sbKey ? 'set' : 'MISSING'), 'err');
+        out('    Ratings will compute but cannot be saved. Settings ›', 'warn');
+        out('    Connections.', 'warn');
       }
 
       const stop = await probeStep1_Files();
@@ -644,6 +404,7 @@
       render();
     }
 
+    // ── 1. Which files are actually being served ──
     async function probeStep1_Files() {
       section('1. SERVED FILES');
       let blocked = false;
@@ -690,16 +451,24 @@
       }
 
       out('');
-      kv('EDGE_POWER build',  window.EDGE_POWER?.BUILD  || 'no stamp', window.EDGE_POWER?.BUILD ? 'ok' : 'err');
-      kv('EDGE_RATING build', window.EDGE_RATING?.BUILD || 'no stamp', window.EDGE_RATING?.BUILD ? 'ok' : 'err');
-      kv('EDGE_SITUATIONS build', window.EDGE_SITUATIONS?.BUILD || 'no stamp', window.EDGE_SITUATIONS?.BUILD ? 'ok' : 'err');
-      kv('EDGE_SITUATION_RESULTS build', window.EDGE_SITUATION_RESULTS?.BUILD || 'no stamp', window.EDGE_SITUATION_RESULTS?.BUILD ? 'ok' : 'err');
-      kv('EDGE_GOVERNOR build', window.EDGE_GOVERNOR?.BUILD || 'no stamp', window.EDGE_GOVERNOR?.BUILD ? 'ok' : 'err');
-      kv('EDGE_PHYSICS build', window.EDGE_PHYSICS?.BUILD || 'no stamp', window.EDGE_PHYSICS?.BUILD ? 'ok' : 'err');
+      kv('EDGE_POWER build',  window.EDGE_POWER?.BUILD  || 'no stamp',
+         window.EDGE_POWER?.BUILD ? 'ok' : 'err');
+      kv('EDGE_RATING build', window.EDGE_RATING?.BUILD || 'no stamp',
+         window.EDGE_RATING?.BUILD ? 'ok' : 'err');
+      kv('EDGE_SITUATIONS build', window.EDGE_SITUATIONS?.BUILD || 'no stamp',
+         window.EDGE_SITUATIONS?.BUILD ? 'ok' : 'err');
+      kv('EDGE_SITUATION_RESULTS build', window.EDGE_SITUATION_RESULTS?.BUILD || 'no stamp',
+         window.EDGE_SITUATION_RESULTS?.BUILD ? 'ok' : 'err');
+      kv('EDGE_GOVERNOR build', window.EDGE_GOVERNOR?.BUILD || 'no stamp',
+         window.EDGE_GOVERNOR?.BUILD ? 'ok' : 'err');
+      kv('EDGE_PHYSICS build', window.EDGE_PHYSICS?.BUILD || 'no stamp',
+         window.EDGE_PHYSICS?.BUILD ? 'ok' : 'err');
 
       out('');
-      kv('window.EDGE_RATING', window.EDGE_RATING ? 'loaded' : 'NOT LOADED', window.EDGE_RATING ? 'ok' : 'err');
-      kv('window.EDGE_POWER', window.EDGE_POWER ? 'loaded' : 'NOT LOADED', window.EDGE_POWER ? 'ok' : 'err');
+      kv('window.EDGE_RATING', window.EDGE_RATING ? 'loaded' : 'NOT LOADED',
+         window.EDGE_RATING ? 'ok' : 'err');
+      kv('window.EDGE_POWER', window.EDGE_POWER ? 'loaded' : 'NOT LOADED',
+         window.EDGE_POWER ? 'ok' : 'err');
 
       if (blocked) {
         out('');
@@ -709,6 +478,7 @@
       return blocked;
     }
 
+    // ── 2. What ESPN actually returns, unfiltered ──
     async function probeStep2_Espn() {
       section('2. ESPN RAW FETCH');
 
@@ -793,11 +563,27 @@
         kv('usable for rating', String(usable), usable ? 'ok' : 'err');
 
         if (usable && !best) best = sport;
+
+        const sample = events[0];
+        const c = sample.competitions?.[0]?.competitors || [];
+        if (c.length >= 2) {
+          out('      sample: ' + (c[1].team?.displayName || '?') + ' ' + (c[1].score ?? '-') +
+              '  @  ' + (c[0].team?.displayName || '?') + ' ' + (c[0].score ?? '-') +
+              '  · final=' + (sample.competitions[0].status?.type?.completed === true) +
+              ' · seasonType=' + (sample.season?.type ?? '?'));
+        }
       }
 
       return best;
     }
 
+    // ── 3. Run the real build and capture everything it says ──
+    //
+    // v1.1: the confirm gate. This function performs a full ratings
+    // build — the same call the Admin button makes. It is not a
+    // probe, it is the thing the probe was meant to check the
+    // inputs for. It is worth running, but the operator should opt
+    // in with eyes open.
     async function probeStep3_Build(sport) {
       section('3. LIVE BUILD — ' + sport);
 
@@ -811,11 +597,15 @@
       );
 
       if (!confirmed) {
-        out('  Skipped by operator.');
+        out('  Skipped by operator. Steps 1 and 2 are complete — the');
+        out('  served files and the ESPN endpoint are the parts a probe');
+        out('  is actually meant to check. Run RATINGS PROBE again and');
+        out('  confirm when you want the full build.');
         return;
       }
 
       out('  Running computeAllTeamRatings with progress captured.');
+      out('  This is the same call the Admin button makes.');
       out('');
 
       const log = [];
@@ -826,9 +616,13 @@
         });
       } catch (e) {
         out('');
-        out('   ✗ THREW ' + e.message, 'err');
+        bad('THREW', e.message);
         (e.stack || '').split('\n').slice(0, 4).forEach(l => out('      ' + l, 'err'));
         return;
+      }
+
+      if (!log.length) {
+        out('    (no progress reported — the deployed build predates progress logging)', 'warn');
       }
 
       out('');
@@ -862,72 +656,16 @@
         }
         (result.persist.errors || []).forEach(e => out('      ' + e, 'err'));
       }
-    }
 
-    // ============================================================
-    // BACKFILL & CALIBRATION
-    // ============================================================
-
-    async function runBackfill() {
-      if (!window.EDGE_BACKFILL) { showToast('backfill.js not loaded', true); return; }
-      const sports = prompt('Sports to backfill (comma separated).', 'NFL') || '';
-      const list = sports.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-      if (!list.length) return;
-
-      const seasons = parseInt(prompt('How many completed seasons per sport?', '3') || '3', 10) || 3;
-
-      lines.length = 0;
-      document.getElementById('backfillBtn').disabled = true;
-      setStatus('Backfilling — this takes minutes…', true);
-
-      out('EDGE BACKFILL & CALIBRATION');
-      out('Generated: ' + new Date().toISOString());
-      out('Sports: ' + list.join(', ') + ' · ' + seasons + ' seasons each');
-
-      let result;
-      try {
-        result = await window.EDGE_BACKFILL.run({
-          sports: list, seasons,
-          onProgress: m => { out(m); render(); },
-        });
-      } catch (e) {
-        out('   ✗ THREW ' + e.message, 'err');
-        document.getElementById('backfillBtn').disabled = false;
-        setStatus('Failed', false);
-        render();
-        return;
-      }
-
-      section('CALIBRATION RESULTS');
-      if (!result.ok) {
-        out('  ✗ Failed: ' + result.error, 'err');
-      } else {
-        Object.entries(result.sports).forEach(([sport, r]) => {
-          out('');
-          out('  ── ' + sport, 'section-title');
-          if (!r.ok) { out('      ✗ ' + r.error, 'err'); return; }
-
-          const c = r.constants, e = r.error;
-          out('      games used          ' + r.total_games);
-          out('      seasons             ' + r.seasons.map(s => s.season).join(', '));
-          out('');
-          out('      home advantage      ' + c.home_advantage, 'ok');
-          out('      avg total           ' + c.avg_total, 'ok');
-          out('      margin sd           ' + c.margin_sd, 'ok');
-          out('      margin scale        ' + c.margin_scale, 'ok');
-
-          if (e.sigma != null) {
-            out('');
-            out('      projection sigma    ' + e.sigma + ' points on ' + e.n + ' unseen games', 'ok');
-            out('      mean abs error      ' + e.mae, 'ok');
-            out('      bias                ' + e.bias, Math.abs(e.bias) > 1 ? 'warn' : 'ok');
-          }
+      const first = Object.values(result.teams || {})[0];
+      if (first) {
+        out('');
+        out('  SAMPLE TEAM', 'section-title');
+        ['team_name', 'sport', 'overall', 'glicko_rating', 'glicko_rd', 'massey', 'colley',
+         'composite_points', 'attack', 'def_rate', 'games_played', 'record'].forEach(k => {
+          out('      ' + k.padEnd(18) + (first[k] ?? '—'));
         });
       }
-
-      setStatus('Done · ' + new Date().toLocaleTimeString(), false);
-      document.getElementById('backfillBtn').disabled = false;
-      render();
     }
 
     // ============================================================
@@ -1014,7 +752,9 @@
       setStatus('Probing tables…', true);
 
       out('EDGE TABLE PREFLIGHT');
-      out('Generated: ' + new Date().toISOString());
+      out('Generated: ' + localStamp());
+      out('Every build button writes to one of these. If a build produces');
+      out('nothing, the reason is in this report.');
 
       const url = (localStorage.getItem('edge_supabase_url') || '').replace(/\/+$/, '');
       const key = localStorage.getItem('edge_supabase_key') || '';
@@ -1022,6 +762,7 @@
       section('CREDENTIALS');
       if (!url || !key) {
         kv('Supabase', 'NOT CONFIGURED', 'err');
+        out('  Settings › Connections — add the project URL and anon key.', 'warn');
         setStatus('Blocked', false);
         document.getElementById('preflightBtn').disabled = false;
         render();
@@ -1048,7 +789,7 @@
         const role = payload.role || 'unknown';
         if (role === 'service_role') return role + '  ⚠ SERVICE KEY IN A BROWSER — rotate it';
         const exp = payload.exp ? new Date(payload.exp * 1000) : null;
-        return role + (exp ? ' · expires ' + exp.toISOString().slice(0, 10) : '');
+        return role + (exp ? ' · expires ' + exp.toLocaleDateString() : '');
       } catch { return 'could not decode'; }
     }
 
@@ -1093,6 +834,7 @@
         if (missing.length) {
           kv('SCHEMA', missing.length + ' column(s) missing', 'err');
           out('       ' + missing.join(', '), 'err');
+          out('       → Writes that include these are rejected wholesale with a 400.', 'warn');
           PF.schema.push(spec.name + ': ' + missing.join(', '));
         } else {
           kv('SCHEMA', 'all ' + spec.needs.length + ' expected columns present', 'ok');
@@ -1118,6 +860,7 @@
         const cause = explain(writeRes.status, writeBody);
         kv('WRITE', 'HTTP ' + writeRes.status + ' — ' + cause.short, 'err');
         out('       ' + trimBody(writeBody), 'err');
+        out('       → ' + cause.fix, 'warn');
         if (cause.kind === 'rls') PF.rls.push(spec.name + ' (insert)');
         else if (cause.kind === 'schema') PF.schema.push(spec.name + ': ' + trimBody(writeBody));
         else if (cause.kind === 'missing') PF.missing.push(spec.name);
@@ -1135,6 +878,7 @@
         else {
           const b = await del.text().catch(() => '');
           kv('DELETE', 'HTTP ' + del.status + ' — probe row left behind', 'warn');
+          out('       ' + trimBody(b), 'warn');
           PF.rls.push(spec.name + ' (delete)');
         }
       } catch { kv('DELETE', 'failed — probe row left behind', 'warn'); }
@@ -1163,15 +907,15 @@
       }
       if (b.includes('23502') || b.includes('not-null constraint')) {
         return { kind: 'notnull', short: 'probe row missing a required column',
-                 fix: 'The table demands a column this probe does not send. The real build sends it.' };
+                 fix: 'The table demands a column this probe does not send. The real build sends it. Nothing to fix unless the build also fails.' };
       }
       if (b.includes('pgrst204') || b.includes('could not find') || b.includes('column')) {
         return { kind: 'schema', short: 'column mismatch',
-                 fix: 'The table is missing a column the code sends.' };
+                 fix: 'The table is missing a column the code sends. The whole batch is rejected.' };
       }
       if (status === 400) {
         return { kind: 'schema', short: 'rejected by the database',
-                 fix: 'Read the message above — usually a type mismatch.' };
+                 fix: 'Read the message above — usually a type mismatch or a NOT NULL with no default.' };
       }
       if (status === 409) {
         return { kind: 'conflict', short: 'unique constraint',
@@ -1189,7 +933,11 @@
       section('VERDICT');
 
       if (PF.badKey) {
+        out('');
         out('  THE API KEY IS NOT VALID FOR THIS PROJECT', 'err');
+        out('    Every table failed the same way, which is what a rejected', 'warn');
+        out('    key looks like. Nothing is wrong with the tables or their', 'warn');
+        out('    policies.', 'warn');
         return;
       }
 
@@ -1202,11 +950,15 @@
         out('  TABLES THAT DO NOT EXIST', 'err');
         PF.missing.forEach(t => out('    · ' + t, 'err'));
       }
+
       if (PF.rls.length) {
         out('');
         out('  BLOCKED BY ROW-LEVEL SECURITY', 'err');
         PF.rls.forEach(t => out('    · ' + t, 'err'));
+        out('    → If you are signed in, the current policy does not match', 'warn');
+        out('      your email. Check pg_policies for an owner_only policy.', 'warn');
       }
+
       if (PF.schema.length) {
         out('');
         out('  COLUMN MISMATCHES', 'err');
@@ -1216,15 +968,32 @@
       out('');
       if (!PF.missing.length && !PF.rls.length && !PF.schema.length) {
         out('  Every table exists, reads, writes and deletes.', 'ok');
+        out('  If a build still produces nothing, the failure is upstream.', 'ok');
       } else {
         out('  Fix the items above, then run this again.', 'warn');
         out('  Tap COPY SQL for statements that resolve everything listed.', 'warn');
       }
     }
 
+    // ── SQL for whatever this run found ──
+    //
+    // v1.1: the RLS policies match the owner_only pattern already
+    // in use on historical_odds — RLS on, one policy bound to the
+    // authenticated role, gated by the signed-in email. The old
+    // generator emitted `to anon using (true)`, which would have
+    // opened every table to the world once the anon key leaked.
+    // The owner email is read from the signed-in session.
     function copyPreflightSql() {
       const stmts = [];
       const email = ownerEmailOrPlaceholder();
+
+      if (!ownerEmail()) {
+        stmts.push(
+`-- NOTE: no signed-in session found. Replace YOUR_OWNER_EMAIL_HERE
+-- with the address you sign in as before running this block.`);
+      } else {
+        stmts.push(`-- Generated for owner: ${email}`);
+      }
 
       PF.missing.forEach(t => {
         const spec = TABLE_SPECS.find(s => s.name === t);
@@ -1234,7 +1003,8 @@
       const rlsTables = Array.from(new Set(PF.rls.map(t => t.split(' ')[0])));
       rlsTables.forEach(t => {
         stmts.push(
-`alter table public.${t} enable row level security;
+`-- ${t}: owner-only access, matching the historical_odds pattern
+alter table public.${t} enable row level security;
 drop policy if exists owner_only on public.${t};
 create policy owner_only on public.${t}
   for all to authenticated
@@ -1249,6 +1019,10 @@ create policy owner_only on public.${t}
         const cols = (detail || '').split(', ')
           .map(c => c.trim())
           .filter(c => /^[a-z_][a-z0-9_]*$/.test(c) && spec.needs.includes(c));
+        if (!cols.length) {
+          stmts.push(`-- ${table}: write was rejected. Message from the database:\n--   ${detail}`);
+          return;
+        }
         cols.forEach(c => {
           stmts.push(`alter table public.${table} add column if not exists ${c} ${sqlTypeFor(c)};`);
         });
@@ -1259,7 +1033,7 @@ create policy owner_only on public.${t}
         return;
       }
 
-      const sql = '-- EDGE preflight fixes · ' + new Date().toISOString() + '\n\n' + stmts.join('\n\n') + '\n';
+      const sql = '-- EDGE preflight fixes · ' + localStamp() + '\n\n' + stmts.join('\n\n') + '\n';
       navigator.clipboard.writeText(sql)
         .then(() => showToast('SQL copied — paste into the Supabase SQL editor'))
         .catch(() => { out(''); out(sql); render(); showToast('Copy blocked — SQL printed below', true); });
@@ -1276,7 +1050,8 @@ create policy owner_only on public.${t}
 
     function createTableSql(spec, email) {
       const cols = spec.needs.map(c => '  ' + c + ' ' + sqlTypeFor(c)).join(',\n');
-      return `create table if not exists public.${spec.name} (
+      return `-- ${spec.name}: written by ${spec.writtenBy}
+create table if not exists public.${spec.name} (
   id bigint generated always as identity primary key,
 ${cols}
 );
@@ -1300,10 +1075,12 @@ create policy owner_only on public.${spec.name}
       out('  STAGE ' + n + ' · ' + name, 'section-title');
       out('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'section-title');
     }
+
     function ok(label, detail)   { out('   \u2713 ' + String(label).padEnd(30) + (detail || ''), 'ok'); }
     function bad(label, detail)  { out('   \u2717 ' + String(label).padEnd(30) + (detail || ''), 'err'); }
     function warn(label, detail) { out('   ! ' + String(label).padEnd(30) + (detail || ''), 'warn'); }
     function why(text)           { out('       \u2192 ' + text, 'warn'); }
+
     function halt(stage, reason, fix) {
       W.failed = { stage, reason, fix };
       out('');
@@ -1318,7 +1095,7 @@ create policy owner_only on public.${spec.name}
       setStatus('Testing workflow…', true);
 
       out('EDGE WORKFLOW TEST');
-      out('Generated: ' + new Date().toISOString());
+      out('Generated: ' + localStamp());
       out('Chain: power ratings → matchups → spread → algorithms → governor → physics/Claude');
 
       const state = {};
@@ -1337,6 +1114,7 @@ create policy owner_only on public.${spec.name}
       } catch (e) {
         out('');
         bad('UNCAUGHT ERROR', e.message);
+        String(e.stack || '').split('\n').slice(0, 3).forEach(l => out('     ' + l, 'err'));
       }
 
       flowVerdict();
@@ -1347,6 +1125,7 @@ create policy owner_only on public.${spec.name}
 
     async function flow1_PowerRatings(state) {
       stageHead(1, 'POWER RATINGS');
+
       if (typeof window.EDGE_POWER === 'undefined') {
         bad('EDGE_POWER', 'module not loaded');
         halt(1, 'power-engine.js did not define EDGE_POWER', 'Check the script tag.');
@@ -1388,6 +1167,11 @@ create policy owner_only on public.${spec.name}
         out('      ' + sp.padEnd(7) + String(list.length).padStart(3) + ' teams \u00b7 ' + gp.toFixed(1) + ' games avg');
       });
 
+      const newest = ratings.reduce((a, r) => (!a || new Date(r.updated_at) > new Date(a)) ? r.updated_at : a, null);
+      const ageH = (Date.now() - new Date(newest)) / 3600000;
+      if (ageH > 36) warn('Freshness', ageH.toFixed(0) + ' hours old \u2014 rebuild recommended');
+      else ok('Freshness', ageH.toFixed(1) + ' hours old');
+
       state.ratings = ratings;
       state.bySport = bySport;
       return true;
@@ -1395,6 +1179,7 @@ create policy owner_only on public.${spec.name}
 
     async function flow2_Matchups(state) {
       stageHead(2, 'MATCHUPS');
+
       let games = [];
       try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
 
@@ -1470,6 +1255,7 @@ create policy owner_only on public.${spec.name}
 
     async function flow3_Spread(state) {
       stageHead(3, 'SPREAD');
+
       const pool = state.playable.length ? state.playable : state.games;
       const priced = pool.filter(g => g.spread !== null && g.spread !== undefined);
       if (!priced.length) {
@@ -1495,7 +1281,11 @@ create policy owner_only on public.${spec.name}
 
     async function flow4_Algorithms(state) {
       stageHead(4, 'ALGORITHMS');
-      if (!window.EDGE_ALGOS) { halt(4, 'EDGE_ALGOS not loaded', 'Deploy algorithms.js.'); return false; }
+
+      if (!window.EDGE_ALGOS) {
+        halt(4, 'EDGE_ALGOS not loaded', 'Deploy algorithms.js.');
+        return false;
+      }
       ok('EDGE_ALGOS', (window.EDGE_ALGOS.FAMILIES || []).length + ' families registered');
 
       const sample = state.priced[0];
@@ -1533,7 +1323,10 @@ create policy owner_only on public.${spec.name}
       const R = window.EDGE_TEAMS ? window.EDGE_TEAMS.buildIndex(state.bySport[sport] || [], sport) : null;
       let hs = index[sport + ':' + homeName] || (R && window.EDGE_TEAMS.resolveTeam(homeName, R, sport));
       let as = index[sport + ':' + awayName] || (R && window.EDGE_TEAMS.resolveTeam(awayName, R, sport));
-      if (!hs || !as) { halt(4, 'Sample game has no ratings for both teams', 'See stage 2.'); return false; }
+      if (!hs || !as) {
+        halt(4, 'Sample game has no ratings for both teams', 'See the resolution failures in stage 2.');
+        return false;
+      }
 
       let prior;
       try {
@@ -1578,6 +1371,7 @@ create policy owner_only on public.${spec.name}
 
     async function flow5_Governor(state) {
       stageHead(5, 'GOVERNOR');
+
       if (!window.EDGE_GOVERNOR) { halt(5, 'EDGE_GOVERNOR not loaded', 'Deploy governor.js.'); return false; }
 
       let gov;
@@ -1595,6 +1389,12 @@ create policy owner_only on public.${spec.name}
         W.notes.push('capped: ' + gov.data_caps.join(', '));
       }
 
+      const bd = gov.breakdown || [];
+      if (!bd.length) {
+        bad('Breakdown', 'empty');
+        W.notes.push('governor breakdown empty');
+      } else ok('Breakdown', bd.length + ' families');
+
       state.gov = gov;
       return true;
     }
@@ -1610,8 +1410,12 @@ create policy owner_only on public.${spec.name}
         else {
           const hasKey = !!localStorage.getItem('edge_claude_api_key');
           const hasProxy = !!localStorage.getItem('edge_proxy_url');
-          if (!hasKey && !hasProxy) { bad('Anthropic credentials', 'none set'); W.notes.push('Claude mode on with no key'); }
-          else ok('Anthropic credentials', hasProxy ? 'via proxy' : 'direct key');
+          if (!hasKey && !hasProxy) {
+            bad('Anthropic credentials', 'none set');
+            W.notes.push('Claude mode on with no key');
+          } else {
+            ok('Anthropic credentials', hasProxy ? 'via proxy' : 'direct key');
+          }
           ok('Model', window.EDGE_CLAUDE.getModel ? window.EDGE_CLAUDE.getModel() : 'unknown');
         }
       } else {
@@ -1629,6 +1433,21 @@ create policy owner_only on public.${spec.name}
       ok('Confidence', phys.confidence + '%');
       if (phys.side_label) ok('Side', phys.side_label.team || '\u2014');
 
+      const snap = phys.market_snapshot || {};
+      if (snap.book) {
+        ok('Book on pick', snap.book + ' \u00b7 spread ' + snap.spread);
+      } else {
+        warn('Book on pick', 'not stamped');
+      }
+
+      if (!(phys.governor_snapshot || {}).breakdown) {
+        bad('Pick breakdown', 'missing from the stored snapshot');
+      } else {
+        ok('Pick breakdown', phys.governor_snapshot.breakdown.length + ' families');
+      }
+
+      // v2.1 sizing trail. kelly_raw and fractional_kelly are the
+      // fields; kelly_units is what physics computes from them.
       const sizing = phys.sizing_details || {};
       if (sizing.kelly_raw != null) {
         ok('Kelly raw', (sizing.kelly_raw * 100).toFixed(2) + '%');
@@ -1685,7 +1504,7 @@ create policy owner_only on public.${spec.name}
       setStatus('Verifying…', true);
 
       out('EDGE DEPLOY VERIFICATION');
-      out('Generated: ' + new Date().toISOString());
+      out('Generated: ' + localStamp());
 
       await vStep1_Cache();
       await vStep2_Modules();
@@ -1702,20 +1521,27 @@ create policy owner_only on public.${spec.name}
 
     async function vStep1_Cache() {
       section('1. SERVICE WORKER / CACHE');
-      if (!('serviceWorker' in navigator)) { vres('Service worker', 'WARN', 'unsupported'); return; }
+      if (!('serviceWorker' in navigator)) {
+        vres('Service worker', 'WARN', 'unsupported');
+        return;
+      }
       try {
         const regs = await navigator.serviceWorker.getRegistrations();
         vres('Registrations', regs.length ? 'PASS' : 'WARN', regs.length + ' active');
+
         const keys = await caches.keys();
         out('  cache buckets: ' + (keys.join(', ') || 'none'));
-        const stale = keys.filter(k => /edge-v1|edge-v2/.test(k) && !/edge-v3/.test(k));
+
+        const stale = keys.filter(k => /edge-v1/.test(k) && !/edge-v2/.test(k));
         if (stale.length) {
           vres('Shell cache version', 'FAIL', 'stale (' + stale.join(', ') + ')');
           V.next = V.next || 'Tap PURGE CACHE below, then reload this page.';
         } else {
           vres('Shell cache version', 'PASS', keys.length ? 'current' : 'not yet cached');
         }
-      } catch (e) { vres('Cache inspection', 'WARN', e.message); }
+      } catch (e) {
+        vres('Cache inspection', 'WARN', e.message);
+      }
     }
 
     async function vStep2_Modules() {
@@ -1737,12 +1563,6 @@ create policy owner_only on public.${spec.name}
         ['EDGE_INJURY',        'injury-fragmentation.js', false],
         ['EDGE_ATS',           'ats-tracker.js',          false],
         ['EDGE_BACKFILL',      'backfill.js',             false],
-        ['EDGE_GAME_ID_MAP',   'game-id-map.js',          false],
-        ['EDGE_SHADOW_GRADER', 'shadow-grader.js',        false],
-        ['EDGE_SIM_GRADER',    'sim-grader.js',           false],
-        ['EDGE_TRENDS',        'trends-engine.js',        false],
-        ['EDGE_PROP_TRENDS',   'prop-trends-engine.js',   false],
-        ['EDGE_BOXSCORE',      'box-score-fetcher.js',    false],
       ];
       required.forEach(([name, file, critical]) => {
         const mod = window[name];
@@ -1759,21 +1579,20 @@ create policy owner_only on public.${spec.name}
       section('3. SERVED FILE VERSIONS');
       const checks = [
         ['power-engine.js',      'computeAllTeamRatings', 'v4 power engine'],
-        ['power-engine.js',      'COMPOSITE_TO_SCALE',    'v4.4 composite scaling'],
-        ['ats-tracker.js',       'regularOnly',           'v3.1 playoff preservation'],
-        ['roster-engine.js',     'starter_inferred',      'v1.4 starter inference'],
-        ['roster-enrichment.js', 'NFL_METRICS',           'v3.4 without defensive metrics'],
-        ['box-score-fetcher.js', 'mergePlayerRows',       'v1.4 merge export'],
-        ['parlay.js',            'buildContextIfNeeded',  'v1.4 self context'],
+        ['power-engine.js',      'seasonStart',           'season-clamped lookback'],
+        ['ats-tracker.js',       'resolveGameOdds',       'core-API odds source'],
+        ['ats-tracker.js',       'open_spread',           'v2.4 open_spread capture'],
+        ['roster-engine.js',     'EDGE_ROSTER_ENGINE',    'roster builder present'],
+        ['roster-enrichment.js', 'cloneMetrics',          'v3.2 clone metrics'],
+        ['parlay.js',            'lineMovedTowardPick',   'v1.2 market signal'],
         ['physics.js',           'kelly_raw',             'v2.1 single-shrink'],
         ['governor.js',          'MAX_CALIBRATION_PULL',  'v3.1 calibration blend'],
         ['situations-engine.js', 'weighted_lean',         'v2.0 weighted engine'],
         ['situation-results.js', 'EDGE_SITUATION_RESULTS','results module'],
-        ['context-builder.js',   'prevResultByTeam',      'v5.1 trends context'],
-        ['orchestrator.js',      'situation_weights',     'v3.2 per-rule weights'],
+        ['context-builder.js',   'WEATHER_CACHE_KEY',     'v4.1 caching'],
+        ['orchestrator.js',      'situation_weights',     'v3.1 per-rule weights'],
         ['claude.js',            'claude-sonnet-4-5',     'v2.1 current model id'],
-        ['game-id-map.js',       'DATE_WINDOW_DAYS',      'v1.1 id bridge'],
-        ['learning.js',          'captureCLV',            'v3.1 CLV integration'],
+        ['matchups.html',        'activeBook',            'book-filtered odds'],
       ];
       const cache = {};
       for (const [file, token, label] of checks) {
@@ -1786,7 +1605,9 @@ create policy owner_only on public.${spec.name}
           if (body === null) vres(label, 'FAIL', file + ' not found (404)');
           else vres(label, body.includes(token) ? 'PASS' : 'FAIL',
                     body.includes(token) ? file : file + ' is the old version');
-        } catch (e) { vres(label, 'FAIL', e.message); }
+        } catch (e) {
+          vres(label, 'FAIL', e.message);
+        }
       }
     }
 
@@ -1799,7 +1620,9 @@ create policy owner_only on public.${spec.name}
 
       vres('Supabase URL', url ? 'PASS' : 'FAIL', url || 'not set');
       vres('Supabase key', key ? 'PASS' : 'FAIL', key ? 'set' : 'not set');
-      vres('Signed-in user', ownerEmail() ? 'PASS' : 'FAIL', ownerEmail() || 'no session');
+
+      const owner = ownerEmail();
+      vres('Signed-in user', owner ? 'PASS' : 'FAIL', owner || 'no session');
 
       if (url && key) {
         try {
@@ -1816,7 +1639,9 @@ create policy owner_only on public.${spec.name}
           vres('Odds API', res.ok ? 'PASS' : 'FAIL',
                res.ok ? (left ? left + ' requests left' : 'connected') : 'HTTP ' + res.status);
         } catch (e) { vres('Odds API', 'FAIL', e.message); }
-      } else vres('Odds API', 'FAIL', 'not set');
+      } else {
+        vres('Odds API', 'FAIL', 'not set');
+      }
 
       vres('Sportsbook', book ? 'PASS' : 'WARN',
            book ? 'pricing against ' + book : 'using consensus');
@@ -1840,7 +1665,6 @@ create policy owner_only on public.${spec.name}
         ['matchup_ats',    'Build ATS',           false],
         ['historical_odds','Build ATS',           false],
         ['shadow_picks',   'Run pipeline',        false],
-        ['game_id_map',    'Backfill Game ID Map', false],
         ['situation_results',     'Slate Test',        false],
         ['situation_performance', 'Slate Test',        false],
         ['model_calibration',     'Backfill & Calibration', false],
@@ -1889,6 +1713,38 @@ create policy owner_only on public.${spec.name}
           const avg = list.reduce((a, r) => a + (r.games_played || 0), 0) / list.length;
           out('    ' + sp.padEnd(7) + list.length + ' teams · ' + avg.toFixed(1) + ' games avg');
         });
+
+        const nfl = sports.NFL || [];
+        if (nfl.length) {
+          const opener = new Date(new Date().getFullYear(), 8, 4);
+          const weeks = Math.max(0, Math.floor((Date.now() - opener) / (7 * 86400000)));
+          const maxGames = Math.max(...nfl.map(r => r.games_played || 0));
+          if (maxGames > weeks + 1) {
+            vres('NFL preseason filter', 'FAIL',
+                 maxGames + ' games vs ~' + weeks + ' weeks played');
+          } else {
+            vres('NFL preseason filter', 'PASS', maxGames + ' games max');
+          }
+        }
+
+        // Situation weights
+        try {
+          const perfRes = await fetch(
+            url + '/rest/v1/situation_performance?select=situation_id,samples,hit_rate,sport&limit=200',
+            { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+          if (perfRes.ok) {
+            const perf = await perfRes.json();
+            const total = perf.length;
+            const keep = perf.filter(r => r.samples >= 20 && r.hit_rate >= 0.55).length;
+            const drop = perf.filter(r => r.samples >= 20 && r.hit_rate < 0.52).length;
+            if (total === 0) {
+              vres('Situation weights', 'WARN', 'no rows — run Slate Test');
+            } else {
+              vres('Situation weights', 'PASS',
+                   `${total} rules · ${keep} KEEP · ${drop} DROP`);
+            }
+          }
+        } catch {}
       } catch (e) { vres('Data quality', 'FAIL', e.message); }
     }
 
@@ -1913,12 +1769,22 @@ create policy owner_only on public.${spec.name}
       } else {
         out('  Usable. Warnings above are optional features.', 'warn');
       }
+
+      out('');
+      out('  Recommended order on a fresh deploy:');
+      out('    1. Purge cache, reload');
+      out('    2. Settings › Connections — Supabase, Odds API');
+      out('    3. Admin › Sportsbook — pick your book');
+      out('    4. Admin › Build Power Ratings');
+      out('    5. Admin › Build Rosters, then Enrich Rosters');
+      out('    6. Admin › Build ATS  (long, resumable — run twice)');
+      out('    7. Admin › Backfill & Calibration');
+      out('    8. Slate Test — run over several seasons to train situations');
+      out('    9. Matchups — refresh the board');
+      out('   10. Today\u2019s Picks — run the pipeline');
     }
 
-    // ============================================================
-    // CACHE PURGE
-    // ============================================================
-
+    // ── Cache purge ──
     async function purgeCache() {
       try {
         if ('serviceWorker' in navigator) {
@@ -1944,7 +1810,7 @@ create policy owner_only on public.${spec.name}
       setStatus('Running…', true);
 
       out('EDGE FULL DIAGNOSTIC');
-      out('Generated: ' + new Date().toISOString());
+      out('Generated: ' + localStamp());
 
       await checkEnvironment();
       await checkModulesLoaded();
@@ -1973,13 +1839,16 @@ create policy owner_only on public.${spec.name}
     async function checkEnvironment() {
       section('1. ENVIRONMENT');
       kv('Page URL', location.href, 'info');
+      kv('User agent', navigator.userAgent.slice(0, 90), 'info');
       kv('Online', navigator.onLine ? 'yes' : 'NO', navigator.onLine ? 'ok' : 'err');
+
       try {
         if ('serviceWorker' in navigator) {
           const regs = await navigator.serviceWorker.getRegistrations();
           kv('SW registrations', regs.length, regs.length ? 'warn' : 'ok');
         }
       } catch (e) { kv('SW check', 'error: ' + e.message, 'err'); }
+
       try {
         const keys = await caches.keys();
         kv('Cache names', keys.length ? keys.join(', ') : '(none)', 'info');
@@ -1993,14 +1862,16 @@ create policy owner_only on public.${spec.name}
         'EDGE_CLAUDE', 'EDGE_CONTEXT', 'EDGE_ORCHESTRATOR',
         'EDGE_LEARNING', 'EDGE_PARLAY', 'EDGE_SITUATIONS',
         'EDGE_SITUATION_RESULTS', 'EDGE_BACKFILL', 'EDGE_RATING',
-        'EDGE_ATS', 'EDGE_TRENDS', 'EDGE_PROP_TRENDS', 'EDGE_INJURY',
-        'EDGE_BOXSCORE', 'EDGE_GAME_ID_MAP', 'EDGE_SHADOW_GRADER',
-        'EDGE_SIM_GRADER', 'EDGE_TEAMS',
+        'EDGE_ATS', 'EDGE_TRENDS', 'EDGE_INJURY', 'EDGE_TEAMS',
       ];
       mods.forEach(m => {
         const v = window[m];
-        if (typeof v === 'undefined') kv(m, 'NOT LOADED', 'err');
-        else kv(m, 'loaded (' + Object.keys(v).length + ' exports)' + (v.BUILD ? ' · ' + v.BUILD : ''), 'ok');
+        if (typeof v === 'undefined') {
+          kv(m, 'NOT LOADED', 'err');
+        } else {
+          const build = v.BUILD ? ` · ${v.BUILD}` : '';
+          kv(m, 'loaded (' + Object.keys(v).length + ' exports)' + build, 'ok');
+        }
       });
     }
 
@@ -2009,8 +1880,7 @@ create policy owner_only on public.${spec.name}
       const files = ['power-engine.js', 'algorithms.js', 'governor.js', 'physics.js',
                      'claude.js', 'context-builder.js', 'orchestrator.js', 'learning.js',
                      'parlay.js', 'sw.js', 'situations-engine.js', 'situation-results.js',
-                     'ats-tracker.js', 'rating-core.js', 'backfill.js',
-                     'game-id-map.js', 'shadow-grader.js', 'sim-grader.js'];
+                     'ats-tracker.js', 'rating-core.js', 'backfill.js'];
       for (const f of files) {
         try {
           const res = await fetch(f + '?cb=' + Date.now(), { cache: 'no-store' });
@@ -2046,7 +1916,9 @@ create policy owner_only on public.${spec.name}
         if (!res.ok) { kv('Query', 'HTTP ' + res.status, 'err'); return; }
         const rows = await res.json();
         kv('Rows', rows.length, rows.length ? 'ok' : 'warn');
-        if (rows[0]) Object.entries(rows[0]).forEach(([k, v]) => kv('  ' + k, String(v), 'info'));
+        if (rows[0]) {
+          Object.entries(rows[0]).forEach(([k, v]) => kv('  ' + k, String(v), 'info'));
+        }
       } catch (e) { kv('Error', e.message, 'err'); }
     }
 
@@ -2061,7 +1933,6 @@ create policy owner_only on public.${spec.name}
         'algorithm_weights', 'line_history', 'bet_log',
         'players', 'team_ats', 'matchup_ats', 'historical_odds',
         'situation_results', 'situation_performance', 'model_calibration',
-        'game_id_map', 'trends', 'prop_trends', 'player_game_stats',
       ];
 
       for (const t of tables) {
@@ -2081,6 +1952,7 @@ create policy owner_only on public.${spec.name}
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) { kv('Config', 'missing', 'err'); return; }
+
       try {
         const res = await fetch(
           `${url}/rest/v1/power_ratings?select=sport,team_name,overall,games_played,updated_at&order=overall.desc&limit=2000`,
@@ -2088,10 +1960,12 @@ create policy owner_only on public.${spec.name}
         );
         if (!res.ok) { kv('Query', 'HTTP ' + res.status, 'err'); return; }
         const rows = await res.json();
+
         kv('Total rows', rows.length, 'ok');
         const bySport = {};
         rows.forEach(r => { bySport[r.sport] = (bySport[r.sport] || 0) + 1; });
         Object.entries(bySport).sort().forEach(([s, c]) => kv('  · ' + s, c + ' teams', 'info'));
+
         const high = rows.filter(r => r.overall >= 90).length;
         kv('  ≥90', high, high > rows.length * 0.2 ? 'err' : 'ok');
       } catch (e) { kv('Error', e.message, 'err'); }
@@ -2133,9 +2007,11 @@ create policy owner_only on public.${spec.name}
       section('10. TODAY\'S GAMES');
       const raw = localStorage.getItem('edge_todays_games');
       if (!raw) { kv('edge_todays_games', 'NOT SET', 'err'); return; }
+
       let games = [];
       try { games = JSON.parse(raw); }
       catch (e) { kv('Parse', 'ERROR: ' + e.message, 'err'); return; }
+
       kv('Total games', games.length, games.length ? 'ok' : 'err');
       const ts = localStorage.getItem('edge_todays_games_ts');
       if (ts) {
@@ -2149,16 +2025,20 @@ create policy owner_only on public.${spec.name}
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) { kv('Config', 'missing', 'err'); return; }
+
       let games = [];
       try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
       if (!games.length) { kv('Status', 'No games', 'err'); return; }
+
       let ratings = [];
       try {
         const res = await fetch(`${url}/rest/v1/power_ratings?select=sport,team_name&limit=5000`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } });
         if (res.ok) ratings = await res.json();
       } catch {}
+
       const ratingSet = new Set(ratings.map(r => `${r.sport}:${r.team_name}`));
+
       let bothOK = 0;
       games.forEach(g => {
         const sport = g._sport || g.sport;
@@ -2166,12 +2046,14 @@ create policy owner_only on public.${spec.name}
         const away = g.away_team || g.away;
         if (ratingSet.has(`${sport}:${home}`) && ratingSet.has(`${sport}:${away}`)) bothOK++;
       });
+
       kv('BOTH matched (usable)', bothOK + '/' + games.length, bothOK > 0 ? 'ok' : 'err');
     }
 
     async function checkContextBuilder() {
       section('11b. CONTEXT BUILDER');
       if (!window.EDGE_CONTEXT) { kv('EDGE_CONTEXT', 'NOT LOADED', 'err'); return; }
+
       let games = [];
       try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
       if (!games.length) { kv('Games', 'none', 'err'); return; }
@@ -2182,9 +2064,6 @@ create policy owner_only on public.${spec.name}
       kv('Travel games', Object.keys(ctx.travelByGame).length, 'ok');
       kv('Weather games', Object.keys(ctx.weatherByGame || {}).length, 'info');
       kv('Injuries games', Object.keys(ctx.injuriesByGame || {}).length, 'info');
-      kv('Prev result teams', Object.keys(ctx.prevResultByTeam || {}).length, 'info');
-      kv('Game of season teams', Object.keys(ctx.gameOfSeasonByTeam || {}).length, 'info');
-      kv('Played before teams', Object.keys(ctx.playedBeforeByTeam || {}).length, 'info');
 
       if (ctx._cache) {
         kv('Cache · weather', `${ctx._cache.weather.hits} hits / ${ctx._cache.weather.misses} misses`, 'info');
@@ -2194,9 +2073,12 @@ create policy owner_only on public.${spec.name}
 
     async function simulatePipeline() {
       section('12. PIPELINE SIMULATION');
+
       if (!window.EDGE_POWER || !window.EDGE_ALGOS || !window.EDGE_GOVERNOR || !window.EDGE_PHYSICS) {
-        kv('Modules', 'missing', 'err'); return;
+        kv('Modules', 'missing', 'err');
+        return;
       }
+
       let games = [];
       try { games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); } catch {}
       if (!games.length) { kv('Games', 'none', 'err'); return; }
@@ -2205,7 +2087,9 @@ create policy owner_only on public.${spec.name}
       const key = localStorage.getItem('edge_supabase_key');
 
       let ctx = {};
-      if (window.EDGE_CONTEXT) ctx = await EDGE_CONTEXT.buildContext(games);
+      if (window.EDGE_CONTEXT) {
+        ctx = await EDGE_CONTEXT.buildContext(games);
+      }
 
       let ratings = [];
       try {
@@ -2248,6 +2132,8 @@ create policy owner_only on public.${spec.name}
       if (!firstPrior) { out('  Cannot simulate — no priors built.', 'err'); return; }
 
       const prior = firstPrior.prior;
+      const g = firstPrior.game;
+
       out('');
       out('  ── Simulating: ' + prior.away_team + ' @ ' + prior.home_team, 'info');
 
@@ -2255,7 +2141,10 @@ create policy owner_only on public.${spec.name}
       try {
         families = await EDGE_ALGOS.runAll(prior, ctx);
         kv('Algorithm families returned', families.length, families.length ? 'ok' : 'err');
-      } catch (e) { kv('Algorithm error', e.message, 'err'); return; }
+      } catch (e) {
+        kv('Algorithm error', e.message, 'err');
+        return;
+      }
 
       let gov = null;
       try {
@@ -2267,7 +2156,10 @@ create policy owner_only on public.${spec.name}
         kv('    edge', (gov.edge * 100).toFixed(2) + '%', 'info');
         kv('    agreement_index', gov.agreement_index, 'info');
         kv('    decision', gov.decision, gov.decision !== 'PASS' ? 'ok' : 'warn');
-      } catch (e) { kv('Governor error', e.message, 'err'); return; }
+      } catch (e) {
+        kv('Governor error', e.message, 'err');
+        return;
+      }
 
       try {
         const phys = EDGE_PHYSICS.decide(gov, prior, {});
@@ -2279,16 +2171,21 @@ create policy owner_only on public.${spec.name}
           kv('    kelly_raw', (phys.sizing_details.kelly_raw * 100).toFixed(2) + '%', 'info');
           kv('    kelly_units', (phys.sizing_details.kelly_units || 0).toFixed(3) + 'u', 'info');
         }
-      } catch (e) { kv('Physics error', e.message, 'err'); }
+      } catch (e) {
+        kv('Physics error', e.message, 'err');
+      }
     }
 
+    // COPY
     function copyAll() {
       const text = lines.map(l => l.text).join('\n');
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
           .then(() => showToast('Copied ' + lines.length + ' lines'))
           .catch(() => fallbackCopy(text));
-      } else fallbackCopy(text);
+      } else {
+        fallbackCopy(text);
+      }
     }
 
     function fallbackCopy(text) {
@@ -2306,6 +2203,9 @@ create policy owner_only on public.${spec.name}
     render();
   </script>
   <script>
+    // Bound at the end of the document. An earlier version of this ran
+    // before the button was parsed, so getElementById returned null and
+    // the handler was never attached.
     (function () {
       var h = document.getElementById('ham');
       var d = document.getElementById('drawer');
@@ -2322,6 +2222,7 @@ create policy owner_only on public.${spec.name}
       o.addEventListener('click', toggle);
     })();
 
+    // ── CREDENTIALS ──
     function credPanelSync() {
       var panel = document.getElementById('credPanel');
       if (!panel) return;
@@ -2361,7 +2262,6 @@ create policy owner_only on public.${spec.name}
     }
 
     credPanelSync();
-    renderStages();
   </script>
 </body>
 </html>
