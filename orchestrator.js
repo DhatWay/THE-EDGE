@@ -376,6 +376,22 @@ const EDGE_ORCHESTRATOR = (() => {
   // ── POWER INDEX ──
   // ============================================================
 
+  // Paged read. Supabase returns at most 1,000 rows per request no
+  // matter what limit is asked for.
+  async function fetchAllRows(base, key, maxRows = 200000) {
+    const out = [];
+    const pageSize = 1000;
+    for (let offset = 0; offset < maxRows; offset += pageSize) {
+      const res = await fetch(`${base}&limit=${pageSize}&offset=${offset}`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (!res.ok) { if (offset === 0) throw new Error('HTTP ' + res.status); break; }
+      const rows = await res.json();
+      out.push(...rows);
+      if (rows.length < pageSize) break;
+    }
+    return out;
+  }
+
   function buildLeagueBaselines(teams) {
     const bySport = {};
     (Array.isArray(teams) ? teams : Object.values(teams || {})).forEach(t => {
@@ -404,16 +420,16 @@ const EDGE_ORCHESTRATOR = (() => {
           ? '&sport=in.(' + sportsList.map(s => `"${s}"`).join(',') + ')'
           : '';
 
-        const [teamsRes, coachesRes] = await Promise.all([
-          fetch(`${url}/rest/v1/power_ratings?select=*&limit=5000${sportFilter}`,
-            { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
-          fetch(`${url}/rest/v1/coaching_ratings?select=*&limit=5000${sportFilter}`,
-            { headers: { apikey: key, Authorization: `Bearer ${key}` } }),
+        // Paged: in winter the slate's sports hold more than the
+        // 1,000 rows Supabase returns per request.
+        const [teams, coaches] = await Promise.all([
+          fetchAllRows(`${url}/rest/v1/power_ratings?select=*${sportFilter}&order=sport.asc,team_name.asc`, key)
+            .catch(() => null),
+          fetchAllRows(`${url}/rest/v1/coaching_ratings?select=*${sportFilter}&order=sport.asc,team_name.asc`, key)
+            .catch(() => []),
         ]);
 
-        if (teamsRes.ok) {
-          const teams = await teamsRes.json();
-          const coaches = coachesRes.ok ? await coachesRes.json() : [];
+        if (teams) {
           if (teams.length) {
             const index = { teams: {}, coaching: {}, league: {} };
             teams.forEach(t => { index.teams[`${t.sport}:${t.team_name}`] = t; });
