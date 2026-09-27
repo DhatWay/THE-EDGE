@@ -11,6 +11,7 @@
 <meta name="theme-color" content="#C9A84C" />
 <meta name="mobile-web-app-capable" content="yes" />
 <link rel="apple-touch-icon" href="icon-192.png" />
+ <script src="edge-time.js"></script>
  <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -418,33 +419,43 @@ async function run() {
 
     let processed = 0, skippedThin = 0;
 
+    const seedBySeason = { [seasonOf(sport, windowStart)]: carryover || null };
+    const allScored = warmup.concat(games);
+
     for (let si = 0; si < steps.length; si++) {
       const step = steps[si];
-      const history = warmup
-        .concat(games.filter(x => new Date(x.game_date) < step.start));
 
-      if (history.length < MIN_HISTORY) {
+      // Rate each step the way the live engine rates today: this
+      // season's games before the step, seeded with this season's
+      // carryover. Seeding while also replaying the 400-day
+      // warm-up counted last season twice. With no seed on file for
+      // the season, the warm-up history is used cold, as before.
+      const label = seasonOf(sport, step.start);
+      if (!(label in seedBySeason)) {
+        seedBySeason[label] = await loadCarryoverForSeason(sport, label, url, key);
+      }
+      const seasonSeed = seedBySeason[label];
+      const seasonStartAt = window.EDGE_POWER?.seasonStart ? window.EDGE_POWER.seasonStart(sport, step.start) : null;
+
+      let history, minHistory;
+      if (seasonSeed && seasonStartAt) {
+        history = allScored.filter(x => {
+          const d = new Date(x.game_date);
+          return d >= seasonStartAt && d < step.start;
+        });
+        minHistory = 1;
+      } else {
+        history = warmup.concat(games.filter(x => new Date(x.game_date) < step.start));
+        minHistory = MIN_HISTORY;
+      }
+
+      if (history.length < minHistory) {
         skippedThin += step.games.length;
         processed += step.games.length;
         continue;
       }
 
-      // The carryover seed applies to every step. It represents
-      // the state of every team before the season started, and
-      // every step of the walk-forward rates the same history
-      // from the same starting conditions.
-      //
-      // Before this change, the seed was applied only to the
-      // first step. Step two started every team at a cold 1500
-      // while step one started them from last season's end
-      // state — same underlying data, two different rating
-      // systems, two different answers. That is what caused
-      // the walk-forward error to spike at the step boundary
-      // and why settled-rating and unsettled-rating errors did
-      // not converge the way the model claims they should.
-      const seed = carryover;
-
-      const power = buildPowerFromHistory(sport, history, coaching, seed);
+      const power = buildPowerFromHistory(sport, history, coaching, seasonSeed, minHistory);
       if (!power) { processed += step.games.length; continue; }
 
       log(`  step ${si + 1}/${steps.length} · ${step.label} · ` +
@@ -562,7 +573,10 @@ async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
 // ============================================================
 
 async function loadCarryoverForWindow(sport, windowStart, url, key) {
-  const season = seasonOf(sport, windowStart);
+  return loadCarryoverForSeason(sport, seasonOf(sport, windowStart), url, key);
+}
+
+async function loadCarryoverForSeason(sport, season, url, key) {
   try {
     const res = await fetch(
       `${url}/rest/v1/rating_carryover?sport=eq.${sport}&season=eq.${encodeURIComponent(season)}&limit=500`,
@@ -686,8 +700,9 @@ function buildLeagueBaselines(teamMap) {
   return out;
 }
 
-function buildPowerFromHistory(sport, history, coaching, seed) {
+function buildPowerFromHistory(sport, history, coaching, seed, minHistory = MIN_HISTORY) {
   const R = window.EDGE_RATING;
+  const P = window.EDGE_POWER;
   if (!R || !history.length) return null;
 
   const games = history.map(g => ({
@@ -696,14 +711,13 @@ function buildPowerFromHistory(sport, history, coaching, seed) {
     date: g.game_date, neutral: false,
   })).filter(g => isFinite(g.homeScore) && isFinite(g.awayScore));
 
-  if (games.length < MIN_HISTORY) return null;
+  if (games.length < minHistory) return null;
 
   const glicko = R.rateGlicko(sport, games, seed ? { seed } : {});
   const massey = R.massey(sport, games);
   const colley = R.colley(games);
   const blended = R.blend(sport, glicko, massey, colley);
   const ad = R.attackDefense(sport, games);
-  const league = ad._league || null;
 
   const agg = {};
   games.forEach(g => {
@@ -727,11 +741,14 @@ function buildPowerFromHistory(sport, history, coaching, seed) {
     || { pyExp: 2.37, scale: 22, k: 8, avgPF: 22, avgPA: 22 };
   const teams = {};
   const coachAdjByTeam = {};
-  const MIN_GAMES_FOR_RATING = window.EDGE_POWER?.MIN_GAMES_FOR_RATING ?? 3;
+  const MIN_GAMES_FOR_RATING = P?.MIN_GAMES_FOR_RATING ?? 3;
+  const counts = Object.values(agg).map(a => a.gp).sort((x, y) => x - y);
+  const median = counts[Math.floor(counts.length / 2)] || 1;
+  const qualifies = gp => P?.qualifiesForRating ? P.qualifiesForRating(gp, median) : gp >= MIN_GAMES_FOR_RATING;
 
   Object.keys(agg).forEach(name => {
     const a = agg[name];
-    if (a.gp < MIN_GAMES_FOR_RATING) return;
+    if (!qualifies(a.gp)) return;
     const g = glicko[name];
     if (!g) return;
 
@@ -754,33 +771,16 @@ function buildPowerFromHistory(sport, history, coaching, seed) {
     let form = 0;
     recent.forEach((m, i) => { form += wts[off + i] * (m / cfg.scale) * 3; });
 
+    // power-engine's own functions, so the backtest ranks and
+    // shifts exactly as the live engine does.
     const compositePoints = blended[name]?.composite_points ?? null;
-    let overall;
-    if (compositePoints != null) {
-      const compositeScaled = cl(50 + compositePoints * 2);
-      overall = Math.round((
-        (compositeScaled * 0.55) +
-        (offense * 0.20) +
-        (defense * 0.20) +
-        (mov * 0.05)
-      ) * 10) / 10;
-    } else {
-      overall = Math.round((
-        (pyth * 100 * 0.45) +
-        (offense * 0.20) +
-        (defense * 0.20) +
-        (mov * 0.15)
-      ) * 10) / 10;
-    }
+    const overall = P?.composeOverall
+      ? P.composeOverall(sport, { compositePoints, pyth, offense, defense, mov })
+      : Math.round(((pyth * 100 * 0.45) + (offense * 0.20) + (defense * 0.20) + (mov * 0.15)) * 10) / 10;
 
     const coachKey = `${sport}:${name}`;
     const coach = coaching[coachKey] || null;
-    let coachAdj = 0;
-    if (coach && coach.overall != null) {
-      const max = coach.max_adjustment ?? 2.5;
-      const deviation = (coach.overall - 50) / 50;
-      coachAdj = Math.round(deviation * max * 100) / 100;
-    }
+    const coachAdj = (coach && P?.coachAdjustmentPoints) ? P.coachAdjustmentPoints(sport, coach) : 0;
     coachAdjByTeam[name] = coachAdj;
 
     teams[`${sport}:${name}`] = {
@@ -811,6 +811,10 @@ function buildPowerFromHistory(sport, history, coaching, seed) {
       _coach: coach,
     };
   });
+
+  // League baseline as the orchestrator builds it live: the mean
+  // attack rate of the rated teams.
+  const league = buildLeagueBaselines(teams)[sport] || null;
 
   return { teams, coaching, league };
 }
@@ -1023,7 +1027,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     pick = {
       game_id: g.game_id,
       sport,
-      date: (g.game_date || '').slice(0, 10),
+      date: (window.EDGE_TIME ? EDGE_TIME.gameDay(g.game_date) : null) || (g.game_date || '').slice(0, 10),
       home: g.home,
       away: g.away,
       spread: g.spread,
@@ -1321,8 +1325,8 @@ async function renderReport(sport) {
     Fixing it properly means rebuilding those tables at every step, which is a second
     walk-forward pass — noted, not yet done. Power, situations, rest and travel rules read
     only games before the step cutoff, so they are clean. The situations family vote,
-    overall rating composite, coaching adjustment and league baseline now match the live
-    orchestrator, so weights learned here transfer. Weather, injuries and travel context
+    overall rating, rating floor, coaching adjustment, league baseline and season carryover
+    come from the same functions the live engine uses, so weights learned here transfer. Weather, injuries and travel context
     are not wired into the backtest yet, so those rules are reported untestable.
   </div>`;
 
