@@ -291,6 +291,7 @@ const EDGE_GOVERNOR = (() => {
     const kellyInput = buildKellyInput({
       posteriorHomeProb,
       marketHomeML: prior?.market?.home_ml,
+      marketAwayML: prior?.market?.away_ml,
       spread: prior?.market?.current_spread,
       sport,
       direction,
@@ -348,12 +349,25 @@ const EDGE_GOVERNOR = (() => {
   // spread implied probability. Last resort, the sport baseline.
   // ============================================================
 
+  // The market's view of the bet actually being made. Picks are
+  // spread bets, graded against the spread, and the posted spread is
+  // the market's 50/50 point — so with a spread on the board the
+  // market's home-cover probability is 0.5.
+  //
+  // This used to return the moneyline's WIN probability. The
+  // families' signal is measured against the spread (centered on
+  // 50%), so blending it with a win probability pulled every pick
+  // toward the favorite: for a 7-point favorite (about 75% to win)
+  // a model leaning 45% on the favorite still came out 54% for it.
+  //
+  // The moneyline and baseline remain the fallback only when no
+  // spread is posted.
   function resolveMarket(prior, homeBaseline, sport) {
+    if (typeof prior?.market?.current_spread === 'number') {
+      return { prob: 0.5, source: 'spread' };
+    }
     if (prior?.market?.home_ml) {
       return { prob: americanToImplied(prior.market.home_ml), source: 'moneyline' };
-    }
-    if (typeof prior?.market?.current_spread === 'number') {
-      return { prob: spreadToImplied(prior.market.current_spread, sport), source: 'spread' };
     }
     return { prob: homeBaseline, source: 'baseline' };
   }
@@ -457,21 +471,28 @@ const EDGE_GOVERNOR = (() => {
   // ── KELLY ──
   // ============================================================
 
-  function buildKellyInput({ posteriorHomeProb, marketHomeML, spread, sport, direction, units }) {
+  // Sized as what it is: a spread bet at the standard -110 when a
+  // spread is posted (market cover probability 0.5). The moneyline
+  // is used only when there is no spread, and then each side at its
+  // own price — the away price used to be the home price negated,
+  // which ignores the vig and overstated underdog payouts.
+  function buildKellyInput({ posteriorHomeProb, marketHomeML, marketAwayML, spread, sport, direction, units }) {
     const ourProb = direction === 'home' ? posteriorHomeProb : 1 - posteriorHomeProb;
 
     let marketProb, decimal, source;
 
-    if (marketHomeML) {
+    if (typeof spread === 'number') {
+      marketProb = 0.5;
+      decimal = americanToDecimal(-110);
+      source = 'spread';
+    } else if (marketHomeML) {
       const marketHome = americanToImplied(marketHomeML);
       marketProb = direction === 'home' ? marketHome : 1 - marketHome;
-      decimal = direction === 'home' ? americanToDecimal(marketHomeML) : americanToDecimal(-marketHomeML);
+      const sidePrice = direction === 'home'
+        ? marketHomeML
+        : (marketAwayML || -marketHomeML);
+      decimal = americanToDecimal(sidePrice);
       source = 'ml';
-    } else if (typeof spread === 'number') {
-      const homeImplied = spreadToImplied(spread, sport);
-      marketProb = direction === 'home' ? homeImplied : 1 - homeImplied;
-      decimal = 1.91;
-      source = 'spread';
     } else {
       return { available: false, reason: 'No market data' };
     }
