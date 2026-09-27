@@ -12,6 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -1052,7 +1053,7 @@
 
       const row = {
         mode,
-        date: new Date().toISOString().split('T')[0],
+        date: (window.EDGE_TIME ? EDGE_TIME.localDay() : (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         sport: pick.sport,
         matchup: `${pick.away_team} vs ${pick.home_team}`,
