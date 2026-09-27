@@ -12,6 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -421,6 +422,23 @@
       return allPicks.filter(p => p.decision_mode === currentMode);
     }
 
+    // Paged: Supabase returns at most 1,000 rows per request, so a
+    // single limit=2000 read silently dropped everything past the
+    // newest 1,000 picks.
+    async function fetchAllPicks(base, key) {
+      const out = [];
+      const pageSize = 1000;
+      for (let offset = 0; offset < 100000; offset += pageSize) {
+        const res = await fetch(`${base}&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) { if (offset === 0) throw new Error('HTTP ' + res.status); break; }
+        const rows = await res.json();
+        out.push(...rows);
+        if (rows.length < pageSize) break;
+      }
+      return out;
+    }
+
     async function loadPerformance() {
       const sbUrl = localStorage.getItem('edge_supabase_url');
       const sbKey = localStorage.getItem('edge_supabase_key');
@@ -431,10 +449,7 @@
       }
 
       try {
-        const res = await fetch(`${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=2000`, {
-          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
-        });
-        if (res.ok) allPicks = await res.json();
+        allPicks = await fetchAllPicks(`${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc`, sbKey);
       } catch (e) { logEdgeError('performance.loadPerformance', e); }
 
       renderAll();
