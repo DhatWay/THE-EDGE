@@ -12,6 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -419,6 +420,23 @@
       renderTable();
     }
 
+    // Paged: Supabase returns at most 1,000 rows per request, so a
+    // single limit=2000 read silently dropped everything past the
+    // newest 1,000 picks.
+    async function fetchAllPicks(base, key) {
+      const out = [];
+      const pageSize = 1000;
+      for (let offset = 0; offset < 100000; offset += pageSize) {
+        const res = await fetch(`${base}&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) { if (offset === 0) throw new Error('HTTP ' + res.status); break; }
+        const rows = await res.json();
+        out.push(...rows);
+        if (rows.length < pageSize) break;
+      }
+      return out;
+    }
+
     async function loadPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -432,11 +450,7 @@
       }
 
       try {
-        const res = await fetch(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc&limit=2000`, {
-          headers: { apikey: key, Authorization: `Bearer ${key}` }
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        allPicks = await res.json();
+        allPicks = await fetchAllPicks(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc`, key);
       } catch (e) {
         logEdgeError('history.loadPicks', e);
         allPicks = [];
@@ -552,8 +566,19 @@
 
       let picks = [...picksForMode()];
 
-      if (dateFrom) picks = picks.filter(p => p.created_at && p.created_at.slice(0, 10) >= dateFrom);
-      if (dateTo) picks = picks.filter(p => p.created_at && p.created_at.slice(0, 10) <= dateTo);
+      // Dates are the game's date on your calendar (kickoff, or
+      // creation for the rare pick without one). Comparing the UTC
+      // date of created_at put evening picks on the next day, and a
+      // pick made days ahead under the day it was made.
+      const pickDay = p => {
+        const t = p.commence_time || p.created_at;
+        if (!t) return null;
+        if (window.EDGE_TIME) return EDGE_TIME.localDay(t);
+        const d = new Date(t);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      };
+      if (dateFrom) picks = picks.filter(p => { const d = pickDay(p); return d && d >= dateFrom; });
+      if (dateTo) picks = picks.filter(p => { const d = pickDay(p); return d && d <= dateTo; });
 
       picks = picks.filter(p => {
         if (currentFilter === 'all') return true;
