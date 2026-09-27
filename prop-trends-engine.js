@@ -105,7 +105,7 @@ const EDGE_PROP_TRENDS = (() => {
     // threshold list [0, 1, 2] tested >= 0 which is always true;
     // every pitching line qualified for a "0+ ER" streak.
     { stat: 'pitching_strikeouts', label: 'pitcher K', thresholds: [4, 5, 6, 7, 8, 10], groups: ['PITCHER_START', 'PITCHER_RELIEF', 'PITCHER'] },
-    { stat: 'earned_runs',         label: 'ER or fewer', thresholds: [0, 1, 2], direction: 'under', groups: ['PITCHER_START', 'PITCHER_RELIEF', 'PITCHER'] },
+    { stat: 'earned_runs',         label: 'ER', thresholds: [0, 1, 2], direction: 'under', groups: ['PITCHER_START', 'PITCHER_RELIEF', 'PITCHER'] },
   ];
 
   const NHL_THRESHOLDS = [
@@ -292,7 +292,7 @@ const EDGE_PROP_TRENDS = (() => {
     )).sort();
 
     const recent = seq.slice(-5).map(x => ({
-      date: String(x.date).slice(0, 10),
+      date: (window.EDGE_TIME ? window.EDGE_TIME.gameDay(x.date) : null) || String(x.date).slice(0, 10),
       value: x.value,
       hit: isUnder ? x.value <= limit : x.value >= limit,
       opponent: group.opponent,
