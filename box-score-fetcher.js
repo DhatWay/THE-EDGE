@@ -73,8 +73,20 @@ const EDGE_BOXSCORE = (() => {
   // string so any page that loads the module can print it.
   // Non-partial on purpose — PostgREST's on_conflict clause
   // cannot target a partial index.
-  const SCHEMA_SQL = `create unique index if not exists player_game_stats_unique_idx
+  // The index cannot be built while old one-row-per-category
+  // duplicates exist, so those games are deleted first; the next
+  // Fetch Box Scores run refetches them as one row per player.
+  const SCHEMA_SQL = `alter table public.player_game_stats add column if not exists position text;
+alter table public.player_game_stats add column if not exists position_group text;
+delete from public.player_game_stats where game_id in (
+  select game_id from public.player_game_stats group by game_id, player_id having count(*) > 1
+);
+create unique index if not exists player_game_stats_unique_idx
   on public.player_game_stats (game_id, player_id);`;
+
+  // Columns added after the table was first created. A missing one
+  // is left out of the write instead of failing every insert.
+  const OPTIONAL_COLUMNS = ['position', 'position_group'];
 
   return {
     BUILD,
@@ -138,6 +150,7 @@ const EDGE_BOXSCORE = (() => {
     const retry = retryable.filter(g => (existing.get(g.game_id) || 0) < MIN_ROWS_PER_GAME);
 
     log(`  ${pending.length} never fetched · ${retry.length} partial (retrying)`);
+    const missingCols = await probeOptionalColumns(url, key, log);
 
     const queue = [...pending, ...retry];
     if (!queue.length) {
@@ -168,7 +181,7 @@ const EDGE_BOXSCORE = (() => {
 
       if (buffer.length >= WRITE_CHUNK) {
         const chunk = buffer.splice(0, WRITE_CHUNK);
-        const n = await writeRows(url, key, chunk, log);
+        const n = await writeRows(url, key, chunk, log, missingCols);
         written += n;
       }
 
@@ -178,7 +191,7 @@ const EDGE_BOXSCORE = (() => {
     });
 
     if (buffer.length) {
-      const n = await writeRows(url, key, buffer, log);
+      const n = await writeRows(url, key, buffer, log, missingCols);
       written += n;
     }
 
@@ -363,9 +376,12 @@ const EDGE_BOXSCORE = (() => {
 
       // Subsequent row. Fill every stat column that was null
       // on the target. Identity columns are left alone.
+      // A start in any category is a start.
+      if (r.starter === true) target.starter = true;
+
       for (const k of Object.keys(r)) {
         if (k === 'game_id' || k === 'player_id') continue;
-        if (k === 'raw') continue;
+        if (k === 'raw' || k === 'starter') continue;
 
         if (r[k] == null) continue;
         if (target[k] == null) {
@@ -596,9 +612,32 @@ const EDGE_BOXSCORE = (() => {
   // rejects the batch with "cannot affect row a second time."
   // ============================================================
 
-  async function writeRows(url, key, rows, log) {
-    if (!rows.length) return 0;
+  async function probeOptionalColumns(url, key, log) {
+    const missing = new Set();
+    for (const col of OPTIONAL_COLUMNS) {
+      try {
+        const res = await fetch(`${url}/rest/v1/player_game_stats?select=${col}&limit=1`, {
+          headers: { apikey: key, Authorization: `Bearer ${key}` },
+        });
+        if (!res.ok) missing.add(col);
+      } catch { missing.add(col); }
+    }
+    if (missing.size) {
+      log(`  player_game_stats has no ${Array.from(missing).join(', ')} column — written without it. Run the migration SQL.`);
+    }
+    return missing;
+  }
+
+  async function writeRows(url, key, rowsIn, log, missingCols = null) {
+    if (!rowsIn.length) return 0;
     let written = 0;
+    const rows = (missingCols && missingCols.size)
+      ? rowsIn.map(r => {
+          const o = {};
+          Object.keys(r).forEach(k => { if (!missingCols.has(k)) o[k] = r[k]; });
+          return o;
+        })
+      : rowsIn;
 
     for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
       const chunk = rows.slice(i, i + WRITE_CHUNK);
@@ -650,7 +689,8 @@ const EDGE_BOXSCORE = (() => {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
 
-    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') {
+    // WNBA plays inside a calendar year, like MLB and MLS.
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
       return String(m >= 9 ? y : y - 1);
     }
     if (sport === 'NFL' || sport === 'NCAAF') {
