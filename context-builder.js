@@ -73,7 +73,11 @@ const EDGE_CONTEXT = (() => {
   const WEATHER_CACHE_KEY = 'edge_weather_cache_v1';
   const WEATHER_CACHE_MAX = 400;
 
-  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v3';
+  // v4: preseason games are no longer cached as played games.
+  const SCHEDULE_CACHE_KEY = 'edge_schedule_cache_v4';
+
+  // Regular-season length, for season progress.
+  const SEASON_LENGTH = { NFL: 17, NCAAF: 12, NBA: 82, WNBA: 44, NCAAB: 31, MLB: 162, NHL: 82, MLS: 34 };
   const SCHEDULE_CACHE_MAX = 900;
 
   const SESSION_TTL_MS = 5 * 60 * 1000;
@@ -404,6 +408,7 @@ const EDGE_CONTEXT = (() => {
     ctx.playedBeforeByTeam        = schedule.playedBeforeByTeam || {};
     ctx.lostLastMeetingByTeam     = schedule.lostLastMeetingByTeam || {};
     ctx.seasonProgressByGame      = schedule.seasonProgressByGame || {};
+    fillFromHistory(ctx, games);
 
     games.forEach(g => {
       const sport = g._sport || g.sport;
@@ -508,6 +513,15 @@ const EDGE_CONTEXT = (() => {
       {
         url:
           `${url}/rest/v1/line_history?select=game_id,spread,total,ml,public_pct,sharp_pct,source,created_at` +
+          `&game_id=in.(${inList})&source=eq.${encodeURIComponent(source)}&order=created_at.asc`,
+        tag: 'source-filtered',
+      },
+      {
+        // Same source filter without public_pct / sharp_pct, which
+        // nothing writes. When those columns do not exist, the
+        // query above fails and this one keeps the filter.
+        url:
+          `${url}/rest/v1/line_history?select=game_id,spread,total,ml,source,created_at` +
           `&game_id=in.(${inList})&source=eq.${encodeURIComponent(source)}&order=created_at.asc`,
         tag: 'source-filtered',
       },
@@ -707,6 +721,7 @@ const EDGE_CONTEXT = (() => {
 
       // Now walk the target games and attach the values the
       // trends engine reads.
+      const windowStart = new Date(Date.now() - REST_LOOKBACK_DAYS * 86400000);
       games.forEach(g => {
         if ((g._sport || g.sport) !== sport) return;
         const when = new Date(g.commence_time || g.time);
@@ -716,85 +731,117 @@ const EDGE_CONTEXT = (() => {
         const away = g.away_team || g.away;
         const homeNorm = normalizeTeam(sport, home);
         const awayNorm = normalizeTeam(sport, away);
+        const involves = (e, n) => normalizeTeam(sport, e.home) === n || normalizeTeam(sport, e.away) === n;
 
-        // playedBefore / lostLastMeeting
+        // Head to head inside the window. Older meetings are filled
+        // from matchup_ats in buildContext.
         const pairKey = [homeNorm, awayNorm].sort().join('|');
-        const meetings = metBefore.get(pairKey) || [];
-        const priorMeetings = meetings.filter(m => new Date(m.date) < when);
-
+        const priorMeetings = (metBefore.get(pairKey) || []).filter(m => new Date(m.date) < when);
         if (priorMeetings.length) {
           const lastMeet = priorMeetings[priorMeetings.length - 1];
           const homeWasHome = normalizeTeam(sport, lastMeet.home) === homeNorm;
           const homeMargin = lastMeet.homeScore != null && lastMeet.awayScore != null
             ? (homeWasHome ? lastMeet.homeScore - lastMeet.awayScore : lastMeet.awayScore - lastMeet.homeScore)
             : null;
-
           out.playedBeforeByTeam[`${sport}:${home}`] = true;
           out.playedBeforeByTeam[`${sport}:${away}`] = true;
-          out.lostLastMeetingByTeam[`${sport}:${home}`] = homeMargin != null && homeMargin < 0;
-          out.lostLastMeetingByTeam[`${sport}:${away}`] = homeMargin != null && homeMargin > 0;
+          if (homeMargin != null) {
+            out.lostLastMeetingByTeam[`${sport}:${home}`] = homeMargin < 0;
+            out.lostLastMeetingByTeam[`${sport}:${away}`] = homeMargin > 0;
+          }
         }
 
-        // Count games played by each team before this kickoff.
-        const homeBefore = schedule.filter(e =>
-          new Date(e.date) < when &&
-          (normalizeTeam(sport, e.home) === homeNorm || normalizeTeam(sport, e.away) === homeNorm)
-        ).length;
-        const awayBefore = schedule.filter(e =>
-          new Date(e.date) < when &&
-          (normalizeTeam(sport, e.home) === awayNorm || normalizeTeam(sport, e.away) === awayNorm)
-        ).length;
+        // Game of season counts only this season's games, and only
+        // when the whole season so far sits inside the 60-day
+        // window. Later in a long season (MLB in September) the
+        // window holds a fraction of the games, so the count is left
+        // for buildContext to take from team_ats.
+        const seasonStart = window.EDGE_POWER?.seasonStart ? window.EDGE_POWER.seasonStart(sport, when) : null;
+        const covered = !!(seasonStart && seasonStart >= windowStart);
+        const thisSeason = e => {
+          const t = new Date(e.date);
+          return t < when && (!seasonStart || t >= seasonStart);
+        };
 
-        out.gameOfSeasonByTeam[`${sport}:${home}`] = homeBefore + 1;
-        out.gameOfSeasonByTeam[`${sport}:${away}`] = awayBefore + 1;
+        if (covered) {
+          const homeBefore = schedule.filter(e => thisSeason(e) && involves(e, homeNorm)).length;
+          const awayBefore = schedule.filter(e => thisSeason(e) && involves(e, awayNorm)).length;
+          const homeHomeBefore = schedule.filter(e => thisSeason(e) && normalizeTeam(sport, e.home) === homeNorm).length;
 
-        const homeHomeBefore = schedule.filter(e =>
-          new Date(e.date) < when &&
-          normalizeTeam(sport, e.home) === homeNorm
-        ).length;
-        const awayHomeBefore = schedule.filter(e =>
-          new Date(e.date) < when &&
-          normalizeTeam(sport, e.home) === awayNorm
-        ).length;
+          out.gameOfSeasonByTeam[`${sport}:${home}`] = homeBefore + 1;
+          out.gameOfSeasonByTeam[`${sport}:${away}`] = awayBefore + 1;
+          out.homeGameOfSeasonByTeam[`${sport}:${home}`] = homeHomeBefore + 1;
+          if (SEASON_LENGTH[sport]) {
+            out.seasonProgressByGame[g.id] = Math.min((homeBefore + 1) / SEASON_LENGTH[sport], 1);
+          }
+        }
 
-        out.homeGameOfSeasonByTeam[`${sport}:${home}`] = homeHomeBefore + 1;
-        out.homeGameOfSeasonByTeam[`${sport}:${away}`] = awayHomeBefore + 1;
-
-        // Previous result and margin for each team.
-        for (const [side, teamNorm, teamFull] of [
-          ['home', homeNorm, home],
-          ['away', awayNorm, away],
-        ]) {
-          const prev = schedule
-            .filter(e =>
-              new Date(e.date) < when &&
-              (normalizeTeam(sport, e.home) === teamNorm || normalizeTeam(sport, e.away) === teamNorm)
-            )
-            .slice(-1)[0];
-
+        // Previous result and margin — the team's last game, when it
+        // was within 30 days (the same rule rest uses).
+        for (const [teamNorm, teamFull] of [[homeNorm, home], [awayNorm, away]]) {
+          const prev = schedule.filter(e => new Date(e.date) < when && involves(e, teamNorm)).slice(-1)[0];
           if (!prev || prev.homeScore == null || prev.awayScore == null) continue;
-
+          if ((when - new Date(prev.date)) > 30 * 86400000) continue;
           const wasHome = normalizeTeam(sport, prev.home) === teamNorm;
-          const margin = wasHome
-            ? prev.homeScore - prev.awayScore
-            : prev.awayScore - prev.homeScore;
-
+          const margin = wasHome ? prev.homeScore - prev.awayScore : prev.awayScore - prev.homeScore;
           out.prevResultByTeam[`${sport}:${teamFull}`] = margin > 0 ? 'W' : margin < 0 ? 'L' : 'T';
           out.prevMarginByTeam[`${sport}:${teamFull}`] = margin;
         }
-
-        // Season progress: how far into the season is this game
-        // for the home team. Uses the team's games played so far
-        // divided by a nominal full season, capped at 1.
-        const homeGamesSoFar = homeBefore + 1;
-        const seasonLengthGuess = {
-          NFL: 17, NCAAF: 12, NBA: 82, NCAAB: 30, NHL: 82, MLB: 162, MLS: 34, WNBA: 40,
-        }[sport] || 30;
-        out.seasonProgressByGame[g.id] = Math.min(homeGamesSoFar / seasonLengthGuess, 1);
       });
     }
 
     return out;
+  }
+
+  // Game of season late in a long season comes from team_ats's
+  // current-season record (games with a line) plus one. Revenge
+  // uses matchup_ats's last meeting when the pair has not met in
+  // the last 60 days.
+  function fillFromHistory(ctx, games) {
+    games.forEach(g => {
+      const sport = g._sport || g.sport;
+      const when = new Date(g.commence_time || g.time);
+      const home = g.home_team || g.home;
+      const away = g.away_team || g.away;
+      if (!sport || !home || !away || isNaN(when)) return;
+
+      const label = window.EDGE_POWER?.seasonLabel ? String(window.EDGE_POWER.seasonLabel(sport, when)) : null;
+
+      [[home, true], [away, false]].forEach(([team, isHome]) => {
+        const k = `${sport}:${team}`;
+        if (ctx.gameOfSeasonByTeam[k] != null) return;
+        const ats = ctx.atsByTeam?.[k];
+        if (!ats || !label || String(ats.season_label) !== label) return;
+        const played = (ats.season_wins || 0) + (ats.season_losses || 0) + (ats.season_pushes || 0);
+        ctx.gameOfSeasonByTeam[k] = played + 1;
+        if (isHome) ctx.homeGameOfSeasonByTeam[k] = (ats.home_wins || 0) + (ats.home_losses || 0) + 1;
+      });
+
+      const homeGos = ctx.gameOfSeasonByTeam[`${sport}:${home}`];
+      if (ctx.seasonProgressByGame[g.id] == null && homeGos != null && SEASON_LENGTH[sport]) {
+        ctx.seasonProgressByGame[g.id] = Math.min(homeGos / SEASON_LENGTH[sport], 1);
+      }
+
+      const hk = `${sport}:${home}`, ak = `${sport}:${away}`;
+      if (ctx.playedBeforeByTeam[hk] == null) {
+        const h2h = ctx.h2hByGame?.[g.id];
+        const meetings = Array.isArray(h2h?.recent_meetings) ? h2h.recent_meetings : [];
+        if ((h2h?.meetings || 0) > 0 || meetings.length) {
+          ctx.playedBeforeByTeam[hk] = true;
+          ctx.playedBeforeByTeam[ak] = true;
+          const last = meetings[meetings.length - 1];
+          if (last && typeof last.score === 'string' && last.score.includes('-')) {
+            const [hs, as] = last.score.split('-').map(Number);
+            if (isFinite(hs) && isFinite(as) && hs !== as) {
+              const homeWasHome = normalizeTeam(sport, last.home) === normalizeTeam(sport, home);
+              const homeWon = homeWasHome ? hs > as : as > hs;
+              ctx.lostLastMeetingByTeam[hk] = !homeWon;
+              ctx.lostLastMeetingByTeam[ak] = homeWon;
+            }
+          }
+        }
+      }
+    });
   }
 
   // Fetch one day's events for one sport. Cache per (path,
@@ -849,6 +896,9 @@ const EDGE_CONTEXT = (() => {
         const comp = e.competitions?.[0];
         if (!comp) return;
         if (comp.status?.type?.completed !== true) return;
+        // Preseason is not the season: it inflated game-of-season
+        // (an NFL Week 1 game counted as game 4) and rest.
+        if ((e.season?.type ?? comp.season?.type) === 1) return;
         const h = comp.competitors?.find(c => c.homeAway === 'home');
         const a = comp.competitors?.find(c => c.homeAway === 'away');
         if (!h || !a) return;
@@ -1034,7 +1084,7 @@ const EDGE_CONTEXT = (() => {
       const sportGames = gamesBySport[sport];
 
       const atsRows = await fetchAll(
-        `${url}/rest/v1/team_ats?sport=eq.${sport}&select=*&limit=1000`,
+        `${url}/rest/v1/team_ats?sport=eq.${sport}&select=*&order=team_name.asc`,
         key
       );
 
@@ -1060,7 +1110,7 @@ const EDGE_CONTEXT = (() => {
       });
 
       const h2hRows = await fetchAll(
-        `${url}/rest/v1/matchup_ats?sport=eq.${sport}&select=*&limit=5000`,
+        `${url}/rest/v1/matchup_ats?sport=eq.${sport}&select=*&order=team_a.asc,team_b.asc`,
         key
       );
 
@@ -1089,14 +1139,23 @@ const EDGE_CONTEXT = (() => {
     return out;
   }
 
+  // Paged. Supabase returns at most 1,000 rows per request.
   async function fetchAll(url, key) {
+    const out = [];
+    const pageSize = 1000;
     try {
-      const res = await fetch(url, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
-      return res.ok ? await res.json() : [];
+      for (let offset = 0; offset < 200000; offset += pageSize) {
+        const res = await fetch(`${url}&limit=${pageSize}&offset=${offset}`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) break;
+        const rows = await res.json();
+        out.push(...rows);
+        if (rows.length < pageSize) break;
+      }
     } catch (e) {
       logEdgeError('context.fetchAll', e);
-      return [];
     }
+    return out;
   }
 
   function normalizeTeam(sport, name) {
@@ -1115,7 +1174,8 @@ const EDGE_CONTEXT = (() => {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
 
-    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') {
+    // WNBA plays inside a calendar year, like MLB and MLS.
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
       return String(m >= 9 ? y : y - 1);
     }
     if (sport === 'NFL' || sport === 'NCAAF') {
@@ -1227,11 +1287,20 @@ const EDGE_CONTEXT = (() => {
     return Math.round((homeCoord[1] - awayCoord[1]) / 15);
   }
 
+  // 'YYYY-MM-DD' on the US Eastern calendar — the day ESPN files
+  // a game under.
   function fmtDate(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    if (window.EDGE_TIME) return window.EDGE_TIME.gameDay(d);
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(d);
+    } catch {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
   }
 
   async function parallelMap(items, concurrency, fn) {
