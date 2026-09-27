@@ -12,6 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -326,7 +327,10 @@
     let currentFilter = 'all';
     let allLines = [];
     let currentSource = 'consensus';
-    const CACHE_TTL_MS = 5 * 60 * 1000;
+    // One real Odds API pull at most every 15 minutes while the page
+    // is open, and none while it is in the background. At 5 minutes
+    // an open page cost about 84 calls an hour.
+    const CACHE_TTL_MS = 15 * 60 * 1000;
 
     function activeBook() {
       return (localStorage.getItem('edge_book_key') || '').trim().toLowerCase();
@@ -771,6 +775,7 @@
     // ── AUTO REFRESH ──
     function scheduleRefresh() {
       setTimeout(() => {
+        if (document.hidden) { scheduleRefresh(); return; }
         fetchLines().then(scheduleRefresh);
       }, 60000);
     }
