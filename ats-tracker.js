@@ -475,6 +475,32 @@ const EDGE_ATS = (() => {
   // unpriced.
   // ============================================================
 
+  async function fetchAllRows(baseUrl, headers, pageSize = 1000, maxRows = 500000) {
+    const out = [];
+    for (let offset = 0; offset < maxRows; offset += pageSize) {
+      const res = await fetch(`${baseUrl}&limit=${pageSize}&offset=${offset}`, { headers });
+      if (!res.ok) {
+        if (offset === 0) throw new Error(`HTTP ${res.status}`);
+        break;
+      }
+      const rows = await res.json();
+      out.push(...rows);
+      if (rows.length < pageSize) break;
+    }
+    return out;
+  }
+
+  // The Eastern date a game is played on (see edge-time.js). A UTC
+  // slice put every game after 8pm Eastern on the next day.
+  function gameDayOf(iso) {
+    if (window.EDGE_TIME) return window.EDGE_TIME.gameDay(iso);
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date(iso));
+    } catch { return String(iso).slice(0, 10); }
+  }
+
   async function loadCachedOdds(sport, url, key, canReadOpen) {
     const out = {};
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
@@ -483,29 +509,25 @@ const EDGE_ATS = (() => {
       ? 'game_id,spread,total,home_ml,away_ml,open_spread'
       : 'game_id,spread,total,home_ml,away_ml';
 
+    // Paged: Supabase returns at most 1,000 rows per request. A
+    // single read left every game past the first thousand looking
+    // uncached, so each run re-resolved them and built team_ats on
+    // a different subset.
     try {
-      const res = await fetch(
-        `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=${cols}&limit=50000`,
-        { headers }
-      );
-      if (res.ok) {
-        const rows = await res.json();
-        rows.forEach(r => {
-          if (r.spread != null) out[r.game_id] = r;
-        });
-      }
+      const rows = await fetchAllRows(
+        `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=${cols}&order=game_id.asc`, headers);
+      rows.forEach(r => {
+        if (r.spread != null) out[String(r.game_id)] = r;
+      });
     } catch (e) { logEdgeError('ats.loadCachedOdds.historical.' + sport, e); }
 
     // line_history fallback. Resolve every id in one pass so the
     // per-row merges do not call the resolver individually.
     try {
-      const res = await fetch(
+      const rows = await fetchAllRows(
         `${url}/rest/v1/line_history?sport=eq.${sport}` +
-        `&select=game_id,spread,total,ml,created_at&order=created_at.asc&limit=50000`,
-        { headers }
-      );
-      if (res.ok) {
-        const rows = await res.json();
+        `&select=game_id,spread,total,ml,created_at&order=created_at.asc`, headers);
+      {
 
         const oddsIds = Array.from(new Set(rows.map(r => r.game_id).filter(Boolean)));
         const resolved = await resolveAll(oddsIds);
@@ -683,7 +705,7 @@ const EDGE_ATS = (() => {
     const bTotal = bW + bL;
 
     const log = recent.slice(-5).map(g => ({
-      date: g.date.slice(0, 10),
+      date: gameDayOf(g.date),
       home: g.home,
       away: g.away,
       score: `${g.home_score}-${g.away_score}`,
