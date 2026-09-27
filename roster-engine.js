@@ -207,9 +207,14 @@ const EDGE_ROSTER_ENGINE = (() => {
 
     const rows = [];
     let rosterMisses = 0;
+    // Teams whose roster actually came back. Players are only
+    // removed as "dropped" from these teams, so a failed fetch
+    // does not delete a whole roster.
+    const fetchedTeamIds = new Set();
     await parallelMap(teams, FETCH_CONCURRENCY, async team => {
       const athletes = await fetchRoster(path, team.id);
       if (!athletes.length) { rosterMisses++; return; }
+      fetchedTeamIds.add(String(team.id));
       rows.push(...buildTeamRows(sport, team, athletes));
     });
 
@@ -217,7 +222,7 @@ const EDGE_ROSTER_ENGINE = (() => {
     if (rosterMisses) log(`  ${rosterMisses} teams returned empty rosters`);
     if (!rows.length) return { teams: teams.length, players_written: 0, enrichment_preserved: 0 };
 
-    const result = await upsertPlayers(url, key, sport, rows, existing, log);
+    const result = await upsertPlayers(url, key, sport, rows, existing, log, fetchedTeamIds);
     log(`  wrote ${result.written} players · ${result.preserved} ratings preserved`);
 
     return {
@@ -459,7 +464,7 @@ const EDGE_ROSTER_ENGINE = (() => {
       try {
         const res = await fetch(
           `${url}/rest/v1/players?sport=eq.${sport}` +
-          `&select=id,player_id,rating,position_group,is_starter,offensive_contribution,defensive_contribution` +
+          `&select=id,player_id,team_id,rating,position_group,is_starter,offensive_contribution,defensive_contribution` +
           `&order=id.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
@@ -468,6 +473,7 @@ const EDGE_ROSTER_ENGINE = (() => {
         rows.forEach(r => {
           out.set(String(r.player_id), {
             id: r.id,
+            team_id: r.team_id,
             rating: r.rating,
             position_group: r.position_group,
             is_starter: r.is_starter,
@@ -495,7 +501,7 @@ const EDGE_ROSTER_ENGINE = (() => {
   // inserted. Players who dropped off the roster are deleted.
   // ============================================================
 
-  async function upsertPlayers(url, key, sport, rows, existing, log) {
+  async function upsertPlayers(url, key, sport, rows, existing, log, fetchedTeamIds = null) {
     const headers = {
       apikey: key, Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
@@ -532,7 +538,7 @@ const EDGE_ROSTER_ENGINE = (() => {
         const res = await fetch(`${url}/rest/v1/players?on_conflict=player_id`, {
           method: 'POST', headers, body: JSON.stringify(chunk),
         });
-        if (res.ok || res.status === 409) {
+        if (res.ok) {
           written += chunk.length;
         } else {
           const txt = await res.text().catch(() => '');
@@ -545,7 +551,10 @@ const EDGE_ROSTER_ENGINE = (() => {
 
     // Delete players who dropped off the roster entirely.
     const incoming = new Set(rows.map(r => r.player_id));
-    const dropped = Array.from(existing.keys()).filter(id => !incoming.has(id));
+    const dropped = Array.from(existing.entries())
+      .filter(([id]) => !incoming.has(id))
+      .filter(([, prev]) => !fetchedTeamIds || prev.team_id == null || fetchedTeamIds.has(String(prev.team_id)))
+      .map(([id]) => id);
     if (dropped.length) {
       log(`  ${dropped.length} players dropped off the roster`);
       const delChunk = 200;
