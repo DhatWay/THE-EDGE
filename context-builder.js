@@ -50,7 +50,7 @@
 
 const EDGE_CONTEXT = (() => {
 
-  const BUILD = 'ctx-20260926-01';
+  const BUILD = 'ctx-20260927-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -877,20 +877,46 @@ const EDGE_CONTEXT = (() => {
     return 24 * 60 * 60 * 1000;
   }
 
+  // One day's scoreboard, raw events. College asks without a limit
+  // first — ESPN answers a limit above its cap with only the default
+  // page of 25 games. A whole number of pages (25, 50…) may still be
+  // cut off, so the day is asked again in other shapes and merged
+  // by event id. null when every request failed.
+  async function fetchScoreboardEvents(path, compact, group, plainLimit) {
+    const PAGE = 25;
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${compact}`;
+    const shapes = group
+      ? [`&groups=${group}`, '', `&groups=${group}&limit=300`, `&groups=${group}&limit=500`]
+      : [`&limit=${plainLimit}`];
+    const seen = new Map();
+    let answered = false;
+    for (let i = 0; i < shapes.length; i++) {
+      try {
+        const res = await fetch(base + shapes[i], { cache: 'no-store' });
+        if (res.headers.get('x-edge-offline') === '1' || !res.ok) continue;
+        answered = true;
+        const events = (await res.json()).events || [];
+        events.forEach(e => {
+          const k = e?.id ?? `noid:${seen.size}`;
+          if (!seen.has(k)) seen.set(k, e);
+        });
+        if (i === 0 && events.length % PAGE !== 0) break;
+      } catch {}
+    }
+    return answered ? Array.from(seen.values()) : null;
+  }
+
   async function fetchEspnDay(path, dateStr, sport) {
     const group = /college-football/.test(path) ? 80
                 : /college-basketball/.test(path) ? 50
                 : null;
 
     const compact = dateStr.replace(/-/g, '');
-    let url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${compact}&limit=200`;
-    if (group) url += `&groups=${group}`;
 
     try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (res.headers.get('x-edge-offline') === '1') return [];
-      if (!res.ok) return [];
-      const data = await res.json();
+      const events = await fetchScoreboardEvents(path, compact, group, 200);
+      if (!events) return [];
+      const data = { events };
       const out = [];
       (data.events || []).forEach(e => {
         const comp = e.competitions?.[0];
