@@ -376,14 +376,27 @@ const EDGE_BACKFILL = (() => {
     const out = {};
     if (!url || !key) return out;
     try {
-      const res = await fetch(
+      const rows = await fetchAllRows(
         `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=game_id,spread` +
-        `&game_date=gte.${from.toISOString()}&game_date=lte.${to.toISOString()}&limit=20000`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
-      if (res.ok) {
-        (await res.json()).forEach(r => { if (r.spread != null) out[r.game_id] = r.spread; });
-      }
+        `&game_date=gte.${from.toISOString()}&game_date=lte.${to.toISOString()}&order=game_id.asc`, key);
+      rows.forEach(r => { if (r.spread != null) out[String(r.game_id)] = r.spread; });
     } catch {}
+    return out;
+  }
+
+  // Paged read. Supabase returns at most 1,000 rows per request no
+  // matter what limit is asked for.
+  async function fetchAllRows(base, key, maxRows = 200000) {
+    const out = [];
+    const pageSize = 1000;
+    for (let offset = 0; offset < maxRows; offset += pageSize) {
+      const res = await fetch(`${base}&limit=${pageSize}&offset=${offset}`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (!res.ok) { if (offset === 0) throw new Error('HTTP ' + res.status); break; }
+      const rows = await res.json();
+      out.push(...rows);
+      if (rows.length < pageSize) break;
+    }
     return out;
   }
 
