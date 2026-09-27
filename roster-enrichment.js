@@ -598,7 +598,8 @@ const EDGE_ROSTER_ENRICH = (() => {
     const m = date.getMonth() + 1;
     const y = date.getFullYear();
 
-    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB' || sport === 'WNBA') {
+    // WNBA plays inside a calendar year, like MLB and MLS.
+    if (sport === 'NBA' || sport === 'NHL' || sport === 'NCAAB') {
       return String(m >= 9 ? y : y - 1);
     }
     if (sport === 'NFL' || sport === 'NCAAF') {
