@@ -121,6 +121,16 @@
     .pipeline-log { background: var(--bg4); border: 1px solid var(--border); padding: 12px 14px; font-family: 'Barlow', monospace; font-size: 11px; color: var(--text-mid); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
     .pipeline-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 8px; }
 
+    .sport-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sport-chip { background: none; border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; padding: 9px 12px; cursor: pointer; transition: all 0.15s; }
+    .sport-chip:hover { border-color: var(--gold); color: var(--gold); }
+    .sport-chip.on { background: var(--gold); border-color: var(--gold); color: #000; }
+    .sport-chip.in-season::after { content: '●'; font-size: 8px; margin-left: 5px; vertical-align: 2px; color: var(--green); }
+    .sport-chip.on.in-season::after { color: #000; }
+    .sport-presets { display: flex; gap: 6px; margin-top: 10px; }
+    .sport-presets .pipeline-btn { flex: 1; font-size: 14px; padding: 9px 10px; }
+    .sport-summary { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 8px; }
+
     .result-form { display: flex; flex-direction: column; gap: 10px; }
     .form-row { display: flex; gap: 8px; }
     .form-input { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 14px; padding: 10px 12px; }
@@ -241,10 +251,26 @@
 
       <div class="pipeline-panel">
         <div class="pipeline-head">
+          <div class="pipeline-title">Sports</div>
+        </div>
+        <div class="pipeline-desc">
+          Every data job below, and Full Data Refresh, runs only the sports selected here. A green dot marks a sport that is in season. Your choice is remembered on this device.
+        </div>
+        <div class="sport-picker" id="sportPicker"></div>
+        <div class="sport-presets">
+          <button class="pipeline-btn secondary" onclick="setSportPreset('season')">In Season</button>
+          <button class="pipeline-btn secondary" onclick="setSportPreset('all')">All</button>
+          <button class="pipeline-btn secondary" onclick="setSportPreset('none')">None</button>
+        </div>
+        <div class="sport-summary" id="sportSummary"></div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks → Grade Sim Bets.
+          Runs every data stage in order, for the sports selected above: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks → Grade Sim Bets.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -270,7 +296,7 @@
           <div class="pipeline-title">Power Ratings</div>
         </div>
         <div class="pipeline-desc">
-          Fetches ESPN data for all in-season sports, computes team + coaching + defense matchup ratings, upserts to Supabase.
+          Fetches ESPN data for the selected sports that are in season, computes team + coaching + defense matchup ratings, upserts to Supabase. Other sports' ratings are left as they are.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn secondary" id="runPowerBtn" onclick="runPowerRatings()">▲ Recompute Ratings</button>
@@ -807,6 +833,92 @@
       showToast(`Learning: ${result.families_updated} families updated`, 'blue');
     }
 
+    // ============================================================
+    // ── SPORT PICKER ──
+    // One selection for every data job. Starts with the sports in
+    // season; after that, whatever was last chosen on this device.
+    // ============================================================
+
+    const ALL_SPORTS = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'];
+    const SPORTS_KEY = 'edge_admin_sports';
+    let selectedSports = null;
+
+    function inSeasonSports() {
+      if (!window.EDGE_POWER || typeof window.EDGE_POWER.isSportInSeason !== 'function') return ALL_SPORTS.slice();
+      return ALL_SPORTS.filter(s => {
+        try { return window.EDGE_POWER.isSportInSeason(s); } catch { return true; }
+      });
+    }
+
+    function loadSportSelection() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(SPORTS_KEY) || 'null');
+        if (Array.isArray(saved)) return saved.filter(s => ALL_SPORTS.includes(s));
+      } catch {}
+      return inSeasonSports();
+    }
+
+    function saveSportSelection() {
+      try { localStorage.setItem(SPORTS_KEY, JSON.stringify(selectedSports)); } catch {}
+    }
+
+    function renderSportPicker() {
+      if (!selectedSports) selectedSports = loadSportSelection();
+      const box = document.getElementById('sportPicker');
+      if (!box) return;
+      const season = new Set(inSeasonSports());
+      box.innerHTML = ALL_SPORTS.map(s =>
+        `<button class="sport-chip${selectedSports.includes(s) ? ' on' : ''}${season.has(s) ? ' in-season' : ''}" onclick="toggleSport('${s}')">${s}</button>`
+      ).join('');
+      const summary = document.getElementById('sportSummary');
+      if (summary) {
+        const chosen = ALL_SPORTS.filter(s => selectedSports.includes(s));
+        summary.textContent = chosen.length
+          ? `Jobs will run: ${chosen.join(' · ')}`
+          : 'No sport selected — data jobs will not run';
+      }
+    }
+
+    function toggleSport(sport) {
+      if (!selectedSports) selectedSports = loadSportSelection();
+      selectedSports = selectedSports.includes(sport)
+        ? selectedSports.filter(s => s !== sport)
+        : selectedSports.concat(sport);
+      saveSportSelection();
+      renderSportPicker();
+    }
+
+    function setSportPreset(preset) {
+      selectedSports = preset === 'all' ? ALL_SPORTS.slice()
+                     : preset === 'none' ? []
+                     : inSeasonSports();
+      saveSportSelection();
+      renderSportPicker();
+    }
+
+    // The selected sports a job can run, in a fixed order. `supported`
+    // is the job's own list when it covers fewer than all eight.
+    function jobSports(supported = null) {
+      if (!selectedSports) selectedSports = loadSportSelection();
+      return ALL_SPORTS.filter(s => selectedSports.includes(s) && (!supported || supported.includes(s)));
+    }
+
+    // Stops a job before it starts when none of its sports are
+    // selected. Returns the sports to run, or null.
+    function sportsOrStop(logEl, silent, supported = null) {
+      const sports = jobSports(supported);
+      if (sports.length) return sports;
+      const msg = supported
+        ? `None of the selected sports apply here (${supported.join(', ')}).`
+        : 'No sport selected — pick at least one under Sports.';
+      if (logEl) logEl.textContent = msg;
+      if (!silent) showToast('Select a sport under Sports', 'error');
+      return null;
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderSportPicker);
+    else renderSportPicker();
+
     async function runPowerRatings(silent = false) {
       const btn = document.getElementById('runPowerBtn');
       const logEl = document.getElementById('powerLog');
@@ -814,7 +926,12 @@
 
       if (!window.EDGE_POWER) { showToast('Power engine not loaded', 'error'); return; }
 
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) { if (!silent) btn.disabled = false; return; }
+      if (!silent) logEl.textContent += `Sports: ${sports.join(', ')}\n`;
+
       const result = await window.EDGE_POWER.computeAllTeamRatings({
+        sports,
         onProgress: silent ? null : (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -846,9 +963,12 @@
       const btn = document.getElementById('runRosterBtn');
       const logEl = document.getElementById('rosterLog');
       if (!window.EDGE_ROSTER) { showToast('Roster engine not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching rosters…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching rosters…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_ROSTER.buildAll({
+        sports,
         onProgress: silent ? null : (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -869,9 +989,12 @@
       const btn = document.getElementById('runEnrichBtn');
       const logEl = document.getElementById('enrichLog');
       if (!window.EDGE_ROSTER_ENRICH) { showToast('Enrichment engine not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching player stats…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Fetching player stats…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_ROSTER_ENRICH.enrichAll({
+        sports,
         onProgress: silent ? null : (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -893,9 +1016,12 @@
       const btn = document.getElementById('runAtsBtn');
       const logEl = document.getElementById('atsLog');
       if (!window.EDGE_ATS) { showToast('ATS tracker not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Building ATS tables…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Building ATS tables…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_ATS.buildAll({
+        sports,
         onProgress: silent ? null : (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -925,6 +1051,8 @@
       const btn = document.getElementById('runScoreBtn');
       const logEl = document.getElementById('scoreLog');
       if (!window.EDGE_SCORE_BACKFILL) { showToast('Score backfill not loaded', 'error'); return; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
 
       let force = false;
       if (!silent) {
@@ -937,10 +1065,10 @@
         );
       }
 
-      if (!silent) { btn.disabled = true; logEl.textContent = force ? 'Force backfill — scores will be overwritten…\n' : 'Backfilling scores…\n'; }
+      if (!silent) { btn.disabled = true; logEl.textContent = (force ? 'Force backfill — scores will be overwritten…\n' : 'Backfilling scores…\n') + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_SCORE_BACKFILL.buildAll({
-        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+        sports,
         force,
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
@@ -970,7 +1098,9 @@
       const btn = document.getElementById('runBackfillBtn');
       const logEl = document.getElementById('backfillLog');
       if (!window.EDGE_BACKFILL) { showToast('backfill.js not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Backfilling seasons…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Backfilling seasons…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const log = (msg) => {
         logEl.textContent += msg + '\n';
@@ -980,7 +1110,7 @@
       let result;
       try {
         result = await window.EDGE_BACKFILL.run({
-          sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'MLS'],
+          sports,
           seasons: 3,
           onProgress: log,
         });
@@ -1003,9 +1133,12 @@
       const btn = document.getElementById('runTrendsBtn');
       const logEl = document.getElementById('trendsLog');
       if (!window.EDGE_TRENDS) { showToast('Trends engine not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Mining historical trends…\n'; }
+      const sports = sportsOrStop(logEl, silent, ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS']);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Mining historical trends…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_TRENDS.buildAll({
+        sports,
         onProgress: silent ? null : (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -1024,10 +1157,12 @@
       const btn = document.getElementById('runBoxScoreBtn');
       const logEl = document.getElementById('boxScoreLog');
       if (!window.EDGE_BOXSCORE) { showToast('Box score fetcher not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Pulling box scores…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Pulling box scores…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_BOXSCORE.buildAll({
-        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+        sports,
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -1050,10 +1185,12 @@
       const btn = document.getElementById('runPropTrendsBtn');
       const logEl = document.getElementById('propTrendsLog');
       if (!window.EDGE_PROP_TRENDS) { showToast('Prop trends engine not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Mining prop trends…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Mining prop trends…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const result = await window.EDGE_PROP_TRENDS.buildAll({
-        sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+        sports,
         onProgress: (msg) => {
           logEl.textContent += msg + '\n';
           logEl.scrollTop = logEl.scrollHeight;
@@ -1090,7 +1227,9 @@
       const btn = document.getElementById('runGidMapBtn');
       const logEl = document.getElementById('gidMapLog');
       if (!window.EDGE_GAME_ID_MAP) { showToast('game-id-map.js not loaded', 'error'); return; }
-      if (!silent) { btn.disabled = true; logEl.textContent = 'Linking game ids…\n'; }
+      const sports = sportsOrStop(logEl, silent);
+      if (!sports) return;
+      if (!silent) { btn.disabled = true; logEl.textContent = 'Linking game ids…\n' + `Sports: ${sports.join(', ')}\n`; }
 
       const log = (msg) => {
         logEl.textContent += msg + '\n';
@@ -1109,7 +1248,7 @@
       let result;
       try {
         result = await window.EDGE_GAME_ID_MAP.populate({
-          sports: ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'MLS', 'WNBA'],
+          sports: jobSports(),
           onProgress: log,
         });
       } catch (e) {
