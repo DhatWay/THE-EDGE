@@ -50,7 +50,7 @@
 
 const EDGE_BOXSCORE = (() => {
 
-  const BUILD = 'box-20260926-01';
+  const BUILD = 'box-20260927-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -132,6 +132,14 @@ create unique index if not exists player_game_stats_unique_idx
     if (!url || !key) throw new Error('Supabase not connected');
     if (!ESPN_MAP[sport]) throw new Error(`Unknown sport: ${sport}`);
 
+    // ESPN's MLS game summaries do not carry the player box this
+    // parser reads: all 1,164 came back empty and were re-requested
+    // on every run. Skipped until a soccer parser exists.
+    if (sport === 'MLS') {
+      log('  MLS skipped — ESPN soccer summaries have no player box in this format');
+      return { games_fetched: 0, rows_written: 0, games_failed: 0, games_retried: 0, skipped: true };
+    }
+
     log('  loading game list from historical_odds');
     const games = await loadGames(sport, url, key);
     log(`  ${games.length} games on file`);
@@ -212,7 +220,7 @@ create unique index if not exists player_game_stats_unique_idx
         const res = await fetch(
           `${url}/rest/v1/historical_odds?sport=eq.${sport}` +
           `&select=game_id,home,away,game_date` +
-          `&order=game_date.asc&limit=${pageSize}&offset=${offset}`,
+          `&order=game_date.asc,game_id.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (!res.ok) break;
@@ -224,7 +232,17 @@ create unique index if not exists player_game_stats_unique_idx
         break;
       }
     }
-    return out;
+    // Ordering by game_date alone left ties (NHL games at the same
+    // 7pm start) in no fixed order, so a page boundary could return
+    // the same game twice. Fetched twice in one run, its rows landed
+    // twice in one write — Postgres error 21000. One entry per game.
+    const seen = new Set();
+    return out.filter(g => {
+      const id = String(g.game_id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
   }
 
   // Returns a Map of game_id → stored row count. Games with a
@@ -236,7 +254,7 @@ create unique index if not exists player_game_stats_unique_idx
       try {
         const res = await fetch(
           `${url}/rest/v1/player_game_stats?sport=eq.${sport}` +
-          `&select=game_id&limit=${pageSize}&offset=${offset}`,
+          `&select=game_id&order=game_id.asc,player_id.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (!res.ok) break;
@@ -576,7 +594,11 @@ create unique index if not exists player_game_stats_unique_idx
         return null;
       }
     } else if (sport === 'NHL') {
-      if (category === 'skaters') {
+      // ESPN's NHL box splits skaters into groups (forwards,
+      // defensemen) rather than one "skaters" group. Only goalies
+      // were being stored — two rows a game — so every NHL game
+      // looked partial and was refetched on every run.
+      if (category !== 'goalies') {
         row.goals           = num(stats.goals);
         row.assists         = num(stats.assists);
         row.shots           = num(stats.shots);
@@ -628,16 +650,35 @@ create unique index if not exists player_game_stats_unique_idx
     return missing;
   }
 
+  // Keeps the first row for each (game_id, player_id) and fills its
+  // empty columns from any repeat. Rows are already merged per game,
+  // so this only catches a game that reached the batch twice.
+  function dedupeBatch(rows) {
+    const byKey = new Map();
+    for (const r of rows) {
+      const k = `${r.game_id}|${r.player_id}`;
+      const t = byKey.get(k);
+      if (!t) { byKey.set(k, { ...r }); continue; }
+      for (const c of Object.keys(r)) {
+        if (t[c] == null && r[c] != null) t[c] = r[c];
+      }
+    }
+    return Array.from(byKey.values());
+  }
+
   async function writeRows(url, key, rowsIn, log, missingCols = null) {
     if (!rowsIn.length) return 0;
     let written = 0;
+    // One row per (game_id, player_id) in the batch, whatever
+    // produced it — the upsert rejects a batch that holds a key twice.
+    const deduped = dedupeBatch(rowsIn);
     const rows = (missingCols && missingCols.size)
-      ? rowsIn.map(r => {
+      ? deduped.map(r => {
           const o = {};
           Object.keys(r).forEach(k => { if (!missingCols.has(k)) o[k] = r[k]; });
           return o;
         })
-      : rowsIn;
+      : deduped;
 
     for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
       const chunk = rows.slice(i, i + WRITE_CHUNK);
