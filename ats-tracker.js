@@ -36,7 +36,7 @@
 
 const EDGE_ATS = (() => {
 
-  const BUILD = 'ats-20260926-01';
+  const BUILD = 'ats-20260927-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -73,6 +73,24 @@ const EDGE_ATS = (() => {
 
   const MAX_ODDS_LOOKUPS_PER_RUN = 1200;
   const ODDS_CONCURRENCY = 6;
+
+  // A game ESPN had no line for is asked again only while it is this
+  // recent (a line can still post). Older ones keep their row — with
+  // its score, for grading — and are not asked again every run.
+  const RECHECK_UNPRICED_DAYS = 14;
+
+  // An opening line is asked for only in the days after a game. ESPN
+  // rarely returns one, and treating every game without an open as
+  // unfinished made each run re-check the same oldest 1,200 games, so
+  // six sports never got past 2023–2026 dates.
+  const RECHECK_OPEN_DAYS = 3;
+
+  // Pro-league sides with fewer games than this share of the league's
+  // median in the window are exhibition sides (all-star teams, Pro
+  // Bowl, international events). They are left out of team_ats and
+  // matchup_ats, and their old rows removed.
+  const NON_TEAM_SHARE = 0.15;
+  const PRO_LEAGUES = new Set(['NFL', 'NBA', 'WNBA', 'MLB', 'NHL', 'MLS']);
 
   const TREND_FAMILY_SIGNAL = {
     async build(prior) {
@@ -175,28 +193,56 @@ const EDGE_ATS = (() => {
     const withOpen   = Object.values(oddsIndex).filter(r => r.open_spread != null).length;
     log(`  ${withSpread} cached spreads · ${withOpen} cached opens`);
 
+    // Games to ask ESPN about, newest first — recent games matter most
+    // to the model, and a capped run should reach them before old ones.
+    //   · no historical_odds row yet;
+    //   · a row with no line, while the game is recent;
+    //   · a row with no opening line, in the days right after the game.
+    const nowMs = Date.now();
+    const ageDays = g => (nowMs - new Date(g.date).getTime()) / 86400000;
     const missing = games.filter(g => {
       const cached = oddsIndex[g.id];
-      if (!cached) return true;
-      if (cached.spread == null) return true;
-      if (canStoreOpen && cached.open_spread == null) return true;
+      if (!cached || !cached._row) return true;
+      if (cached.spread == null || cached._source === 'line_history') return ageDays(g) <= RECHECK_UNPRICED_DAYS;
+      if (canStoreOpen && cached.open_spread == null) return ageDays(g) <= RECHECK_OPEN_DAYS;
       return false;
-    });
+    }).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const toLookup = missing.slice(0, MAX_ODDS_LOOKUPS_PER_RUN);
     let resolved = 0;
     let opensResolved = 0;
     let scoresWritten = 0;
+    let unpricedRecorded = 0;
 
     if (toLookup.length) {
-      log(`  resolving ${toLookup.length} of ${missing.length} from ESPN`);
+      log(`  resolving ${toLookup.length} of ${missing.length} from ESPN (newest first)`);
       const fresh = [];
 
       await parallelMap(toLookup, ODDS_CONCURRENCY, async g => {
         const odds = await resolveGameOdds(cfg, g.id);
-        if (!odds || odds.spread == null) return;
+        const cached = oddsIndex[g.id];
 
-        oddsIndex[g.id] = odds;
+        if (!odds || odds.spread == null) {
+          // No line from ESPN. A game with no row yet still gets one —
+          // line empty, score filled — so it is remembered instead of
+          // re-asked every run, and a pick on it can still be graded.
+          if (cached && cached._row) return;
+          const row = {
+            game_id: g.id, sport, home: g.home, away: g.away, game_date: g.date,
+            spread: null, total: null, home_ml: null, away_ml: null, provider: null,
+            updated_at: new Date().toISOString(),
+          };
+          if (canStoreOpen) row.open_spread = null;
+          row.home_score = isFinite(g.homeScore) ? g.homeScore : null;
+          row.away_score = isFinite(g.awayScore) ? g.awayScore : null;
+          fresh.push(row);
+          unpricedRecorded++;
+          // A line seen in Matchups (line_history) still counts in memory.
+          oddsIndex[g.id] = { ...(cached || { spread: null }), _row: true };
+          return;
+        }
+
+        oddsIndex[g.id] = { ...odds, _row: true };
         resolved++;
         if (odds.open_spread != null) opensResolved++;
 
@@ -221,17 +267,15 @@ const EDGE_ATS = (() => {
           updated_at: new Date().toISOString(),
         };
         if (canStoreOpen) row.open_spread = odds.open_spread ?? null;
-        if (hasScore) {
-          row.home_score = g.homeScore;
-          row.away_score = g.awayScore;
-        }
+        row.home_score = hasScore ? g.homeScore : null;
+        row.away_score = hasScore ? g.awayScore : null;
 
         fresh.push(row);
       });
 
       if (fresh.length) {
         await upsert(`${url}/rest/v1/historical_odds?on_conflict=game_id`, fresh, key, log, 'historical_odds');
-        log(`  cached ${fresh.length} lines · ${opensResolved} with an open · ${scoresWritten} with a score`);
+        log(`  cached ${resolved} lines · ${opensResolved} with an open · ${unpricedRecorded} games ESPN has no line for (recorded, not re-asked)`);
       }
       if (missing.length > toLookup.length) {
         log(`  ${missing.length - toLookup.length} still unresolved — run again to continue`);
@@ -249,10 +293,15 @@ const EDGE_ATS = (() => {
       };
     }
 
+    // Exhibition sides (pro leagues only — in college, low-game teams
+    // are real schools playing up a division).
+    const nonTeams = findNonTeams(sport, games);
+
     const teamState = {};
     const matchupState = {};
 
     priced.forEach(g => {
+      if (nonTeams.has(g.home) || nonTeams.has(g.away)) return;
       const closeSpread = oddsIndex[g.id].spread;
       const margin = g.homeScore - g.awayScore;
       const homeCoverMargin = round(margin + closeSpread, 2);
@@ -289,6 +338,12 @@ const EDGE_ATS = (() => {
     await upsert(`${url}/rest/v1/team_ats?on_conflict=sport,team_name`, teamRows, key, log, 'team_ats');
     await upsert(`${url}/rest/v1/matchup_ats?on_conflict=sport,team_a,team_b`, matchupRows, key, log, 'matchup_ats');
 
+    if (nonTeams.size) {
+      const removed = await removeNonTeamRows(sport, Array.from(nonTeams), url, key);
+      log(`  ${nonTeams.size} exhibition sides left out (${Array.from(nonTeams).slice(0, 5).join(', ')}${nonTeams.size > 5 ? '…' : ''})` +
+          (removed ? ` · old rows removed` : ''));
+    }
+
     return {
       teams_written: teamRows.length,
       matchups_written: matchupRows.length,
@@ -297,6 +352,8 @@ const EDGE_ATS = (() => {
       scores_written: scoresWritten,
       games_graded: priced.length,
       games_unpriced: games.length - priced.length,
+      unpriced_recorded: unpricedRecorded,
+      non_team_sides: nonTeams.size,
       open_spread_available: canStoreOpen,
     };
   }
@@ -414,7 +471,7 @@ const EDGE_ATS = (() => {
         away_ml: numOrNull(item.awayTeamOdds?.moneyLine),
         provider: item.provider?.name || null,
         phase: 'flat',
-        open_spread: null,
+        open_spread: teamLevelOpen(item),
       };
     }
 
@@ -430,8 +487,24 @@ const EDGE_ATS = (() => {
             ?? parsed.current?.away_ml ?? parsed.open?.away_ml ?? null,
       provider: item.provider?.name || null,
       phase: parsed.close ? 'close' : parsed.current ? 'current' : 'open',
-      open_spread: openBlock?.spread ?? null,
+      open_spread: openBlock?.spread ?? teamLevelOpen(item),
     };
+  }
+
+  // ESPN keeps each side's opening spread in its own block
+  // (homeTeamOdds.open.pointSpread); the top-level open block holds
+  // only the total, which is why no open was ever found. Only a
+  // value shaped like a line is accepted — a multiple of 0.5 within
+  // ±60 — so a price such as -110 or 1.91 is never taken for one.
+  function teamLevelOpen(item) {
+    const p = item?.homeTeamOdds?.open?.pointSpread;
+    return lineOrNull(p?.american) ?? lineOrNull(p?.alternateDisplayValue) ?? lineOrNull(p?.value) ?? null;
+  }
+
+  function lineOrNull(v) {
+    const n = numOrNull(v);
+    if (n == null || Math.abs(n) > 60 || Math.round(n * 2) !== n * 2) return null;
+    return n;
   }
 
   function parsePhaseBlock(block) {
@@ -501,6 +574,38 @@ const EDGE_ATS = (() => {
     } catch { return String(iso).slice(0, 10); }
   }
 
+  function findNonTeams(sport, games) {
+    const out = new Set();
+    if (!PRO_LEAGUES.has(sport) || !games.length) return out;
+    const counts = {};
+    games.forEach(g => {
+      counts[g.home] = (counts[g.home] || 0) + 1;
+      counts[g.away] = (counts[g.away] || 0) + 1;
+    });
+    const sorted = Object.values(counts).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)] || 0;
+    const floor = Math.max(3, Math.floor(median * NON_TEAM_SHARE));
+    Object.keys(counts).forEach(t => { if (counts[t] < floor) out.add(t); });
+    return out;
+  }
+
+  async function removeNonTeamRows(sport, names, url, key) {
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const quote = n => `"${String(n).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    let ok = true;
+    for (let i = 0; i < names.length; i += 25) {
+      const list = encodeURIComponent(names.slice(i, i + 25).map(quote).join(','));
+      try {
+        const a = await fetch(`${url}/rest/v1/team_ats?sport=eq.${sport}&team_name=in.(${list})`,
+          { method: 'DELETE', headers });
+        const b = await fetch(`${url}/rest/v1/matchup_ats?sport=eq.${sport}&or=(team_a.in.(${list}),team_b.in.(${list}))`,
+          { method: 'DELETE', headers });
+        ok = ok && a.ok && b.ok;
+      } catch { ok = false; }
+    }
+    return ok;
+  }
+
   async function loadCachedOdds(sport, url, key, canReadOpen) {
     const out = {};
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
@@ -516,9 +621,9 @@ const EDGE_ATS = (() => {
     try {
       const rows = await fetchAllRows(
         `${url}/rest/v1/historical_odds?sport=eq.${sport}&select=${cols}&order=game_id.asc`, headers);
-      rows.forEach(r => {
-        if (r.spread != null) out[String(r.game_id)] = r;
-      });
+      // Every row, priced or not: a row with no line means ESPN had
+      // none, and that is remembered too.
+      rows.forEach(r => { out[String(r.game_id)] = { ...r, _row: true }; });
     } catch (e) { logEdgeError('ats.loadCachedOdds.historical.' + sport, e); }
 
     // line_history fallback. Resolve every id in one pass so the
@@ -532,16 +637,21 @@ const EDGE_ATS = (() => {
         const oddsIds = Array.from(new Set(rows.map(r => r.game_id).filter(Boolean)));
         const resolved = await resolveAll(oddsIds);
 
+        // Rows run oldest first, so the latest snapshot — nearest the
+        // close — is the one that stays. ESPN's own line always wins.
         rows.forEach(r => {
           if (r.spread == null) return;
           const espnId = resolved[r.game_id];
           if (!espnId) return;
-          if (out[espnId]?.spread != null) return;
+          const cur = out[espnId];
+          if (cur && cur._row && cur._source !== 'line_history' && cur.spread != null) return;
           out[espnId] = {
+            ...(cur || {}),
             spread: r.spread,
-            total: r.total ?? null,
-            home_ml: r.ml ?? null,
-            open_spread: null,
+            total: r.total ?? cur?.total ?? null,
+            home_ml: r.ml ?? cur?.home_ml ?? null,
+            open_spread: cur?.open_spread ?? null,
+            _row: !!cur?._row,
             _source: 'line_history',
           };
         });
