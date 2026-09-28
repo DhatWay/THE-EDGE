@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260927-01';
+  const BUILD = 'pe-20260927-02';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -284,7 +284,10 @@ const EDGE_POWER = (() => {
   // ============================================================
 
   async function computeAllTeamRatings(options = {}) {
-    const { scopeTeams = null, onProgress = null } = options;
+    // `sports` limits the run to those sports (Admin's sport picker).
+    // Only their rows are replaced; every other sport's ratings stay.
+    const { scopeTeams = null, onProgress = null, sports = null } = options;
+    const only = Array.isArray(sports) && sports.length ? new Set(sports) : null;
     const emit = (m) => { if (typeof onProgress === 'function') onProgress(m); };
 
     _espnShape.chosen = null;
@@ -303,6 +306,7 @@ const EDGE_POWER = (() => {
     const now = new Date();
 
     for (const [sport, path] of Object.entries(ESPN_MAP)) {
+      if (only && !only.has(sport)) continue;
       if (!isSportInSeason(sport, now)) {
         results.skipped.push(sport);
         results.counts[sport] = 0;
