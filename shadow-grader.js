@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20260926-01';
+  const BUILD = 'shadowgrade-20260929-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -115,20 +115,23 @@ const EDGE_SHADOW_GRADER = (() => {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     if (!url || !key) return { ok: false, error: 'Supabase not connected' };
 
+    // Props first — they need only box scores, not the id map.
+    const props = await gradeProps(url, key, log, dryRun);
+
     const schema = await probe();
     if (!schema.shadow_picks) {
-      return { ok: false, error: 'shadow_picks table not readable' };
+      return { ok: false, error: 'shadow_picks table not readable', props };
     }
 
     if (!schema.game_id_map) {
       log('game-id-map.js table is missing — no ids can be resolved');
       log('Run EDGE_GAME_ID_MAP.schemaSql() output in the Supabase editor');
-      return { ok: false, error: 'game_id_map missing' };
+      return { ok: false, error: 'game_id_map missing', props };
     }
 
     if (typeof window.EDGE_GAME_ID_MAP === 'undefined') {
       log('game-id-map.js module not loaded');
-      return { ok: false, error: 'EDGE_GAME_ID_MAP not loaded' };
+      return { ok: false, error: 'EDGE_GAME_ID_MAP not loaded', props };
     }
 
     if (!schema.actual_margin) {
@@ -141,7 +144,7 @@ const EDGE_SHADOW_GRADER = (() => {
     log(`${pending.length} ungraded picks from the last ${LOOKBACK_DAYS} days`);
 
     if (!pending.length) {
-      return { ok: true, graded: 0, unresolved: 0, pending_no_score: 0, pending: 0 };
+      return { ok: true, graded: 0, unresolved: 0, pending_no_score: 0, pending: 0, props };
     }
 
     // ── 2. Resolve Odds API ids to ESPN ids ──
@@ -212,7 +215,81 @@ const EDGE_SHADOW_GRADER = (() => {
       pending_no_score: pendingNoScore,
       pending: pending.length,
       written: updates.length,
+      props,
     };
+  }
+
+  // ============================================================
+  // ── PROPS ──
+  // A prop is graded from the player's box score for that game: the
+  // stat's columns (stored with the prop) summed, compared with the
+  // line on the side the model picked — or the side entered, when it
+  // passed. Units and P&L count only for props that were bets.
+  // A prop whose box score is not in yet stays open; run Fetch Box
+  // Scores for the sport first.
+  // ============================================================
+
+  async function gradeProps(url, key, log, dryRun) {
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const cutoff = new Date(Date.now() - 6 * 3600000).toISOString();
+    let open = [];
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/prop_picks?result=is.null&commence_time=lt.${encodeURIComponent(cutoff)}` +
+        `&select=id,sport,player_id,commence_time,stat,line,side,price,pick_side,decision,units,detail` +
+        `&order=commence_time.asc&limit=500`, { headers });
+      if (!res.ok) return { ok: false, error: `prop_picks not readable (HTTP ${res.status})` };
+      open = await res.json();
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+    if (!open.length) { log('Props: none waiting to be graded'); return { ok: true, graded: 0, waiting: 0 }; }
+
+    let graded = 0, waiting = 0;
+    for (const p of open) {
+      const cols = Array.isArray(p.detail?.cols) && p.detail.cols.length ? p.detail.cols : [p.stat];
+      const t = new Date(p.commence_time).getTime();
+      const from = new Date(t - 36 * 3600000).toISOString();
+      const to = new Date(t + 36 * 3600000).toISOString();
+      let rows = [];
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/player_game_stats?sport=eq.${p.sport}&player_id=eq.${encodeURIComponent(p.player_id)}` +
+          `&game_date=gte.${encodeURIComponent(from)}&game_date=lte.${encodeURIComponent(to)}` +
+          `&select=game_id,game_date,${cols.join(',')}&limit=5`, { headers });
+        if (res.ok) rows = await res.json();
+      } catch {}
+      const row = rows
+        .filter(r => cols.some(c => r[c] != null))
+        .sort((a, b) => Math.abs(new Date(a.game_date) - t) - Math.abs(new Date(b.game_date) - t))[0];
+      if (!row) { waiting++; continue; }
+
+      const actual = cols.reduce((s, c) => s + (Number(row[c]) || 0), 0);
+      const side = p.pick_side || p.side;
+      const line = Number(p.line);
+      const result = actual === line ? 'P'
+        : (side === 'over' ? actual > line : actual < line) ? 'W' : 'L';
+
+      let pnl = 0;
+      const units = Number(p.units) || 0;
+      if (p.decision && p.decision !== 'PASS' && units > 0) {
+        const price = (p.price && side === p.side) ? Number(p.price) : -110;
+        const payout = price > 0 ? price / 100 : 100 / Math.abs(price);
+        pnl = result === 'W' ? round(units * payout, 2) : result === 'L' ? -units : 0;
+      }
+
+      if (dryRun) { graded++; continue; }
+      try {
+        const res = await fetch(`${url}/rest/v1/prop_picks?id=eq.${p.id}`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify({ actual, result, pnl, graded_at: new Date().toISOString() }),
+        });
+        if (res.ok) graded++;
+      } catch (e) { logEdgeError('shadowGrader.gradeProps', e); }
+    }
+    log(`Props: ${graded} graded · ${waiting} waiting for a box score`);
+    return { ok: true, graded, waiting };
   }
 
   // ============================================================
