@@ -38,7 +38,7 @@
 
 const EDGE_CLAUDE = (() => {
 
-  const BUILD = 'claude-20260924-01';
+  const BUILD = 'claude-20260929-01';
 
   const DIRECT_API_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -65,7 +65,32 @@ const EDGE_CLAUDE = (() => {
   const MAX_TOKENS = 4000;
   const TIMEOUT_MS = 90000;
 
-  const DEFAULT_FLOOR = 70;
+  // Selections are asked for at this cover chance or higher. The
+  // governor now reports confidence as the chance the side covers,
+  // and 55 is its one-unit tier; 70 was out of reach on that scale.
+  const DEFAULT_FLOOR = 55;
+
+  const PROP_SYSTEM_PROMPT = `You are EDGE's prop reviewer. You are handed one player prop and every number already computed for it.
+
+YOUR JOB
+Decide over, under or pass on this one prop. Nothing else.
+
+HARD RULES
+1. Use only the numbers given. Do not recompute them and do not bring in outside information about the player.
+2. Confidence is your probability that the side you name wins. Report it honestly.
+3. Pass when the projection and the line are close, the sample is thin, or the inputs disagree.
+4. Output strict JSON only. No prose, no markdown, no code fences.
+
+WHAT TO WEIGH
+- The projection against the line, and sigma — how much the player's results vary game to game.
+- Chance of going over, as computed.
+- Sample size: games on file and games this season.
+- Recent form against the season average; results against this opponent, with how many games that is.
+- The opponent's defense rating, when given.
+- The governor's verdict is one input, not an instruction.
+
+OUTPUT SCHEMA
+{"decision":"over"|"under"|"pass","confidence":<integer 0-100>,"reason":"<one sentence, max 25 words>"}`;
 
   const SYSTEM_PROMPT = `You are EDGE's selector. You are handed one slate of upcoming games. Every number you need has already been computed for you.
 
@@ -104,6 +129,7 @@ OUTPUT SCHEMA
   return {
     BUILD,
     selectFromSlate,
+    reviewProp,
     reviewBatch,
     buildSlateBundle,
     SYSTEM_PROMPT,
@@ -116,6 +142,59 @@ OUTPUT SCHEMA
   // ============================================================
   // ── MAIN ──
   // ============================================================
+
+  // One prop, one verdict: { ok, decision: 'over'|'under'|'pass',
+  // confidence, reason, model } or { ok: false, error }.
+  async function reviewProp(bundle) {
+    const apiKey = localStorage.getItem('edge_claude_api_key');
+    const proxy = PROXY_URL();
+    if (!apiKey && !proxy) return { ok: false, error: 'No Anthropic API key and no proxy configured' };
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (!proxy) {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    }
+
+    const model = MODEL();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(API_URL(), {
+        method: 'POST',
+        signal: controller.signal,
+        headers,
+        body: JSON.stringify({
+          model,
+          max_tokens: 400,
+          system: PROP_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content:
+            'Here is the prop. Return the JSON object and nothing else.\n\n' + JSON.stringify(bundle) }],
+        }),
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        return { ok: false, error: `HTTP ${res.status} ${body.slice(0, 160)}` };
+      }
+      const data = await res.json();
+      const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+      const parsed = parseJson(text);
+      const decision = String(parsed?.decision || '').toLowerCase();
+      if (!['over', 'under', 'pass'].includes(decision)) return { ok: false, error: 'Could not read the model verdict' };
+      return {
+        ok: true,
+        decision,
+        confidence: clamp(Math.round(Number(parsed.confidence) || 0), 0, 100),
+        reason: String(parsed.reason || '').slice(0, 240),
+        model,
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      return { ok: false, error: err.name === 'AbortError' ? 'Timed out' : err.message };
+    }
+  }
 
   // candidates: the current slate, one entry per game, each carrying
   // { prior, families, governor, trends, h2h, context }.
