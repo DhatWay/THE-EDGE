@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20260925-01';
+  const BUILD = 'orch-20260929-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -53,6 +53,11 @@ const EDGE_ORCHESTRATOR = (() => {
   const MAX_PARALLEL_GAMES = 6;
 
   const SITUATIONS_FAMILY_WEIGHT = 12;
+
+  // Situations (historical ATS spots) are not part of the decision:
+  // the ranking decides. The engine is not run and its weights are
+  // not loaded, which also saves the three table reads per run.
+  const SITUATIONS_IN_DECISION = false;
 
   // A pick is skipped if any pick for the same game_id was
   // written inside this window. Wide enough to cover a full
@@ -137,7 +142,7 @@ const EDGE_ORCHESTRATOR = (() => {
 
       // ── Stage 1b · Situation weights ──
       const situationWeightsBySport = {};
-      if (window.EDGE_SITUATION_RESULTS) {
+      if (SITUATIONS_IN_DECISION && window.EDGE_SITUATION_RESULTS) {
         for (const sp of activeSports) {
           try {
             situationWeightsBySport[sp] = await EDGE_SITUATION_RESULTS.loadWeights(sp);
@@ -213,14 +218,18 @@ const EDGE_ORCHESTRATOR = (() => {
       log(`  ${algoResults.length} games scored by 9 families`);
 
       // ── Stage 5b · Situations engine ──
-      log('Stage 5b · Evaluating situations');
-      const situationsByGame = await evaluateSituations(
-        priors, builtContext, log, situationWeightsBySport
-      );
+      const situationsByGame = SITUATIONS_IN_DECISION
+        ? await (async () => {
+            log('Stage 5b · Evaluating situations');
+            return evaluateSituations(priors, builtContext, log, situationWeightsBySport);
+          })()
+        : {};
       summary.stages.situations_evaluated = Object.keys(situationsByGame).length;
       const firedTotal = Object.values(situationsByGame)
         .reduce((s, r) => s + ((r.situations && r.situations.length) || 0), 0);
-      log(`  ${summary.stages.situations_evaluated} games · ${firedTotal} rule firings`);
+      if (SITUATIONS_IN_DECISION) {
+        log(`  ${summary.stages.situations_evaluated} games · ${firedTotal} rule firings`);
+      }
       summary.stages.situation_firings = firedTotal;
 
       // ── Stage 6 · Governor ──
@@ -745,12 +754,14 @@ const EDGE_ORCHESTRATOR = (() => {
     return algoResults
       .filter(r => r.families && r.families.length)
       .map(r => {
-        const sitResult = situationsByGame[r.prior.game_id];
-        const sitFamily = situationsAsFamily(sitResult);
-        const allFamilies = [sitFamily, ...r.families];
+        const allFamilies = SITUATIONS_IN_DECISION
+          ? [situationsAsFamily(situationsByGame[r.prior.game_id]), ...r.families]
+          : r.families;
 
         const dynamic = EDGE_GOVERNOR.getDynamicWeights(r.prior.sport);
-        const merged = { ...dynamic, situations: SITUATIONS_FAMILY_WEIGHT };
+        const merged = SITUATIONS_IN_DECISION
+          ? { ...dynamic, situations: SITUATIONS_FAMILY_WEIGHT }
+          : dynamic;
 
         const gov = EDGE_GOVERNOR.run(allFamilies, r.prior, { dynamicWeights: merged });
         return {
@@ -822,9 +833,13 @@ const EDGE_ORCHESTRATOR = (() => {
     });
   }
 
+  // Claude's confidence is its chance the side covers — the same
+  // scale as the governor's — so it is sized on the governor's tiers.
   function mergeVerdict(gov, sel) {
-    const sized = sel.confidence >= 80 ? 'BET_2U' : sel.confidence >= 70 ? 'BET_1U' : 'LEAN';
-    return { ...gov, direction: sel.side, confidence: sel.confidence, decision: sized, claude_reason: sel.reason };
+    const t = window.EDGE_GOVERNOR?.THRESHOLDS?.DEFAULT || { bet2u: 57, bet1u: 55, lean: 53 };
+    const c = sel.confidence;
+    const [sized, units] = c >= t.bet2u ? ['BET_2U', 2] : c >= t.bet1u ? ['BET_1U', 1] : c >= t.lean ? ['LEAN', 0.5] : ['PASS', 0];
+    return { ...gov, direction: sel.side, confidence: c, decision: sized, units, claude_reason: sel.reason };
   }
 
   function passVerdict(gov, reason) {
