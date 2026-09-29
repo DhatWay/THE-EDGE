@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260927-02';
+  const BUILD = 'pe-20260929-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -1098,9 +1098,12 @@ const EDGE_POWER = (() => {
       composite_spread: compositeSpread,
       projection_weight: projectionWeight != null ? round(projectionWeight, 2) : null,
 
-      // Cover chance from the same blended margin as model_spread.
-      cover: (core && projection && marketSpread !== null)
-        ? core.coverProbability(-modelSpread, marketSpread,
+      // Cover chance from the full ranking margin — offense/defense
+      // and composite blend, coaching, and the defense matchup — the
+      // same number as model_spread. Available whenever the ranking
+      // produced a spread, not only when the projection ran.
+      cover: (core && totalModelSpread != null && isFinite(totalModelSpread) && marketSpread !== null)
+        ? core.coverProbability(-totalModelSpread, marketSpread,
             calib?.sigma_settled ?? calib?.projection_sigma ?? null,
             {
               lambda: calib?.market_lambda ?? null,
