@@ -24,6 +24,7 @@
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
+  <script src="prop-engine.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
@@ -133,6 +134,20 @@
     .game-btn:last-child { border-right: none; }
     .game-btn:hover { color: var(--gold); background: var(--gold-glow); }
     .game-btn.primary { color: var(--gold); }
+
+    .prop-panel { border-top: 1px solid var(--border); padding: 12px; background: var(--bg2, var(--surface)); }
+    .prop-panel[hidden] { display: none; }
+    .prop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .prop-grid .full { grid-column: 1 / -1; }
+    .prop-field label { display: block; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+    .prop-field select, .prop-field input { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: 'Barlow', sans-serif; font-size: 14px; padding: 8px; }
+    .prop-run { width: 100%; margin-top: 10px; background: var(--gold); color: #000; border: none; padding: 11px; font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; }
+    .prop-run:disabled { opacity: 0.5; }
+    .prop-result { margin-top: 10px; font-family: 'Barlow', sans-serif; font-size: 13px; color: var(--text); line-height: 1.5; }
+    .prop-result .verdict { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; letter-spacing: 1.5px; color: var(--gold); }
+    .prop-result .why { color: var(--text-dim); font-size: 12px; }
+    .prop-list { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; font-size: 12px; color: var(--text-dim); }
+    .prop-list div { padding: 3px 0; }
     .empty-state { padding: 48px 20px; text-align: center; }
     .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
     .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
@@ -987,8 +1002,157 @@
             <a href="analysis.html?game=${enc}" class="game-btn primary">◎ Analysis</a>
             <a href="picks.html" class="game-btn">✓ Picks</a>
             <a href="lines.html?game=${enc}" class="game-btn">→ Lines</a>
+            ${propsAvailable(game, statusCls) ? `<button class="game-btn" onclick="toggleProps('${game.id}')">＋ Prop</button>` : ''}
           </div>
+          ${propsAvailable(game, statusCls) ? `<div class="prop-panel" id="prop-${game.id}" hidden></div>` : ''}
         </div>`;
+    }
+
+    // ── PROPS ──
+    // A prop entered here runs the same path as a spread pick: the
+    // player's projection (prop-engine.js), the governor's thresholds,
+    // Claude when the decision mode uses it, then saved to prop_picks
+    // and graded from the box score by Grade Shadow Picks.
+
+    function propsAvailable(game, statusCls) {
+      return statusCls !== 'final' && !!window.EDGE_PROPS && EDGE_PROPS.statsFor(game._sport).length > 0;
+    }
+
+    const propRosters = {};
+
+    function escHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function toggleProps(gameId) {
+      const panel = document.getElementById('prop-' + gameId);
+      if (!panel) return;
+      if (!panel.hidden) { panel.hidden = true; return; }
+      panel.hidden = false;
+      panel.innerHTML = '<div class="prop-result why">Loading roster…</div>';
+
+      const game = allGames.find(g => g.id === gameId);
+      if (!game) { panel.innerHTML = '<div class="prop-result why">Game not found — refresh the board.</div>'; return; }
+
+      try {
+        propRosters[gameId] = propRosters[gameId] || await EDGE_PROPS.loadRoster(game);
+      } catch (e) {
+        panel.innerHTML = `<div class="prop-result why">Roster unavailable: ${escHtml(e.message)}</div>`;
+        return;
+      }
+      const roster = propRosters[gameId];
+      const stats = EDGE_PROPS.statsFor(game._sport);
+
+      panel.innerHTML = `
+        <div class="prop-grid">
+          <div class="prop-field">
+            <label>Team</label>
+            <select id="propTeam-${gameId}" onchange="fillPropPlayers('${gameId}')">
+              <option value="away">${escHtml(game.away_team)}</option>
+              <option value="home">${escHtml(game.home_team)}</option>
+            </select>
+          </div>
+          <div class="prop-field">
+            <label>Player</label>
+            <select id="propPlayer-${gameId}"></select>
+          </div>
+          <div class="prop-field full">
+            <label>Stat</label>
+            <select id="propStat-${gameId}">
+              ${stats.map(s => `<option value="${s.key}">${escHtml(s.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="prop-field">
+            <label>Line</label>
+            <input id="propLine-${gameId}" type="number" inputmode="decimal" step="0.5" placeholder="24.5">
+          </div>
+          <div class="prop-field">
+            <label>Side</label>
+            <select id="propSide-${gameId}">
+              <option value="over">Over</option>
+              <option value="under">Under</option>
+            </select>
+          </div>
+          <div class="prop-field full">
+            <label>Price (optional, e.g. -115)</label>
+            <input id="propPrice-${gameId}" type="number" inputmode="numeric" placeholder="-110">
+          </div>
+        </div>
+        <button class="prop-run" id="propRun-${gameId}" onclick="runProp('${gameId}')">Run Prop</button>
+        <div class="prop-result" id="propResult-${gameId}"></div>
+        <div class="prop-list" id="propList-${gameId}"></div>`;
+
+      fillPropPlayers(gameId);
+      renderPropList(gameId);
+    }
+
+    function fillPropPlayers(gameId) {
+      const roster = propRosters[gameId];
+      const team = document.getElementById('propTeam-' + gameId)?.value || 'away';
+      const sel = document.getElementById('propPlayer-' + gameId);
+      if (!roster || !sel) return;
+      const list = roster[team] || [];
+      sel.innerHTML = list.length
+        ? list.map(p => `<option value="${escHtml(p.player_id)}">${escHtml(p.name)}${p.position ? ' · ' + escHtml(p.position) : ''}</option>`).join('')
+        : '<option value="">No roster on file — run Build Rosters</option>';
+    }
+
+    async function runProp(gameId) {
+      const game = allGames.find(g => g.id === gameId);
+      const roster = propRosters[gameId];
+      const out = document.getElementById('propResult-' + gameId);
+      const btn = document.getElementById('propRun-' + gameId);
+      if (!game || !roster || !out) return;
+
+      const team = document.getElementById('propTeam-' + gameId).value;
+      const playerId = document.getElementById('propPlayer-' + gameId).value;
+      const player = (roster[team] || []).find(p => String(p.player_id) === String(playerId));
+      const stat = document.getElementById('propStat-' + gameId).value;
+      const line = parseFloat(document.getElementById('propLine-' + gameId).value);
+      const side = document.getElementById('propSide-' + gameId).value;
+      const priceRaw = document.getElementById('propPrice-' + gameId).value;
+      const price = priceRaw === '' ? null : parseInt(priceRaw, 10);
+
+      if (!player) { out.innerHTML = '<span class="why">Pick a player.</span>'; return; }
+      if (!isFinite(line)) { out.innerHTML = '<span class="why">Enter the line.</span>'; return; }
+
+      btn.disabled = true;
+      out.innerHTML = '<span class="why">Running…</span>';
+      try {
+        const r = await EDGE_PROPS.evaluate({ game, player, stat, line, side, price });
+        let savedNote = '';
+        try { await EDGE_PROPS.save(r); savedNote = 'Saved'; }
+        catch (e) { savedNote = 'Not saved: ' + e.message; }
+
+        const verdict = r.decision === 'PASS'
+          ? 'PASS'
+          : `${r.decision.replace('_', ' ')} · ${String(r.pick_side || '').toUpperCase()} ${r.line}`;
+        const chance = r.prob_over != null
+          ? `Over ${Math.round(r.prob_over * 100)}% · under ${Math.round((1 - r.prob_over) * 100)}%`
+          : (r.detail?.note || 'No projection');
+        const fams = (r.detail?.families || []).map(fm => `${escHtml(fm.family)}: ${escHtml(fm.reason)}`).join('<br>');
+        const caps = (r.detail?.governor?.data_caps || []).join(' · ');
+        const claude = r.detail?.claude?.reason ? `<br>Claude: ${escHtml(r.detail.claude.decision)} ${r.detail.claude.confidence}% — ${escHtml(r.detail.claude.reason)}` : '';
+
+        out.innerHTML = `
+          <div class="verdict">${escHtml(verdict)}</div>
+          <div>Projection ${r.projection ?? '—'} · ${chance} · confidence ${r.confidence}%</div>
+          <div class="why">${fams}${caps ? '<br>' + escHtml(caps) : ''}${claude}<br>${escHtml(r.detail?.path || '')} · ${escHtml(savedNote)}</div>`;
+        renderPropList(gameId);
+      } catch (e) {
+        out.innerHTML = `<span class="why">${escHtml(e.message)}</span>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function renderPropList(gameId) {
+      const el = document.getElementById('propList-' + gameId);
+      if (!el) return;
+      const rows = await EDGE_PROPS.listForGame(gameId);
+      el.innerHTML = rows.length
+        ? rows.map(p => `<div>${escHtml(p.player_name)} · ${escHtml(p.stat_label)} ${p.line} — ${escHtml(p.decision)}${p.pick_side ? ' ' + escHtml(p.pick_side) : ''}${p.result ? ' · ' + escHtml(p.result) + (p.actual != null ? ' (' + p.actual + ')' : '') : ''}</div>`).join('')
+        : 'No props entered for this game yet.';
     }
 
     // ── RUN PIPELINE ──
