@@ -270,7 +270,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order, for the sports selected above: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Build Trends → Pull Player Stats → Build Prop Trends → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks → Grade Sim Bets.
+          Runs every data stage in order, for the sports selected above: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Pull Player Stats → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks (spreads and props) → Grade Sim Bets.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -369,7 +369,9 @@
         <div class="pipeline-log" id="backfillLog">Idle.</div>
       </div>
 
-      <div class="pipeline-panel">
+      <!-- Trends and prop trends are not part of any decision (the
+           ranking decides). Hidden; the functions remain. -->
+      <div class="pipeline-panel" style="display:none">
         <div class="pipeline-head">
           <div class="pipeline-title">Build Trends</div>
         </div>
@@ -395,7 +397,7 @@
         <div class="pipeline-log" id="boxScoreLog">Idle.</div>
       </div>
 
-      <div class="pipeline-panel">
+      <div class="pipeline-panel" style="display:none">
         <div class="pipeline-head">
           <div class="pipeline-title">Build Prop Trends</div>
         </div>
@@ -718,43 +720,39 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/13 · Power Ratings');
+      log('Stage 1/11 · Power Ratings');
       try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 2/13 · Build Rosters');
+      log('Stage 2/11 · Build Rosters');
       try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 3/13 · Enrich Rosters');
+      log('Stage 3/11 · Enrich Rosters');
       try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 4/13 · Build ATS & H2H');
+      log('Stage 4/11 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/13 · Backfill Scores');
+      log('Stage 5/11 · Backfill Scores');
       try { await runScoreBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/13 · Backfill & Calibration');
+      log('Stage 6/11 · Backfill & Calibration');
       try { await runBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 7/13 · Build Trends');
-      try { await runTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 8/13 · Pull Player Stats');
+      log('Stage 7/11 · Pull Player Stats');
       try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 9/13 · Build Prop Trends');
-      try { await runPropTrendsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 10/13 · Refresh Injuries');
+      log('Stage 8/11 · Refresh Injuries');
       try { refreshInjuries(); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 11/13 · Backfill Game ID Map');
+      log('Stage 9/11 · Backfill Game ID Map');
       try { await runGameIdBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 12/13 · Grade Shadow Picks');
+      log('Stage 10/11 · Grade Shadow Picks');
       try { await runShadowGrader(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 13/13 · Grade Sim Bets');
+      log('Stage 11/11 · Grade Sim Bets');
       try { await runSimGrader(true); } catch (e) { log('  failed: ' + e.message); }
 
       log('✓ Full refresh complete');
