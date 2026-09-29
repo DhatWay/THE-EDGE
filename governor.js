@@ -53,7 +53,27 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20260924-01';
+  const BUILD = 'gov-20260929-01';
+
+  // ── The ranking decides ──
+  // The pick comes from the ranking: offense/defense and composite
+  // blend, coaching and the defense matchup, turned into the chance
+  // that each side covers the market spread (power-engine's
+  // prior.cover). These families only adjust that chance, by at most
+  // ADJUST_MAX, because they describe the day rather than the teams:
+  const ADJUSTMENT_FAMILIES = new Set(['fatigue', 'injury']);
+  const ADJUST_MAX = 0.04;
+
+  // These carry no weight in any decision. Market and line movement
+  // react to the betting line, not the teams; weather is a totals
+  // question, and it was voting for the away side on windy days;
+  // trends and situations are historical ATS streaks.
+  const EXCLUDED_FAMILIES = new Set(['market', 'line_dynamics', 'environment', 'trend', 'situations']);
+
+  // Props: market pull toward the price entered, and the smallest
+  // sample of games a projection may rest on before it is capped.
+  const PROP_SHRINK = 0.35;
+  const PROP_MIN_GAMES = 5;
 
   // Weights per sport for the nine families. These are the
   // defaults. Learning loop overwrites dynamic weights in
@@ -70,18 +90,16 @@ const EDGE_GOVERNOR = (() => {
     DEFAULT: { team_quality: 8, offense_defense: 8, coaching: 7, market: 9, line_dynamics: 8, fatigue: 8, environment: 6, trend: 7, injury: 8 },
   };
 
-  // Decision thresholds. Confidence is a number in [0, 100].
-  // edge is |posterior_home_prob - 0.5| * 2 (in probability units).
+  // Decision thresholds. Confidence is the chance the chosen side
+  // covers, in percent — 57 means a 57% cover chance. At -110 the
+  // break-even is 52.4%. The previous scale (distance from 50/50
+  // times 200, times an agreement factor) needed a 75%+ cover
+  // chance to reach a lean, so nothing ever cleared it and no pick
+  // was ever saved. Edge is the same number as a margin over 50%.
+  const PROB_TIERS = { bet2u: 57, bet1u: 55, lean: 53, minEdge2u: 0.07, minEdge1u: 0.05, minEdgeLean: 0.03 };
   const THRESHOLDS = {
-    NFL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    NBA:   { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    WNBA:  { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    MLB:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    NHL:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    NCAAF: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
-    NCAAB: { bet2u: 64, bet1u: 56, lean: 46, minEdge2u: 0.026, minEdge1u: 0.016, minEdgeLean: 0.008 },
-    MLS:   { bet2u: 68, bet1u: 60, lean: 50, minEdge2u: 0.030, minEdge1u: 0.020, minEdgeLean: 0.008 },
-    DEFAULT: { bet2u: 66, bet1u: 58, lean: 48, minEdge2u: 0.028, minEdge1u: 0.018, minEdgeLean: 0.008 },
+    NFL: PROB_TIERS, NBA: PROB_TIERS, WNBA: PROB_TIERS, MLB: PROB_TIERS, NHL: PROB_TIERS,
+    NCAAF: PROB_TIERS, NCAAB: PROB_TIERS, MLS: PROB_TIERS, DEFAULT: PROB_TIERS,
   };
 
   // How much of the model's opinion gets through versus the
@@ -165,7 +183,7 @@ const EDGE_GOVERNOR = (() => {
     let totalWeight = 0;
 
     (familyOutputs || []).forEach(f => {
-      const w = weights[f.family] ?? 7;
+      const w = EXCLUDED_FAMILIES.has(f.family) ? 0 : (weights[f.family] ?? 7);
       const sig = typeof f.signal === 'number' && isFinite(f.signal) ? f.signal : 0;
       const conf = clamp(f.confidence ?? 0.5, 0, 1);
 
@@ -194,7 +212,8 @@ const EDGE_GOVERNOR = (() => {
       });
     });
 
-    if (totalWeight === 0) {
+    const rankingCover = prior?.cover && isFinite(prior.cover.home_cover) ? prior.cover : null;
+    if (totalWeight === 0 && !rankingCover) {
       return emptyResult('No family outputs');
     }
 
@@ -225,12 +244,34 @@ const EDGE_GOVERNOR = (() => {
     // The model's own home win probability, before any market
     // influence. Then the market pulls it back by the shrink
     // factor. The result is the number the app acts on.
-    const modelHomeProb = clamp(0.5 + normalizedSignal / 2, 0.02, 0.98);
+    // With a ranking cover chance on hand, it is the model. The
+    // adjustment families nudge it; nothing else votes. Without one
+    // (no spread posted, no ratings), the weighted family signal is
+    // the fallback, excluded families still at zero.
+    let modelHomeProb;
+    let adjustment = 0;
+    let decisionSource = 'families';
+    if (rankingCover) {
+      let adjNum = 0, adjDen = 0;
+      breakdown.forEach(b => {
+        if (!ADJUSTMENT_FAMILIES.has(b.family) || !b.weight) return;
+        adjNum += b.weight * b.signal * b.confidence;
+        adjDen += b.weight * b.confidence;
+      });
+      adjustment = adjDen > 0 ? clamp(adjNum / adjDen, -1, 1) * ADJUST_MAX : 0;
+      modelHomeProb = clamp(rankingCover.home_cover + adjustment, 0.02, 0.98);
+      decisionSource = 'ranking';
+    } else {
+      modelHomeProb = clamp(0.5 + normalizedSignal / 2, 0.02, 0.98);
+    }
 
     const marketInfo = resolveMarket(prior, homeBaseline, sport);
     const marketHomeProb = marketInfo.prob;
 
-    const posteriorHomeProb = (1 - shrink) * modelHomeProb + shrink * marketHomeProb;
+    // A cover chance already anchored to the market (a fitted lambda)
+    // is not pulled toward it a second time.
+    const effectiveShrink = (rankingCover && rankingCover.anchored_to_market) ? 0 : shrink;
+    const posteriorHomeProb = (1 - effectiveShrink) * modelHomeProb + effectiveShrink * marketHomeProb;
 
     // Raw edge in probability terms.
     const edge = Math.abs(posteriorHomeProb - 0.5);
@@ -241,9 +282,8 @@ const EDGE_GOVERNOR = (() => {
     // on a direction, and how much data they had. All three
     // are already baked into normalizedSignal and agreement,
     // so the formula is short.
-    const directional = Math.abs(posteriorHomeProb - 0.5) * 200;  // 0 to 100
-    const agreementFactor = 0.6 + agreement * 0.4;                // 0.6 to 1.0
-    const rawConfidence = directional * agreementFactor;
+    // Confidence is the posterior chance the chosen side covers.
+    const rawConfidence = Math.max(posteriorHomeProb, 1 - posteriorHomeProb) * 100;
     const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
 
     // Calibration is a pull, not a substitution. The blended value
@@ -257,19 +297,10 @@ const EDGE_GOVERNOR = (() => {
     const dataCaps = [];
     let cap = 100;
 
+    // No spread posted: nothing to bet against the spread.
     if (prior?.market?.current_spread == null) {
-      cap = Math.min(cap, 55);
+      cap = Math.min(cap, 50);
       dataCaps.push('no spread');
-    }
-    const hasLineMovement = prior?.market?.open_spread != null
-      && prior?.market?.current_spread != null
-      && prior.market.open_spread !== prior.market.current_spread;
-    if (prior?.market?.open_spread == null) {
-      cap = Math.min(cap, 78);
-      dataCaps.push('no opening line');
-    } else if (!hasLineMovement) {
-      cap = Math.min(cap, 78);
-      dataCaps.push('no line movement');
     }
 
     const finalConfidence = round(Math.min(calibrated.value, cap, MAX_CONFIDENCE), 1);
@@ -308,13 +339,16 @@ const EDGE_GOVERNOR = (() => {
       units,
 
       // Probability trail — every step the slate test can grade
+      decision_source: decisionSource,
+      ranking_home_cover: rankingCover ? round(rankingCover.home_cover, 4) : null,
+      adjustment: round(adjustment, 4),
       model_home_prob: round(modelHomeProb, 4),
       market_home_prob: round(marketHomeProb, 4),
       posterior_home_prob: round(posteriorHomeProb, 4),
 
       // Diagnostics
       agreement_index: round(agreement, 3),
-      shrinkage: round(shrink, 3),
+      shrinkage: round(effectiveShrink, 3),
       market_source: marketInfo.source,
       calibrated: calibrated.applied,
       calibration_detail: calibrated.detail,
@@ -338,6 +372,87 @@ const EDGE_GOVERNOR = (() => {
       kelly: kellyInput,
 
       // Thresholds used, for audit
+      thresholds_used: thresholds,
+      computed_at: new Date().toISOString(),
+    };
+  }
+
+  // ============================================================
+  // ── PROPS ──
+  // Same steps as a spread pick, with over in place of home: the
+  // prop projection's chance of going over is the model, the prop
+  // families adjust it by at most ADJUST_MAX, the price entered is
+  // the market, then the same confidence, thresholds and units.
+  //
+  // propPrior: { sport, prob_over, games, line, price, side }
+  //   price is American odds for `side` when entered.
+  // ============================================================
+
+  function runProp(familyOutputs, propPrior, options = {}) {
+    const sport = propPrior?.sport || 'DEFAULT';
+    const thresholds = THRESHOLDS[sport] || THRESHOLDS.DEFAULT;
+    if (!propPrior || !isFinite(propPrior.prob_over)) return emptyResult('No projection');
+
+    const breakdown = [];
+    let adjNum = 0, adjDen = 0;
+    (familyOutputs || []).forEach(f => {
+      const sig = typeof f.signal === 'number' && isFinite(f.signal) ? f.signal : 0;
+      const conf = clamp(f.confidence ?? 0.5, 0, 1);
+      const w = f.weight ?? 1;
+      adjNum += w * sig * conf;
+      adjDen += w * conf;
+      breakdown.push({
+        family: f.family, vote: f.vote, signal: round(sig, 3), confidence: round(conf, 3),
+        weight: w, contribution: round(w * sig * conf, 3), reason: f.reason || '', data: f.data || {},
+      });
+    });
+    const adjustment = adjDen > 0 ? clamp(adjNum / adjDen, -1, 1) * ADJUST_MAX : 0;
+    const modelOverProb = clamp(propPrior.prob_over + adjustment, 0.02, 0.98);
+
+    // Market: the price entered for one side, as that side's implied
+    // chance. None entered: a standard two-way line, 50/50.
+    let marketOverProb = 0.5;
+    if (propPrior.price) {
+      const implied = americanToImplied(propPrior.price);
+      marketOverProb = propPrior.side === 'under' ? 1 - implied : implied;
+    }
+    const posteriorOver = (1 - PROP_SHRINK) * modelOverProb + PROP_SHRINK * marketOverProb;
+    const edge = Math.abs(posteriorOver - 0.5);
+
+    const yes = breakdown.filter(b => b.vote === 'yes').reduce((s, b) => s + b.weight, 0);
+    const no = breakdown.filter(b => b.vote === 'no').reduce((s, b) => s + b.weight, 0);
+    const agreement = (yes + no) > 0 ? Math.abs(yes - no) / (yes + no) : 0;
+
+    const rawConfidence = Math.max(posteriorOver, 1 - posteriorOver) * 100;
+    let cap = MAX_CONFIDENCE;
+    const dataCaps = [];
+    if ((propPrior.games || 0) < PROP_MIN_GAMES) {
+      cap = Math.min(cap, 50);
+      dataCaps.push(`only ${propPrior.games || 0} games on file`);
+    }
+    const finalConfidence = round(Math.min(rawConfidence, cap), 1);
+
+    const direction = posteriorOver > 0.5 ? 'over' : 'under';
+    let decision = 'PASS', units = 0;
+    if (finalConfidence >= thresholds.bet2u && edge >= thresholds.minEdge2u) { decision = 'BET_2U'; units = 2; }
+    else if (finalConfidence >= thresholds.bet1u && edge >= thresholds.minEdge1u) { decision = 'BET_1U'; units = 1; }
+    else if (finalConfidence >= thresholds.lean && edge >= thresholds.minEdgeLean) { decision = 'LEAN'; units = 0.5; }
+
+    return {
+      decision_source: 'prop',
+      direction,
+      decision,
+      units,
+      confidence: finalConfidence,
+      edge: round(edge, 4),
+      model_over_prob: round(modelOverProb, 4),
+      market_over_prob: round(marketOverProb, 4),
+      posterior_over_prob: round(posteriorOver, 4),
+      adjustment: round(adjustment, 4),
+      agreement_index: round(agreement, 3),
+      shrinkage: PROP_SHRINK,
+      data_caps: dataCaps,
+      breakdown,
       thresholds_used: thresholds,
       computed_at: new Date().toISOString(),
     };
@@ -579,6 +694,9 @@ const EDGE_GOVERNOR = (() => {
   return {
     BUILD,
     run,
+    runProp,
+    EXCLUDED_FAMILIES,
+    ADJUSTMENT_FAMILIES,
     setCalibration,
     reloadCalibration,
     getDynamicWeights,
