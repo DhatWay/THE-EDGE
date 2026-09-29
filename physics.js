@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20260924-01';
+  const BUILD = 'phys-20260929-01';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -61,11 +61,14 @@ const EDGE_PHYSICS = (() => {
   // 3 units; a 55% lean is capped at 1. These are the ceilings,
   // not the sizes — actual size comes from Kelly and the
   // governor's own unit number.
+  // Unit ceilings by confidence — the governor's chance the side
+  // covers, in percent. The old tiers (55/65/75/85) were set for a
+  // scale the governor no longer uses.
   const MAX_UNITS = {
-    elite: 3.0,   // 85%+
-    high: 2.5,    // 75–84%
-    solid: 2.0,   // 65–74%
-    lean: 1.0,    // 55–64%
+    elite: 3.0,   // 62%+
+    high: 2.5,    // 60–61.9%
+    solid: 2.0,   // 57–59.9%
+    lean: 1.0,    // 55–56.9%
     small: 0.5,   // below 55%
   };
 
@@ -443,9 +446,9 @@ const EDGE_PHYSICS = (() => {
   }
 
   function tierCeiling(confidence) {
-    if (confidence >= 85) return MAX_UNITS.elite;
-    if (confidence >= 75) return MAX_UNITS.high;
-    if (confidence >= 65) return MAX_UNITS.solid;
+    if (confidence >= 62) return MAX_UNITS.elite;
+    if (confidence >= 60) return MAX_UNITS.high;
+    if (confidence >= 57) return MAX_UNITS.solid;
     if (confidence >= 55) return MAX_UNITS.lean;
     return MAX_UNITS.small;
   }
