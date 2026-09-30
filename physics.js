@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20260930-01';
+  const BUILD = 'phys-20260930-02';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -386,6 +386,8 @@ const EDGE_PHYSICS = (() => {
 
         // What the ranking said, for the Picks page analytics.
         decision_source: governor.decision_source || null,
+        capped_confidence: governor.capped_confidence ?? null,
+        calibration: governor.calibration_detail ? { applied: true, ...governor.calibration_detail } : null,
         ranking_home_cover: governor.ranking_home_cover ?? null,
         adjustment: governor.adjustment ?? null,
         ranking: {
