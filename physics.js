@@ -382,6 +382,20 @@ const EDGE_PHYSICS = (() => {
         market_source: governor.market_source,
         data_caps: governor.data_caps || [],
         breakdown: governor.breakdown || [],
+
+        // What the ranking said, for the Picks page analytics.
+        decision_source: governor.decision_source || null,
+        ranking_home_cover: governor.ranking_home_cover ?? null,
+        adjustment: governor.adjustment ?? null,
+        ranking: {
+          model_spread: prior?.model_spread ?? null,
+          projection_spread: prior?.projection_spread ?? null,
+          composite_spread: prior?.composite_spread ?? null,
+          projection_weight: prior?.projection_weight ?? null,
+          coaching_delta: prior?.coaching?.delta ?? null,
+          market_spread: prior?.market?.current_spread ?? null,
+          home_cover: prior?.cover?.home_cover ?? null,
+        },
       },
 
       // Sizing trail — every number that contributed to units.
