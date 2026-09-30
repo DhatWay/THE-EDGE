@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20260929-01';
+  const BUILD = 'gov-20260930-01';
 
   // ── The ranking decides ──
   // The pick comes from the ranking: offense/defense and composite
@@ -289,7 +289,7 @@ const EDGE_GOVERNOR = (() => {
     // Calibration is a pull, not a substitution. The blended value
     // moves toward the observed hit rate in the bucket by a
     // sample-weighted factor. See applyCalibration for the shape.
-    const calibrated = applyCalibration(cappedConfidence);
+    const calibrated = applyCalibration(cappedConfidence, sport);
 
     // ── 5. Data-availability caps ──
     // Two hard caps for missing inputs. These are the only caps
@@ -525,7 +525,78 @@ const EDGE_GOVERNOR = (() => {
   // it was about to be compared against.
   // ============================================================
 
-  function applyCalibration(confidence) {
+  // ── Calibration table, version 2 ──
+  // Per sport, 2-point buckets of the uncalibrated chance to cover
+  // (50, 52, … 64 = 64 and above), each holding how often picks in
+  // that bucket actually covered. Filled from two sources, kept
+  // apart so neither overwrites the other:
+  //   backtest_runs[sport][window] — written by the Slate Test
+  //   live[sport]                  — written by the learning loop
+  // and pooled into sports[sport][bucket] = { rate, samples }.
+  const CALIBRATION_MIN_SAMPLES = 20;
+
+  function calibrationBucket(confidence) {
+    return String(Math.max(50, Math.min(64, Math.floor(confidence / 2) * 2)));
+  }
+
+  function emptyCalibrationTable() {
+    return { version: 2, bucket_width: 2, backtest_runs: {}, live: {}, sports: {}, updated_at: null };
+  }
+
+  function readCalibrationTable() {
+    try {
+      const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null');
+      if (t && t.version === 2) return t;
+    } catch {}
+    return emptyCalibrationTable();
+  }
+
+  function poolCalibration(table) {
+    const t = table && table.version === 2 ? table : emptyCalibrationTable();
+    const sports = new Set([...Object.keys(t.backtest_runs || {}), ...Object.keys(t.live || {})]);
+    t.sports = {};
+    sports.forEach(sport => {
+      const counts = {};
+      const add = (buckets) => Object.entries(buckets || {}).forEach(([b, v]) => {
+        counts[b] = counts[b] || { n: 0, wins: 0 };
+        counts[b].n += v.n || 0;
+        counts[b].wins += v.wins || 0;
+      });
+      Object.values((t.backtest_runs || {})[sport] || {}).forEach(run => add(run.buckets));
+      add((t.live || {})[sport]);
+      t.sports[sport] = {};
+      Object.entries(counts).forEach(([b, v]) => {
+        if (v.n > 0) t.sports[sport][b] = { rate: round((v.wins / v.n) * 100, 1), samples: v.n };
+      });
+    });
+    t.updated_at = new Date().toISOString();
+    return t;
+  }
+
+  function saveCalibrationTable(table) {
+    const pooled = poolCalibration(table);
+    try { localStorage.setItem('edge_governor_calibration', JSON.stringify(pooled)); } catch {}
+    CALIBRATION = pooled;
+    return pooled;
+  }
+
+  function applyCalibration(confidence, sport) {
+    // Version 2: this sport's bucket, 2 points wide.
+    if (CALIBRATION && CALIBRATION.version === 2) {
+      const bucket = calibrationBucket(confidence);
+      const entry = CALIBRATION.sports?.[sport]?.[bucket];
+      if (!entry || !isFinite(entry.rate) || (entry.samples || 0) < CALIBRATION_MIN_SAMPLES) {
+        return { value: round(confidence, 1), applied: false, detail: null };
+      }
+      const pull = MAX_CALIBRATION_PULL * clamp(entry.samples / CALIBRATION_FULL_SAMPLE, 0, 1);
+      const final = clamp(confidence + (entry.rate - confidence) * pull, 0, MAX_CONFIDENCE);
+      return {
+        value: round(final, 1),
+        applied: true,
+        detail: { bucket, sport, rate: entry.rate, samples: entry.samples, pull: round(pull, 3), shape: 'v2' },
+      };
+    }
+
     const keys = Object.keys(CALIBRATION);
     if (!keys.length) {
       return { value: round(confidence, 1), applied: false, detail: null };
@@ -695,6 +766,10 @@ const EDGE_GOVERNOR = (() => {
     BUILD,
     run,
     runProp,
+    calibrationBucket,
+    readCalibrationTable,
+    poolCalibration,
+    saveCalibrationTable,
     EXCLUDED_FAMILIES,
     ADJUSTMENT_FAMILIES,
     setCalibration,
