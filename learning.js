@@ -40,7 +40,7 @@
 
 const EDGE_LEARNING = (() => {
 
-  const BUILD = 'learn-20260926-01';
+  const BUILD = 'learn-20260930-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -161,7 +161,7 @@ const EDGE_LEARNING = (() => {
       // ── 4. Calibration ──
       log('Building calibration table');
       const calibration = buildCalibration(picks);
-      summary.calibration_buckets = Object.keys(calibration).length;
+      summary.calibration_buckets = Object.values(calibration.sports || {}).reduce((n, s) => n + Object.keys(s).length, 0);
 
       // ── 5. Persist ──
       if (!dryRun) {
@@ -414,35 +414,30 @@ const EDGE_LEARNING = (() => {
   // ── CALIBRATION ──
   // ============================================================
 
+  // Live buckets per sport from graded picks, on the chance to
+  // cover before calibration, merged into the version-2 table next
+  // to the Slate Test's backtest runs — neither overwrites the other.
   function buildCalibration(picks) {
-    const buckets = {};
-
-    CALIBRATION_BUCKETS.forEach(b => {
-      buckets[String(b)] = { picks: 0, wins: 0 };
-    });
-
+    const G = window.EDGE_GOVERNOR;
+    const bucketOf = (c) => G?.calibrationBucket
+      ? G.calibrationBucket(c)
+      : String(Math.max(50, Math.min(64, Math.floor(c / 2) * 2)));
+    const live = {};
     picks.forEach(p => {
       if (p.result !== 'W' && p.result !== 'L') return;
-      const conf = p.confidence || 0;
-      const bucket = CALIBRATION_BUCKETS.reduce((closest, b) =>
-        Math.abs(b - conf) < Math.abs(closest - conf) ? b : closest
-      , CALIBRATION_BUCKETS[0]);
-
-      const key = String(bucket);
-      buckets[key].picks++;
-      if (p.result === 'W') buckets[key].wins++;
+      const raw = p.governor_snapshot?.capped_confidence ?? p.confidence;
+      if (!isFinite(raw) || !p.sport) return;
+      const b = bucketOf(raw);
+      live[p.sport] = live[p.sport] || {};
+      live[p.sport][b] = live[p.sport][b] || { n: 0, wins: 0 };
+      live[p.sport][b].n++;
+      if (p.result === 'W') live[p.sport][b].wins++;
     });
-
-    const calibration = {};
-    Object.entries(buckets).forEach(([bucket, data]) => {
-      if (data.picks < MIN_BUCKET_SAMPLES) return;
-      calibration[bucket] = {
-        rate: round((data.wins / data.picks) * 100, 1),
-        samples: data.picks,
-      };
-    });
-
-    return calibration;
+    const table = G?.readCalibrationTable
+      ? G.readCalibrationTable()
+      : { version: 2, bucket_width: 2, backtest_runs: {}, live: {}, sports: {} };
+    table.live = live;
+    return G?.poolCalibration ? G.poolCalibration(table) : table;
   }
 
   // ============================================================
