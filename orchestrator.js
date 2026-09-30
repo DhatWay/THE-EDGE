@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20260930-01';
+  const BUILD = 'orch-20260930-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -289,6 +289,45 @@ const EDGE_ORCHESTRATOR = (() => {
           return Math.abs(b.edge) - Math.abs(a.edge);
         })
         .slice(0, maxPicks);
+
+      // What each game's inputs were, so a pick's analytics can say
+      // whether anything that feeds the decision was missing.
+      finalResults.forEach(p => {
+        const prior = priors.find(x => x.game_id === p.game_id) || {};
+        const sp = prior.sport || p.sport;
+        const hs = prior.home_power || {}, as = prior.away_power || {};
+        const ctx = builtContext || {};
+        const inputs = {
+          ratings_games: Math.min(Number(hs.games_played) || 0, Number(as.games_played) || 0),
+          projection: prior.projection_spread != null,
+          composite: prior.composite_spread != null,
+          cover: !!prior.cover,
+          rest: ctx.restByTeam?.[`${sp}:${prior.home_team}`] != null && ctx.restByTeam?.[`${sp}:${prior.away_team}`] != null,
+          injuries: !!ctx.injuriesByGame?.[p.game_id],
+          calibrated: !!(p.governor_snapshot?.calibration?.applied),
+        };
+        if (p.governor_snapshot) p.governor_snapshot.inputs = inputs;
+        p.inputs = inputs;
+      });
+
+      // Every game's result, picked or passed, for the board.
+      summary.evaluations = finalResults.map(p => {
+        const prior = priors.find(x => x.game_id === p.game_id) || {};
+        return {
+          game_id: p.game_id,
+          decision: p.decision,
+          direction: p.direction,
+          side_team: p.side_label?.team || null,
+          confidence: p.confidence,
+          model_spread: prior.model_spread ?? null,
+          market_spread: prior.market?.current_spread ?? null,
+          home_cover: prior.cover?.home_cover ?? null,
+          inputs: p.inputs || null,
+        };
+      });
+      try {
+        localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations }));
+      } catch {}
 
       summary.picks = picks;
       summary.stages.final_picks = picks.length;
@@ -900,15 +939,19 @@ const EDGE_ORCHESTRATOR = (() => {
     const windowStart = new Date(Date.now() - DEDUP_WINDOW_DAYS * 86400000);
     const existing = new Map();   // game_id → row id
     const betGames = new Set();
+    const removedGames = new Set();   // picks you removed on the Picks page
     let betsReadable = true;
 
     for (let i = 0; i < allIds.length; i += 150) {
       const inList = allIds.slice(i, i + 150).map(id => `"${id}"`).join(',');
       try {
         const res = await fetch(
-          `${url}/rest/v1/shadow_picks?select=id,game_id&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
+          `${url}/rest/v1/shadow_picks?select=id,game_id,decision&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
           { headers });
-        if (res.ok) (await res.json()).forEach(r => { if (!existing.has(r.game_id)) existing.set(r.game_id, r.id); });
+        if (res.ok) (await res.json()).forEach(r => {
+          if (!existing.has(r.game_id)) existing.set(r.game_id, r.id);
+          if (r.decision === 'REMOVED') removedGames.add(r.game_id);
+        });
       } catch (e) { logEdgeError('orch.persistCheck', e); }
       try {
         const res = await fetch(`${url}/rest/v1/bet_log?select=game_id&game_id=in.(${inList})`, { headers });
@@ -923,7 +966,7 @@ const EDGE_ORCHESTRATOR = (() => {
       return isFinite(t) && t > 0 && t <= Date.now();
     };
     // Without a readable bet_log, nothing already on file is touched.
-    const locked = (gid) => !betsReadable || betGames.has(gid) || started(gid);
+    const locked = (gid) => !betsReadable || betGames.has(gid) || removedGames.has(gid) || started(gid);
 
     const pickIds = new Set(picks.map(p => p.game_id));
     const freshPicks = picks.filter(p => !existing.has(p.game_id));
