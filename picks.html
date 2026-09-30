@@ -155,6 +155,9 @@
     .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
     .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
     .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
+    .pick-action-btn.copy { color: var(--text); }
+    .bankroll-note { border: 1px solid var(--gold); color: var(--gold); font-size: 12px; line-height: 1.5; padding: 8px 10px; margin: 0 0 10px; }
+    .bankroll-note[hidden] { display: none; }
     .analytics { margin: 4px 0 10px; border: 1px solid var(--border); }
     .analytics summary { cursor: pointer; padding: 8px 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
     .analytics-body { padding: 0 10px 10px; font-size: 12px; line-height: 1.6; color: var(--text); }
@@ -359,6 +362,11 @@
       <button class="fchip" data-filter="NBA">NBA</button>
       <button class="fchip" data-filter="NCAAF">NCAAF</button>
       <button class="fchip" data-filter="NCAAB">NCAAB</button>
+    </div>
+
+    <div class="bankroll-note" id="bankrollNote" hidden>
+      Bankroll isn't set — units are sized on a $1,000 bankroll with $50 units.
+      Set your bankroll and unit size in Settings.
     </div>
 
     <div class="picks-tools">
@@ -748,6 +756,8 @@
     }
 
     function renderPicks() {
+      const note = document.getElementById('bankrollNote');
+      if (note) note.hidden = parseFloat(localStorage.getItem('edge_bankroll') || '0') > 0;
       const filtered = applyFilter(allPicks);
       updateSummary(filtered);
       const list = document.getElementById('picksList');
@@ -917,7 +927,7 @@
 
           <div class="pick-actions">
             ${actions}
-            <button class="pick-action-btn" onclick="copyPick('${pickKey}')">⧉ Copy</button>
+            <button class="pick-action-btn copy" onclick="copyPick('${pickKey}')">⧉ Copy</button>
           </div>
         </div>`;
     }
