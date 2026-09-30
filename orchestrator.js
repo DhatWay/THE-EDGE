@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20260929-01';
+  const BUILD = 'orch-20260930-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -295,15 +295,13 @@ const EDGE_ORCHESTRATOR = (() => {
       log(`  ${picks.length} actionable picks`);
 
       // ── Persist ──
-      if (persist && picks.length) {
+      if (persist && (picks.length || finalResults.length)) {
         log('Persisting picks');
-        const persistResult = await persistShadowPicks(picks, priors, mode, runId);
+        const evaluatedIds = finalResults.map(p => p.game_id).filter(Boolean);
+        const persistResult = await persistShadowPicks(picks, priors, mode, runId, evaluatedIds);
         if (persistResult.ok) {
-          if (persistResult.skipped) {
-            log(`  0 new rows · ${persistResult.skipped} already on file`);
-          } else {
-            log(`  ${persistResult.count} rows written`);
-          }
+          log(`  ${persistResult.count || 0} new · ${persistResult.updated || 0} refreshed · ` +
+              `${persistResult.withdrawn || 0} withdrawn · ${persistResult.locked || 0} locked (bet placed or started)`);
           summary.persisted = persistResult.count || 0;
         } else {
           log(`  persist failed: ${persistResult.status || ''} ${persistResult.reason || ''}`);
@@ -881,36 +879,63 @@ const EDGE_ORCHESTRATOR = (() => {
   // pick survives, from whichever run saw it first.
   // ============================================================
 
-  async function persistShadowPicks(picks, priors, mode, runId) {
+  // A game has one pick row. Each run refreshes it until it is
+  // locked: a bet has been logged on it, or the game has started.
+  //   · no row yet, pick now      → insert
+  //   · unlocked row, pick now    → update in place with this run's
+  //                                 evaluation (line, numbers, side)
+  //   · unlocked row, pass now    → withdrawn (deleted): the model no
+  //                                 longer likes it, and nothing was bet
+  // A pick made days ahead used to be frozen at its first evaluation,
+  // blind to later injuries and line moves.
+  async function persistShadowPicks(picks, priors, mode, runId, evaluatedIds = []) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
     if (!url || !key) return { ok: false, reason: 'Supabase not connected' };
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-    const gameIds = picks.map(p => p.game_id).filter(Boolean);
-    if (!gameIds.length) return { ok: false, reason: 'No game IDs' };
+    const allIds = Array.from(new Set([...picks.map(p => p.game_id), ...evaluatedIds].filter(Boolean)));
+    if (!allIds.length) return { ok: true, count: 0 };
 
     const windowStart = new Date(Date.now() - DEDUP_WINDOW_DAYS * 86400000);
-    const existingGameIds = new Set();
+    const existing = new Map();   // game_id → row id
+    const betGames = new Set();
+    let betsReadable = true;
 
-    try {
-      const inList = gameIds.map(id => `"${id}"`).join(',');
-      const checkRes = await fetch(
-        `${url}/rest/v1/shadow_picks?select=game_id&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-      );
-      if (checkRes.ok) {
-        (await checkRes.json()).forEach(r => existingGameIds.add(r.game_id));
-      }
-    } catch (e) { logEdgeError('orch.persistCheck', e); }
-
-    const freshPicks = picks.filter(p => !existingGameIds.has(p.game_id));
-    if (!freshPicks.length) {
-      return { ok: true, count: 0, skipped: picks.length };
+    for (let i = 0; i < allIds.length; i += 150) {
+      const inList = allIds.slice(i, i + 150).map(id => `"${id}"`).join(',');
+      try {
+        const res = await fetch(
+          `${url}/rest/v1/shadow_picks?select=id,game_id&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
+          { headers });
+        if (res.ok) (await res.json()).forEach(r => { if (!existing.has(r.game_id)) existing.set(r.game_id, r.id); });
+      } catch (e) { logEdgeError('orch.persistCheck', e); }
+      try {
+        const res = await fetch(`${url}/rest/v1/bet_log?select=game_id&game_id=in.(${inList})`, { headers });
+        if (res.ok) (await res.json()).forEach(r => betGames.add(r.game_id));
+        else betsReadable = false;
+      } catch { betsReadable = false; }
     }
+
+    const priorByIdAll = new Map(priors.map(p => [p.game_id, p]));
+    const started = (gid) => {
+      const t = new Date(priorByIdAll.get(gid)?.commence_time || 0).getTime();
+      return isFinite(t) && t > 0 && t <= Date.now();
+    };
+    // Without a readable bet_log, nothing already on file is touched.
+    const locked = (gid) => !betsReadable || betGames.has(gid) || started(gid);
+
+    const pickIds = new Set(picks.map(p => p.game_id));
+    const freshPicks = picks.filter(p => !existing.has(p.game_id));
+    const refreshPicks = picks.filter(p => existing.has(p.game_id) && !locked(p.game_id));
+    const withdrawIds = Array.from(existing.keys())
+      .filter(gid => !pickIds.has(gid) && evaluatedIds.includes(gid) && !locked(gid))
+      .map(gid => existing.get(gid));
+    const lockedCount = picks.filter(p => existing.has(p.game_id) && locked(p.game_id)).length;
 
     const priorById = new Map(priors.map(p => [p.game_id, p]));
 
-    const rows = freshPicks.map(p => {
+    const rows = [...freshPicks, ...refreshPicks].map(p => {
       const prior = priorById.get(p.game_id) || {};
       return {
         run_id: runId,
@@ -949,24 +974,50 @@ const EDGE_ORCHESTRATOR = (() => {
       };
     });
 
-    try {
-      const res = await fetch(`${url}/rest/v1/shadow_picks`, {
-        method: 'POST',
-        headers: {
-          apikey: key, Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify(rows),
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '');
-        return { ok: false, status: res.status, reason: txt.slice(0, 200) };
-      }
-      return { ok: true, count: rows.length };
-    } catch (e) {
-      return { ok: false, reason: e.message };
+    const insertRows = rows.slice(0, freshPicks.length);
+    const updateRows = rows.slice(freshPicks.length);
+    let inserted = 0, updated = 0, withdrawn = 0;
+    const errors = [];
+
+    if (insertRows.length) {
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify(insertRows),
+        });
+        if (res.ok) inserted = insertRows.length;
+        else errors.push(`insert HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`);
+      } catch (e) { errors.push(e.message); }
     }
+
+    for (const row of updateRows) {
+      const id = existing.get(row.game_id);
+      const { created_at, ...patch } = row;
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${id}`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify(patch),
+        });
+        if (res.ok) updated++;
+        else errors.push(`update HTTP ${res.status}`);
+      } catch (e) { errors.push(e.message); }
+    }
+
+    if (withdrawIds.length) {
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?id=in.(${withdrawIds.join(',')})`,
+          { method: 'DELETE', headers });
+        if (res.ok) withdrawn = withdrawIds.length;
+        else errors.push(`withdraw HTTP ${res.status}`);
+      } catch (e) { errors.push(e.message); }
+    }
+
+    if (errors.length && !inserted && !updated && !withdrawn) {
+      return { ok: false, reason: errors[0] };
+    }
+    return { ok: true, count: inserted, updated, withdrawn, locked: lockedCount, errors };
   }
 
   // ============================================================
