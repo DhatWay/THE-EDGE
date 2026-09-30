@@ -38,7 +38,7 @@
 
 const EDGE_INJURY = (() => {
 
-  const BUILD = 'inj-20260926-01';
+  const BUILD = 'inj-20260930-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -54,7 +54,20 @@ const EDGE_INJURY = (() => {
     MLS:   { site: 'soccer/usa.1',                       core: ['soccer','usa.1'] },
   };
 
-  const CACHE_KEY = 'edge_injury_cache_v3';
+  // v4: injury records carry the date ESPN reported them.
+  const CACHE_KEY = 'edge_injury_cache_v4';
+
+  // Long-term absences reported more than this many days ago are
+  // already in the team's results — and in the line — so they are
+  // not counted again. A player placed on IR this week still counts.
+  const LONG_TERM_STATUSES = new Set(['injured reserve', 'ir', 'out for season', 'suspended', 'pup', 'physically unable to perform']);
+  const LONG_TERM_RECENT_DAYS = 21;
+
+  // Deductions are expressed as a percent of the team's regular
+  // lineup: its top N players by contribution. Raw sums of every
+  // listed player ran to -180 to -270 per team, which the injury
+  // vote (built for gaps of 1.5 to 5) read as maximum on every game.
+  const LINEUP_SIZE = { NFL: 22, NCAAF: 22, NBA: 8, WNBA: 8, NCAAB: 8, MLB: 14, NHL: 19, MLS: 11 };
   const CACHE_TTL_MS = 30 * 60 * 1000;
 
   const STATUS_MULTIPLIER = {
@@ -146,10 +159,13 @@ const EDGE_INJURY = (() => {
       const homeInjuries = matchInjuriesToRoster(injuries[homeNorm] || [], roster[homeNorm] || []);
       const awayInjuries = matchInjuriesToRoster(injuries[awayNorm] || [], roster[awayNorm] || []);
 
-      const homeOff = sumDeduction(homeInjuries, 'offensive_contribution');
-      const homeDef = sumDeduction(homeInjuries, 'defensive_contribution');
-      const awayOff = sumDeduction(awayInjuries, 'offensive_contribution');
-      const awayDef = sumDeduction(awayInjuries, 'defensive_contribution');
+      // Percent of each team's regular lineup missing.
+      const homeScale = lineupScale(sport, roster[homeNorm] || []);
+      const awayScale = lineupScale(sport, roster[awayNorm] || []);
+      const homeOff = round(sumDeduction(homeInjuries, 'offensive_contribution') * homeScale, 2);
+      const homeDef = round(sumDeduction(homeInjuries, 'defensive_contribution') * homeScale, 2);
+      const awayOff = round(sumDeduction(awayInjuries, 'offensive_contribution') * awayScale, 2);
+      const awayDef = round(sumDeduction(awayInjuries, 'defensive_contribution') * awayScale, 2);
 
       out[g.id] = {
         home: homeInjuries,
@@ -273,7 +289,13 @@ const EDGE_INJURY = (() => {
       if (!player) return;
 
       const status = (inj.status || '').toLowerCase().trim();
-      const multiplier = STATUS_MULTIPLIER[status] ?? 0.25;
+      let multiplier = STATUS_MULTIPLIER[status] ?? 0.25;
+
+      if (LONG_TERM_STATUSES.has(status)) {
+        const reported = inj.date ? new Date(inj.date).getTime() : NaN;
+        const recent = isFinite(reported) && (Date.now() - reported) <= LONG_TERM_RECENT_DAYS * 86400000;
+        if (!recent) return;
+      }
 
       matched.push({
         name: player.name,
@@ -297,6 +319,18 @@ const EDGE_INJURY = (() => {
       .replace(/[.'`\-]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  // 100 / (combined contribution of the team's top N players), so a
+  // deduction times this is a percent of the regular lineup.
+  function lineupScale(sport, players) {
+    const n = LINEUP_SIZE[sport] || 11;
+    const top = players
+      .map(p => (Number(p.offensive_contribution) || 0) + (Number(p.defensive_contribution) || 0))
+      .sort((a, b) => b - a)
+      .slice(0, n)
+      .reduce((s, v) => s + v, 0);
+    return top > 0 ? 100 / top : 0;
   }
 
   function sumDeduction(injuries, field) {
@@ -511,7 +545,8 @@ const EDGE_INJURY = (() => {
         if (!name) return;
         if (!status) return;
 
-        byTeam[norm].push({ name, position, status });
+        const date = inj.date || entry.date || null;
+        byTeam[norm].push({ name, position, status, date });
       });
     });
 
