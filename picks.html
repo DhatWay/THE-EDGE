@@ -488,7 +488,8 @@
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        allPicks = await res.json();
+        // Picks you removed stay removed — the pipeline won't re-add them.
+        allPicks = (await res.json()).filter(p => p.decision !== 'REMOVED');
       } catch (e) {
         logEdgeError('picks.loadFromSupabase', e);
         allPicks = loadCachedPicks();
@@ -960,6 +961,21 @@
         ['Decided by', gs.decision_source || p.decision_path || '—'],
       ];
       if (gs.data_caps && gs.data_caps.length) rows.push(['Caps', gs.data_caps.join(', ')]);
+      // Inputs: which of the things the decision uses were there.
+      // Only these change the pick; the "not used" families below do not.
+      const inp = gs.inputs || p.inputs || null;
+      if (inp) {
+        const yn = v => v ? 'yes' : 'MISSING';
+        rows.push(['Games in ratings (fewer team)', inp.ratings_games]);
+        rows.push(['Offense/defense projection', yn(inp.projection)]);
+        rows.push(['Composite rating', yn(inp.composite)]);
+        rows.push(['Chance to cover computed', yn(inp.cover)]);
+        rows.push(['Rest days (adjusts)', yn(inp.rest)]);
+        rows.push(['Injury report (adjusts)', yn(inp.injuries)]);
+        rows.push(['Calibration applied', inp.calibrated ? 'yes' : 'no table yet']);
+      } else {
+        rows.push(['Inputs', 'not recorded — rerun the pipeline']);
+      }
       const fams = (gs.breakdown || []).map(b => ({
         family: (b.family || '').replace(/_/g, ' '),
         vote: b.vote === 'yes' ? 'home' : b.vote === 'no' ? 'away' : 'neutral',
@@ -1147,6 +1163,22 @@
       if (!pick) return;
       const units = pick.units || 1;
 
+      // Before kickoff only. The logged bet is deleted too — before,
+      // only this device forgot it, and the pipeline kept treating
+      // the pick as locked by a bet.
+      if (pick.commence_time && new Date(pick.commence_time) <= new Date()) {
+        showToast('Game has started — bet is locked', 'red'); return;
+      }
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const res = await fetch(
+          `${url}/rest/v1/bet_log?game_id=eq.${encodeURIComponent(pick.game_id)}&mode=eq.${mode}&status=eq.pending`,
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+      } catch (e) {
+        showToast('Undo failed: ' + e.message, 'red'); return;
+      }
+
       if (mode === 'real') {
         const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
         const unitType = localStorage.getItem('edge_unit_type') || 'flat';
@@ -1171,9 +1203,34 @@
       showToast('Bet undone', '');
     }
 
-    function skipPick(pickId) {
-      localStorage.setItem(`edge_skipped_${pickId}`, 'true');
-      showToast('Pick skipped', '');
+    // Remove a pick before it is locked. It is marked REMOVED in the
+    // database, so the next pipeline run neither refreshes nor
+    // re-adds it. A pick with a bet on it must have the bet undone
+    // first; a game that has started can't be changed.
+    async function skipPick(pickId) {
+      const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
+      if (!pick) return;
+      if (localStorage.getItem(`edge_bet_sim_${pickId}`) === 'true' || localStorage.getItem(`edge_bet_real_${pickId}`) === 'true') {
+        showToast('Undo the bet on this pick first', 'red'); return;
+      }
+      if (pick.commence_time && new Date(pick.commence_time) <= new Date()) {
+        showToast('Game has started — pick is locked', 'red'); return;
+      }
+      if (!confirm(`Remove ${pick.side_team || 'this pick'}? The pipeline won't add it again.`)) return;
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${pick.id}`, {
+          method: 'PATCH',
+          headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify({ decision: 'REMOVED', units: 0 }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        allPicks = allPicks.filter(p => p !== pick);
+        renderPicks();
+        showToast('Pick removed', '');
+      } catch (e) {
+        showToast('Remove failed: ' + e.message, 'red');
+      }
     }
 
     // logBet writes the same shape the orchestrator's
