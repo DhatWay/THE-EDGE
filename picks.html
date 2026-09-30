@@ -151,6 +151,18 @@
     .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
 
     .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
+
+    .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
+    .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
+    .analytics { margin: 4px 0 10px; border: 1px solid var(--border); }
+    .analytics summary { cursor: pointer; padding: 8px 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+    .analytics-body { padding: 0 10px 10px; font-size: 12px; line-height: 1.6; color: var(--text); }
+    .analytics-body .row { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 3px 0; }
+    .analytics-body .row span:first-child { color: var(--text-dim); }
+    .analytics-body .fam { padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .analytics-body .fam b { font-weight: 600; }
+    .analytics-body .fam.off { opacity: 0.45; }
     .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
     .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
     .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
@@ -334,8 +346,8 @@
 
     <div class="filter-strip">
       <button class="fchip active" data-filter="all">All</button>
-      <button class="fchip" data-filter="elite">Elite 75+</button>
-      <button class="fchip" data-filter="high">High 65+</button>
+      <button class="fchip" data-filter="elite">Elite 60+</button>
+      <button class="fchip" data-filter="high">High 57+</button>
       <button class="fchip" data-filter="solid">Solid 55+</button>
       <button class="fchip" data-filter="bet2u">BET 2U</button>
       <button class="fchip" data-filter="bet1u">BET 1U</button>
@@ -347,6 +359,11 @@
       <button class="fchip" data-filter="NBA">NBA</button>
       <button class="fchip" data-filter="NCAAF">NCAAF</button>
       <button class="fchip" data-filter="NCAAB">NCAAB</button>
+    </div>
+
+    <div class="picks-tools">
+      <button class="tool-btn" onclick="copyAllPicks()">⧉ Copy All</button>
+      <button class="tool-btn gold" id="betAllBtn" onclick="betAllPicks()">▶ Bet All</button>
     </div>
 
     <div class="picks-list" id="picksList">
@@ -450,15 +467,16 @@
       if (!url || !key) { allPicks = loadCachedPicks(); renderPicks(); return; }
 
       try {
+        // Every pick for a game that hasn't finished — no 7-day cut-off.
+        // The board can hold games further out (next week's NFL lines),
+        // and their picks were saved but never shown here.
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        const horizon = new Date(todayStart.getTime() + 7 * 86400000);
 
         const res = await fetch(
           `${url}/rest/v1/shadow_picks?select=*` +
           `&commence_time=gte.${todayStart.toISOString()}` +
-          `&commence_time=lt.${horizon.toISOString()}` +
-          `&order=confidence.desc&limit=200`,
+          `&order=commence_time.asc,confidence.desc&limit=500`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -675,8 +693,8 @@
 
     function applyFilter(picks) {
       if (currentFilter === 'all') return picks;
-      if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 75);
-      if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 65);
+      if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 60);
+      if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 57);
       if (currentFilter === 'solid') return picks.filter(p => (p.confidence || 0) >= 55);
       if (currentFilter === 'bet2u') return picks.filter(p => p.decision === 'BET_2U' || (p.decision === 'BET' && (p.units || 0) >= 2));
       if (currentFilter === 'bet1u') return picks.filter(p => p.decision === 'BET_1U' || (p.decision === 'BET' && (p.units || 0) < 2));
@@ -723,8 +741,8 @@
     }
 
     function tier(conf) {
-      if (conf >= 75) return 'elite';
-      if (conf >= 65) return 'high';
+      if (conf >= 60) return 'elite';
+      if (conf >= 57) return 'high';
       if (conf >= 55) return 'solid';
       return 'lean';
     }
@@ -862,8 +880,8 @@
 
             <div class="metric-row">
               <div class="metric-cell">
-                <div class="metric-val ${conf >= 65 ? 'gold' : conf >= 55 ? 'green' : ''}">${Math.round(conf)}%</div>
-                <div class="metric-lbl">Confidence</div>
+                <div class="metric-val ${conf >= 57 ? 'gold' : conf >= 55 ? 'green' : ''}">${conf.toFixed(1)}%</div>
+                <div class="metric-lbl">To cover</div>
               </div>
               <div class="metric-cell">
                 <div class="metric-val ${p.edge > 0 ? 'green' : 'red'}">${((p.edge || 0) * 100).toFixed(2)}%</div>
@@ -893,12 +911,130 @@
             ${claudeNote}
 
             <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
+
+            ${buildAnalytics(p)}
           </div>
 
           <div class="pick-actions">
             ${actions}
+            <button class="pick-action-btn" onclick="copyPick('${pickKey}')">⧉ Copy</button>
           </div>
         </div>`;
+    }
+
+    // ── ANALYTICS ──
+    // Everything the decision was made from: the ranking's spread
+    // against the market, its chance to cover, the rest and injury
+    // adjustment, every family's vote and reason, Claude when it ran.
+
+    function pickAnalytics(p) {
+      const ph = p.physics_output || p;
+      const gs = p.governor_snapshot || ph.governor_snapshot || {};
+      const r = gs.ranking || {};
+      const fmtSp = v => (v == null || !isFinite(v)) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1);
+      const pct = v => (v == null || !isFinite(v)) ? '—' : (v * 100).toFixed(1) + '%';
+      const home = p.home_team || 'Home';
+      const rows = [
+        ['Decision', `${p.decision || '—'} · ${p.units || 0}u · ${p.side_team || p.direction || '—'}`],
+        ['Market spread (home)', fmtSp(p.market_spread ?? r.market_spread)],
+        ['Ranking spread (home)', fmtSp(r.model_spread)],
+        ['Offense/defense projection', fmtSp(r.projection_spread)],
+        ['Composite rating spread', fmtSp(r.composite_spread)],
+        ['Projection weight', r.projection_weight != null ? Math.round(r.projection_weight * 100) + '%' : '—'],
+        ['Coaching adjustment', r.coaching_delta != null ? Number(r.coaching_delta).toFixed(2) + ' pts' : '—'],
+        [`Ranking: ${home} covers`, pct(r.home_cover ?? gs.ranking_home_cover)],
+        ['Rest/injury adjustment', gs.adjustment != null ? (gs.adjustment * 100).toFixed(1) + ' pts' : '—'],
+        [`After market pull: ${home} covers`, pct(gs.posterior_home_prob)],
+        ['Chance the pick covers', (p.confidence || 0).toFixed(1) + '%'],
+        ['Edge over 50%', ((p.edge || 0) * 100).toFixed(1) + ' pts'],
+        ['Decided by', gs.decision_source || p.decision_path || '—'],
+      ];
+      if (gs.data_caps && gs.data_caps.length) rows.push(['Caps', gs.data_caps.join(', ')]);
+      const fams = (gs.breakdown || []).map(b => ({
+        family: (b.family || '').replace(/_/g, ' '),
+        vote: b.vote === 'yes' ? 'home' : b.vote === 'no' ? 'away' : 'neutral',
+        weight: b.weight,
+        reason: b.reason || '',
+      }));
+      const claude = p.claude_verdict || p.claude_output || null;
+      return { rows, fams, claude };
+    }
+
+    function buildAnalytics(p) {
+      const a = pickAnalytics(p);
+      const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const rows = a.rows.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
+      const fams = a.fams.map(f =>
+        `<div class="fam ${f.weight ? '' : 'off'}"><b>${esc(f.family)}</b> · ${esc(f.vote)} · weight ${esc(f.weight)}${f.weight ? '' : ' (not used)'}<br>${esc(f.reason)}</div>`
+      ).join('');
+      const claude = a.claude
+        ? `<div class="fam"><b>Claude</b> · ${esc(a.claude.side || a.claude.decision || '')} ${a.claude.confidence != null ? esc(a.claude.confidence) + '%' : ''}<br>${esc(a.claude.reason || '')}</div>`
+        : '';
+      return `<details class="analytics"><summary>Analytics</summary><div class="analytics-body">${rows}${fams}${claude}</div></details>`;
+    }
+
+    function pickText(p) {
+      const a = pickAnalytics(p);
+      const when = p.commence_time ? new Date(p.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      const lines = [
+        `${p.sport || ''} · ${p.away_team || 'Away'} @ ${p.home_team || 'Home'} · ${when}`,
+        `PICK: ${p.side_team || p.direction || '—'} ${p.market_spread != null ? '(home spread ' + (p.market_spread > 0 ? '+' : '') + p.market_spread + ')' : ''}`,
+        ...a.rows.map(([k, v]) => `${k}: ${v}`),
+        'Families:',
+        ...a.fams.map(f => `  ${f.family} — ${f.vote}, weight ${f.weight}${f.weight ? '' : ' (not used)'}: ${f.reason}`),
+      ];
+      if (a.claude) lines.push(`Claude: ${a.claude.side || a.claude.decision || ''} ${a.claude.confidence ?? ''}% — ${a.claude.reason || ''}`);
+      return lines.join('\n');
+    }
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch {}
+        document.body.removeChild(ta);
+        return ok;
+      }
+    }
+
+    async function copyPick(pickKey) {
+      const p = allPicks.find(x => (x.pick_id || x.game_id || x.id) === pickKey);
+      if (!p) return;
+      showToast(await copyText(pickText(p)) ? 'Pick copied' : 'Copy failed', '');
+    }
+
+    async function copyAllPicks() {
+      const list = applyFilter(allPicks);
+      if (!list.length) { showToast('No picks to copy', 'red'); return; }
+      const text = list.map(pickText).join('\n\n────────\n\n');
+      showToast(await copyText(text) ? `${list.length} picks copied` : 'Copy failed', '');
+    }
+
+    // Places every shown pick that is a bet and not placed yet, in
+    // the current portfolio, through the same placeBet each card uses.
+    async function betAllPicks() {
+      const list = applyFilter(allPicks).filter(p =>
+        p.decision && !['PASS', 'CAPPED', 'VETOED'].includes(p.decision) &&
+        localStorage.getItem(`edge_bet_${portfolio}_${p.pick_id || p.game_id || p.id}`) !== 'true');
+      if (!list.length) { showToast('Every shown pick is already placed', ''); return; }
+      const units = list.reduce((s, p) => s + (p.units || 1), 0);
+      const label = portfolio === 'real' ? 'real' : 'sim';
+      if (!confirm(`Place ${list.length} ${label} bets, ${units} units total?`)) return;
+      const btn = document.getElementById('betAllBtn');
+      if (btn) btn.disabled = true;
+      try {
+        for (const p of list) await placeBet(portfolio, p.pick_id || p.game_id || p.id);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     function buildContextPanel(p) {
