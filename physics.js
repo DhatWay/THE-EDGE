@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20260929-01';
+  const BUILD = 'phys-20260930-01';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -236,8 +236,9 @@ const EDGE_PHYSICS = (() => {
     // ── 5. Preserve the governor decision label ──
     // Only downgrade if the sizing cannot support the label.
     let decision = baseDecision;
-    if (finalUnits < 1 && decision === 'BET_2U') decision = 'BET_1U';
-    if (finalUnits < 0.5 && decision === 'BET_1U') decision = 'LEAN';
+    // The decision keeps the governor's tier — how strong the pick
+    // is. Units carry the sizing. Relabeling by units made a 56%
+    // pick read LEAN whenever the bankroll sized it small.
 
     // ── 6. Reasons ──
     const reasons = [];
