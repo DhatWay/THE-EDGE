@@ -98,6 +98,11 @@
   .sum-l { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
 
   .section { margin-bottom: 20px; }
+  .note { font-size: 11px; color: var(--text-dim); line-height: 1.5; padding: 6px 2px 0; }
+  details.week { border-bottom: 1px solid var(--border); padding: 6px 0; }
+  details.week summary { cursor: pointer; font-size: 12px; line-height: 1.5; color: var(--text); }
+  details.week summary b { color: var(--gold); }
+  .wk-row { font-size: 11px; color: var(--text-dim); padding: 3px 0 3px 10px; line-height: 1.4; }
   .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px; color: var(--text); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
   .sec-title em { color: var(--gold); font-style: normal; }
   .sec-note { font-size: 11.5px; color: var(--text-dim); font-weight: 300; margin-bottom: 10px; line-height: 1.5; }
@@ -275,6 +280,15 @@ let gameResults = [];
 let situationRows = [];
 let familyStats = {};
 let confStats = {};
+// Every graded game (picked or passed): the governor's chance to
+// cover before calibration, the ranking's spread, the market's, and
+// the final margin. Feeds spread accuracy and calibration.
+let evalRows = [];
+// Every game in the window, week by week, for the ATS board.
+let weeklyBoard = [];
+// Situations are not part of the decision, so the backtest skips
+// them too — faster, and the same path as live picks.
+const SITUATIONS_IN_BACKTEST = false;
 let currentRunId = null;
 let openSpreadAvailable = false;
 let situationsTableAvailable = false;
@@ -285,6 +299,8 @@ function clearResults() {
   situationRows = [];
   familyStats = {};
   confStats = {};
+  evalRows = [];
+  weeklyBoard = [];
   document.getElementById('log').textContent = 'Ready.';
   document.getElementById('output').innerHTML = '';
 }
@@ -469,6 +485,7 @@ async function run() {
           };
           const graded = await gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights);
           if (graded) {
+            if (graded.evalRow) evalRows.push(graded.evalRow);
             if (graded.pick) {
               gameResults.push(graded.pick);
               tallyFamilyGraded(graded.pick);
@@ -484,6 +501,36 @@ async function run() {
     }
 
     log(`  ${processed} processed`);
+
+    // ── Weekly ATS board: every game in the window ──
+    const evalById = new Map(evalRows.map(r => [r.game_id, r]));
+    const pickById = new Map(gameResults.map(r => [r.game_id, r]));
+    weeklyBoard = steps.map(step => ({
+      label: step.label,
+      games: step.games.map(g => {
+        const margin = g.home_score - g.away_score;
+        const cover = margin + g.spread;
+        const covered = Math.abs(cover) < 0.01 ? 'push' : cover > 0 ? 'home' : 'away';
+        const ev = evalById.get(g.game_id) || null;
+        return {
+          home: g.home, away: g.away, spread: g.spread,
+          score: `${g.away_score}-${g.home_score}`,
+          margin, cover: Math.round(cover * 10) / 10, covered,
+          favorite: g.spread < 0 ? 'home' : g.spread > 0 ? 'away' : null,
+          model_side: ev ? ev.side : null,
+          model_conf: ev ? ev.confidence : null,
+          pick: pickById.get(g.game_id) || null,
+        };
+      }),
+    }));
+
+    // ── Calibration from this run ──
+    if (evalRows.length) {
+      const saved = await writeBacktestCalibration(sport, fromDate, toDate, evalRows);
+      log(saved.ok
+        ? `  calibration saved · ${saved.buckets} buckets from ${saved.games} games${saved.remote ? '' : ' (this device only)'}`
+        : `  calibration not saved: ${saved.reason}`);
+    }
     if (skippedThin) log(`  ${skippedThin} skipped — fewer than ${MIN_HISTORY} prior games`);
     log(`  ${gameResults.length} graded picks`);
     log(`  ${situationRows.length} situation rows`);
@@ -928,7 +975,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
   let sitFamily = null;
   let gradedSituationRows = [];
 
-  if (window.EDGE_SITUATIONS) {
+  if (SITUATIONS_IN_BACKTEST && window.EDGE_SITUATIONS) {
     try {
       const slateGame = {
         id: g.game_id, _sport: sport, sport,
@@ -1051,9 +1098,25 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     };
   }
 
-  if (!pick && !gradedSituationRows.length) return null;
+  const marginAll = g.home_score - g.away_score;
+  const coverHomeAll = marginAll + g.spread;
+  const govSide = gov.direction === 'away' ? 'away' : 'home';
+  const sideCover = govSide === 'home' ? coverHomeAll : -coverHomeAll;
+  const evalRow = {
+    game_id: g.game_id,
+    sport,
+    side: govSide,
+    raw_confidence: gov.capped_confidence ?? gov.confidence,
+    confidence: phys.confidence,
+    result: Math.abs(sideCover) < 0.01 ? 'P' : sideCover > 0 ? 'W' : 'L',
+    model_spread: prior.model_spread,
+    market_spread: g.spread,
+    margin: marginAll,
+    ratings_games: Math.min(Number(homeStats.games_played) || 0, Number(awayStats.games_played) || 0),
+    picked: !!pick,
+  };
 
-  return { pick, situationRows: gradedSituationRows };
+  return { pick, situationRows: gradedSituationRows, evalRow };
 }
 
 // ============================================================
@@ -1138,7 +1201,7 @@ function tallyFamilyGraded(g) {
 
 function tallyConfBucket(g) {
   const conf = g.confidence;
-  const bucket = conf >= 75 ? '75+' : conf >= 70 ? '70-74' : conf >= 65 ? '65-69' : conf >= 60 ? '60-64' : conf >= 55 ? '55-59' : '<55';
+  const bucket = conf >= 60 ? '60+' : conf >= 58 ? '58-59.9' : conf >= 56 ? '56-57.9' : conf >= 54 ? '54-55.9' : conf >= 52 ? '52-53.9' : '<52';
   if (!confStats[bucket]) confStats[bucket] = { wins: 0, losses: 0, pushes: 0, games: 0 };
   confStats[bucket].games++;
   if (g.result === 'W') confStats[bucket].wins++;
@@ -1172,7 +1235,7 @@ function seasonOf(sport, date) {
 // ============================================================
 
 async function renderReport(sport) {
-  if (!gameResults.length && !situationRows.length) {
+  if (!gameResults.length && !situationRows.length && !evalRows.length && !weeklyBoard.length) {
     out('<div class="empty">Nothing produced. No picks and no situations fired.</div>');
     return;
   }
@@ -1274,7 +1337,7 @@ async function renderReport(sport) {
     html += `</div>`;
   }
 
-  const confOrder = ['75+', '70-74', '65-69', '60-64', '55-59', '<55'];
+  const confOrder = ['60+', '58-59.9', '56-57.9', '54-55.9', '52-53.9', '<52'];
   const confRows = confOrder.filter(k => confStats[k]).map(k => {
     const v = confStats[k];
     const total = v.wins + v.losses;
@@ -1330,10 +1393,158 @@ async function renderReport(sport) {
     are not wired into the backtest yet, so those rules are reported untestable.
   </div>`;
 
+  html += renderAccuracyAndCalibration();
+  html += renderWeeklyBoard();
   out(html);
 }
 
 function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
+
+// ============================================================
+// SPREAD ACCURACY · CALIBRATION · WEEKLY ATS BOARD
+// ============================================================
+
+// Is the ranking's spread closer to the final margin than the
+// market's? Margins are the home team's; a spread of -7 predicts
+// home by 7.
+function spreadAccuracy(rows) {
+  const r = rows.filter(x => isFinite(x.model_spread) && isFinite(x.market_spread) && isFinite(x.margin));
+  if (!r.length) return null;
+  let mErr = 0, kErr = 0, bias = 0, closer = 0, decided = 0;
+  r.forEach(x => {
+    const em = x.margin - (-x.model_spread);
+    const ek = x.margin - (-x.market_spread);
+    mErr += Math.abs(em); kErr += Math.abs(ek); bias += em;
+    if (Math.abs(Math.abs(em) - Math.abs(ek)) > 0.01) { decided++; if (Math.abs(em) < Math.abs(ek)) closer++; }
+  });
+  return { games: r.length, model_mae: mErr / r.length, market_mae: kErr / r.length,
+           bias: bias / r.length, closer_rate: decided ? closer / decided : null };
+}
+
+function calibrationRows(rows) {
+  const buckets = {};
+  rows.forEach(x => {
+    if (x.result === 'P' || !isFinite(x.raw_confidence)) return;
+    const b = EDGE_GOVERNOR.calibrationBucket ? EDGE_GOVERNOR.calibrationBucket(x.raw_confidence)
+                                               : String(Math.max(50, Math.min(64, Math.floor(x.raw_confidence / 2) * 2)));
+    buckets[b] = buckets[b] || { n: 0, wins: 0, sum: 0 };
+    buckets[b].n++; buckets[b].sum += x.raw_confidence;
+    if (x.result === 'W') buckets[b].wins++;
+  });
+  return buckets;
+}
+
+async function writeBacktestCalibration(sport, fromDate, toDate, rows) {
+  if (!EDGE_GOVERNOR.readCalibrationTable || !EDGE_GOVERNOR.saveCalibrationTable) {
+    return { ok: false, reason: 'governor.js is older than this page — upload the new one' };
+  }
+  const b = calibrationRows(rows);
+  const buckets = {};
+  Object.entries(b).forEach(([k, v]) => { buckets[k] = { n: v.n, wins: v.wins }; });
+  const table = EDGE_GOVERNOR.readCalibrationTable();
+  table.backtest_runs = table.backtest_runs || {};
+  table.backtest_runs[sport] = table.backtest_runs[sport] || {};
+  table.backtest_runs[sport][`${fromDate}|${toDate}`] = { buckets, games: rows.length, at: new Date().toISOString() };
+  const pooled = EDGE_GOVERNOR.saveCalibrationTable(table);
+
+  let remote = false;
+  const url = SB_URL(), key = SB_KEY();
+  if (url && key) {
+    try {
+      const res = await fetch(`${url}/rest/v1/settings?on_conflict=id`, {
+        method: 'POST',
+        headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json',
+                   Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({ id: 1, governor_calibration: pooled, updated_at: new Date().toISOString() }),
+      });
+      remote = res.ok;
+    } catch {}
+  }
+  return { ok: true, buckets: Object.keys(buckets).length, games: rows.length, remote };
+}
+
+function renderAccuracyAndCalibration() {
+  let html = '';
+  const acc = spreadAccuracy(evalRows);
+  if (acc) {
+    const early = spreadAccuracy(evalRows.filter(x => x.ratings_games < 5));
+    const later = spreadAccuracy(evalRows.filter(x => x.ratings_games >= 5));
+    const line = (label, a) => a ? `<div class="row">
+        <span class="name">${label}</span>
+        <span class="num neu">${a.games}</span>
+        <span class="num ${a.model_mae <= a.market_mae ? 'pos' : 'neg'}">${a.model_mae.toFixed(2)}</span>
+        <span class="num neu">${a.market_mae.toFixed(2)}</span>
+        <span class="num ${a.closer_rate >= 0.5 ? 'pos' : 'neg'}">${a.closer_rate != null ? (a.closer_rate * 100).toFixed(1) + '%' : '—'}</span>
+      </div>` : '';
+    html += `<div class="section"><div class="sec-title">SPREAD <em>ACCURACY</em></div>`;
+    html += `<div class="row head"><span>Games</span><span>N</span><span>Ranking miss</span><span>Market miss</span><span>Ranking closer</span></div>`;
+    html += line('All', acc) + line('Teams under 5 games', early) + line('Teams 5+ games', later);
+    html += `<div class="note">Average points each spread missed the final margin by. If the ranking misses by more than the market, `
+          + `its disagreements with the line are mostly noise. Ranking bias ${acc.bias >= 0 ? '+' : ''}${acc.bias.toFixed(2)} `
+          + `(positive: home teams did better than the ranking said).</div></div>`;
+  }
+
+  const buckets = calibrationRows(evalRows);
+  const keys = Object.keys(buckets).sort((a, b) => Number(a) - Number(b));
+  if (keys.length) {
+    html += `<div class="section"><div class="sec-title">CALIBRATION <em>· SAID vs HAPPENED</em></div>`;
+    html += `<div class="row head"><span>Bucket</span><span>Games</span><span>Said</span><span>Covered</span><span>Gap</span></div>`;
+    keys.forEach(k => {
+      const v = buckets[k];
+      const said = v.sum / v.n, actual = (v.wins / v.n) * 100, gap = actual - said;
+      const cls = gap >= -1 ? 'pos' : gap < -3 ? 'neg' : 'neu';
+      html += `<div class="row">
+        <span class="name">${k}${k === '64' ? '+' : ''}%</span>
+        <span class="num neu">${v.n}</span>
+        <span class="num neu">${said.toFixed(1)}%</span>
+        <span class="num ${cls}">${actual.toFixed(1)}%</span>
+        <span class="num ${cls}">${gap >= 0 ? '+' : ''}${gap.toFixed(1)}</span>
+      </div>`;
+    });
+    html += `<div class="note">Every graded game, picked or not: the chance to cover the model gave its side, and how often that side covered. `
+          + `Saved as calibration: live picks in each bucket are pulled toward what actually happened (fully once a bucket has 300 games).</div></div>`;
+  }
+  return html;
+}
+
+function renderWeeklyBoard() {
+  if (!weeklyBoard.length) return '';
+  let html = `<div class="section"><div class="sec-title">WEEKLY <em>ATS BOARD</em></div>`;
+  html += `<div class="note">Every game with a closing line and final score, week by week — which side covered, `
+        + `how close to the number it landed, and what the model said.</div>`;
+  weeklyBoard.forEach(week => {
+    const g = week.games;
+    if (!g.length) return;
+    const pushes = g.filter(x => x.covered === 'push').length;
+    const decided = g.length - pushes;
+    const home = g.filter(x => x.covered === 'home').length;
+    const away = g.filter(x => x.covered === 'away').length;
+    const fav = g.filter(x => x.favorite && x.covered === x.favorite).length;
+    const dog = g.filter(x => x.favorite && x.covered !== 'push' && x.covered !== x.favorite).length;
+    const tight = g.filter(x => Math.abs(x.cover) <= 3).length;
+    const judged = g.filter(x => x.model_side && x.covered !== 'push');
+    const modelRight = judged.filter(x => x.model_side === x.covered).length;
+    const picks = g.filter(x => x.pick);
+    const pw = picks.filter(x => x.pick.result === 'W').length, pl = picks.filter(x => x.pick.result === 'L').length,
+          pp = picks.filter(x => x.pick.result === 'P').length;
+    html += `<details class="week"><summary><b>${week.label}</b> · ${g.length} games · ${decided} decided (${decided * 2} sides) · `
+          + `${pushes} push${pushes === 1 ? '' : 'es'} · home ${home} / away ${away} · fav ${fav} / dog ${dog} · `
+          + `${tight} within 3 · model side ${modelRight}/${judged.length} · picks ${pw}-${pl}-${pp}</summary>`;
+    g.forEach(x => {
+      const sp = (x.spread > 0 ? '+' : '') + x.spread;
+      const cov = x.covered === 'push' ? 'PUSH' : `${x.covered === 'home' ? x.home : x.away} covered by ${Math.abs(x.cover)}`;
+      const model = x.model_side
+        ? `model ${x.model_side === 'home' ? x.home : x.away} ${x.model_conf != null ? Number(x.model_conf).toFixed(1) + '%' : ''}`
+          + (x.covered === 'push' ? '' : (x.model_side === x.covered ? ' ✓' : ' ✗'))
+        : 'model —';
+      const pk = x.pick ? ` · PICK ${x.pick.result}` : '';
+      html += `<div class="wk-row">${x.away} @ ${x.home} ${x.score} · home ${sp} · ${cov} · ${model}${pk}</div>`;
+    });
+    html += `</details>`;
+  });
+  html += `</div>`;
+  return html;
+}
 </script>
 
 </body>
