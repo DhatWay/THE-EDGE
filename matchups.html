@@ -135,6 +135,8 @@
     .game-btn:hover { color: var(--gold); background: var(--gold-glow); }
     .game-btn.primary { color: var(--gold); }
 
+    .model-line { border-top: 1px solid var(--border); padding: 7px 12px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+    .model-line b { color: var(--gold); font-weight: 600; }
     .prop-panel { border-top: 1px solid var(--border); padding: 12px; background: var(--bg2, var(--surface)); }
     .prop-panel[hidden] { display: none; }
     .prop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -919,6 +921,7 @@
     function buildCard(game, statusCls) {
       const status = gameStatusLabel(game);
       const pick = pickIndex[game.id];
+      const evalRow = lastEvaluations()[game.id];
       const hasPick = !!pick;
       const cardClasses = [
         'game-card',
@@ -998,6 +1001,7 @@
             </div>
           </div>
 
+          ${evalRow ? modelLine(game, evalRow) : ''}
           <div class="game-actions">
             <a href="analysis.html?game=${enc}" class="game-btn primary">◎ Analysis</a>
             <a href="picks.html" class="game-btn">✓ Picks</a>
@@ -1006,6 +1010,30 @@
           </div>
           ${propsAvailable(game, statusCls) ? `<div class="prop-panel" id="prop-${game.id}" hidden></div>` : ''}
         </div>`;
+    }
+
+    // ── LAST PIPELINE RESULT PER GAME ──
+    // Every game the pipeline evaluated, picked or passed, with the
+    // ranking's spread and chance to cover — so a game with no pick
+    // shows it was looked at, and why it passed.
+    function lastEvaluations() {
+      try {
+        const d = JSON.parse(localStorage.getItem('edge_last_evaluations') || 'null');
+        if (!d || !Array.isArray(d.items)) return {};
+        const out = {};
+        d.items.forEach(e => { out[e.game_id] = e; });
+        return out;
+      } catch { return {}; }
+    }
+
+    function modelLine(game, e) {
+      const sp = v => v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1);
+      const pct = e.confidence != null ? Number(e.confidence).toFixed(1) + '%' : '—';
+      const side = e.direction === 'home' ? game.home_team : e.direction === 'away' ? game.away_team : '';
+      const verdict = e.decision === 'PASS' ? 'PASS' : `${String(e.decision).replace('_', ' ')} · ${side}`;
+      const missing = e.inputs ? ['projection', 'composite', 'cover'].filter(k => !e.inputs[k]) : [];
+      return `<div class="model-line">Model ${escHtml(game.home_team)} ${sp(e.model_spread)} vs line ${sp(e.market_spread)} · ` +
+        `${escHtml(side)} ${pct} · <b>${escHtml(verdict)}</b>${missing.length ? ' · missing ' + missing.join(', ') : ''}</div>`;
     }
 
     // ── PROPS ──
