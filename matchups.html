@@ -644,8 +644,13 @@
       const bestHome = bestFor(raw.home_team);
       const bestAway = bestFor(raw.away_team);
 
-      // Pinnacle's own prices, the sharp benchmark (when downloaded).
-      const pin = books.find(b => b.key === 'pinnacle');
+      // Benchmark book: Pinnacle when downloaded; otherwise the low-vig
+      // books already in the US feed (LowVig, then BetOnline), which are
+      // less shaded toward public sides than the big apps. Free — the
+      // same download. Off in Settings → consensus.
+      const benchOn = localStorage.getItem('edge_lowvig_benchmark') !== 'false';
+      const pin = books.find(b => b.key === 'pinnacle')
+        || (benchOn ? (books.find(b => b.key === 'lowvig') || books.find(b => b.key === 'betonlineag')) : null);
       const pinOut = (mk, name) => pin?.markets?.find(m => m.key === mk)?.outcomes?.find(o => o.name === name) || null;
       const pinHomeSp = pinOut('spreads', raw.home_team), pinAwaySp = pinOut('spreads', raw.away_team);
       const pinHomeMl = pinOut('h2h', raw.home_team), pinAwayMl = pinOut('h2h', raw.away_team);
@@ -671,6 +676,7 @@
         best_away_spread: bestAway?.point ?? null, best_away_price: bestAway?.price ?? null, best_away_book: bestAway?.book ?? null,
         pin_home_spread: pinHomeSp?.point ?? null, pin_home_price: pinHomeSp?.price ?? null, pin_away_price: pinAwaySp?.price ?? null,
         pin_home_ml: pinHomeMl?.price ?? null, pin_away_ml: pinAwayMl?.price ?? null,
+        bench_book: pin ? (pin.title || pin.key) : null,
         total, over_price: overPrice, under_price: underPrice,
         ml: homeML, home_ml: homeML, away_ml: awayML,
         bookmaker_count: books.length,
@@ -1107,7 +1113,8 @@
       const verdict = e.decision === 'PASS' ? 'PASS' : `${String(e.decision).replace('_', ' ')} · ${side}`;
       const missing = e.inputs ? ['projection', 'composite', 'cover'].filter(k => !e.inputs[k]) : [];
       return `<div class="model-line">Model ${escHtml(game.home_team)} ${sp(e.model_spread)} vs line ${sp(e.market_spread)} · ` +
-        `${escHtml(side)} ${pct} · <b>${escHtml(verdict)}</b>${missing.length ? ' · missing ' + missing.join(', ') : ''}</div>`;
+        `${escHtml(side)} ${pct} · <b>${escHtml(verdict)}</b>${missing.length ? ' · missing ' + missing.join(', ') : ''}` +
+        `${e.reason ? '<br>' + escHtml(e.reason) : ''}</div>`;
     }
 
     // ── PROPS ──
@@ -1294,7 +1301,10 @@
 
         const pickCount = result.picks.length;
         const scope = currentSport === 'all' ? 'window' : currentSport;
-        statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games · ${result.duration_ms}ms`;
+        const why = result.pass_reasons && Object.keys(result.pass_reasons).length
+          ? ' · passed: ' + Object.entries(result.pass_reasons).map(([k, n]) => `${n} ${k}`).join(', ')
+          : '';
+        statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games${why}`;
         renderInputAudit();
       } finally {
         btn.disabled = false;
