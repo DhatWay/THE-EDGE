@@ -417,7 +417,7 @@ const EDGE_GOVERNOR = (() => {
     const pm = prior?.market || {};
     if (pm.pin_home_ml && pm.pin_away_ml) {
       const ih = americanToImplied(pm.pin_home_ml), ia = americanToImplied(pm.pin_away_ml);
-      return { prob: ih / (ih + ia), source: 'pinnacle' };
+      return { prob: ih / (ih + ia), source: pm.bench_book || 'benchmark' };
     }
     const h = prior?.market?.home_ml, a = prior?.market?.away_ml;
     if (!h || !a) return { prob: 0.5, source: 'none' };
@@ -543,7 +543,7 @@ const EDGE_GOVERNOR = (() => {
         const ih = americanToImplied(m.pin_home_price), ia = americanToImplied(m.pin_away_price);
         const atPin = ih / (ih + ia);
         const shift = (m.current_spread - m.pin_home_spread) * 0.03;
-        return { prob: clamp(atPin + shift, 0.05, 0.95), source: 'pinnacle' };
+        return { prob: clamp(atPin + shift, 0.05, 0.95), source: m.bench_book || 'benchmark' };
       }
       return { prob: 0.5, source: 'spread' };
     }
