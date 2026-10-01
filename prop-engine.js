@@ -21,7 +21,7 @@
 // ============================================================
 
 const EDGE_PROPS = (() => {
-  const BUILD = 'props-engine-20260929-01';
+  const BUILD = 'props-engine-20261001-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -50,6 +50,11 @@ const EDGE_PROPS = (() => {
     { key: 'receiving_yards',  label: 'Receiving yards',   cols: ['receiving_yards'],                   dist: 'normal', scoring: true },
     { key: 'receiving_tds',    label: 'Receiving TDs',     cols: ['receiving_tds'],                     dist: 'count',  scoring: true },
     { key: 'rush_rec_yards',   label: 'Rush + rec yards',  cols: ['rushing_yards', 'receiving_yards'],  dist: 'normal', scoring: true },
+    { key: 'pass_attempts',    label: 'Pass attempts',     cols: ['pass_attempts'],                     dist: 'normal', scoring: false },
+    { key: 'pass_completions', label: 'Completions',       cols: ['pass_completions'],                  dist: 'normal', scoring: false },
+    { key: 'interceptions',    label: 'Interceptions thrown', cols: ['interceptions'],                  dist: 'count',  scoring: false },
+    { key: 'rush_attempts',    label: 'Rush attempts',     cols: ['rush_attempts'],                     dist: 'normal', scoring: false },
+    { key: 'targets',          label: 'Targets',           cols: ['targets'],                           dist: 'count',  scoring: false },
   ];
   const BASKETBALL = [
     { key: 'points',           label: 'Points',            cols: ['points'],                            dist: 'normal', scoring: true },
@@ -59,6 +64,11 @@ const EDGE_PROPS = (() => {
     { key: 'pts_reb_ast',      label: 'Pts + reb + ast',   cols: ['points', 'rebounds', 'assists'],     dist: 'normal', scoring: true },
     { key: 'pts_reb',          label: 'Pts + reb',         cols: ['points', 'rebounds'],                dist: 'normal', scoring: true },
     { key: 'pts_ast',          label: 'Pts + ast',         cols: ['points', 'assists'],                 dist: 'normal', scoring: true },
+    { key: 'reb_ast',          label: 'Reb + ast',         cols: ['rebounds', 'assists'],               dist: 'normal', scoring: false },
+    { key: 'steals',           label: 'Steals',            cols: ['steals'],                            dist: 'count',  scoring: false },
+    { key: 'blocks',           label: 'Blocks',            cols: ['blocks'],                            dist: 'count',  scoring: false },
+    { key: 'stocks',           label: 'Steals + blocks',   cols: ['steals', 'blocks'],                  dist: 'count',  scoring: false },
+    { key: 'turnovers',        label: 'Turnovers',         cols: ['turnovers'],                         dist: 'count',  scoring: false },
   ];
   const STATS = {
     NFL: FOOTBALL,
@@ -74,12 +84,16 @@ const EDGE_PROPS = (() => {
       { key: 'strikeouts',          label: 'Batter strikeouts',   cols: ['strikeouts'],          dist: 'count', scoring: false },
       { key: 'pitching_strikeouts', label: 'Pitcher strikeouts',  cols: ['pitching_strikeouts'], dist: 'count', scoring: false },
       { key: 'earned_runs',         label: 'Earned runs allowed', cols: ['earned_runs'],         dist: 'count', scoring: false },
+      { key: 'walks',               label: 'Batter walks',        cols: ['walks'],               dist: 'count', scoring: false },
+      { key: 'hits_allowed',        label: 'Hits allowed',        cols: ['hits_allowed'],        dist: 'count', scoring: false },
+      { key: 'walks_allowed',       label: 'Walks allowed',       cols: ['walks_allowed'],       dist: 'count', scoring: false },
     ],
     NHL: [
       { key: 'goals',   label: 'Goals',   cols: ['goals'],            dist: 'count',  scoring: true },
       { key: 'assists', label: 'Assists', cols: ['assists'],          dist: 'count',  scoring: true },
       { key: 'points',  label: 'Points',  cols: ['goals', 'assists'], dist: 'count',  scoring: true },
       { key: 'saves',   label: 'Saves',   cols: ['saves'],            dist: 'normal', scoring: false },
+      { key: 'shots',   label: 'Shots on goal', cols: ['shots'],        dist: 'count',  scoring: true },
     ],
     MLS: [],
   };
