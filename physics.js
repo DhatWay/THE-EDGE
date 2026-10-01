@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20260930-03';
+  const BUILD = 'phys-20261001-01';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -130,14 +130,22 @@ const EDGE_PHYSICS = (() => {
     // Convert bankroll-fraction to dollars, then to units using the
     // actual unit size the user configured. No assumption about
     // what a unit is worth.
-    const kellyDollars = fractionalKelly * bankroll;
+    // Ratings built on few games are uncertain, so the bet is sized
+    // down in proportion — a quarter-size bet at the start of a season,
+    // full size once both teams have a solid sample.
+    const certainty = ratingCertainty(prior, sport);
+    const kellyDollars = fractionalKelly * bankroll * certainty;
     const kellyUnits = unitSize > 0 ? (kellyDollars / unitSize) : 0;
 
     // ── 3. Three ceilings ──
     //   a. What the governor already said (its own units)
     //   b. What tier the confidence permits
     //   c. What the bankroll permits at max exposure per bet
-    const tierCap = tierCeiling(confidence);
+    // Moneylines are capped by value, not by chance to win — an
+    // underdog worth betting is below 50% by nature.
+    const tierCap = governorOutput?.bet_type === 'ML'
+      ? (governorOutput.ev >= 0.088 ? MAX_UNITS.solid : governorOutput.ev >= 0.05 ? MAX_UNITS.lean : MAX_UNITS.small)
+      : tierCeiling(confidence);
     const bankrollCap = unitSize > 0
       ? (bankroll * MAX_BANKROLL_PCT_PER_BET) / unitSize
       : Infinity;
@@ -386,6 +394,10 @@ const EDGE_PHYSICS = (() => {
 
         // What the ranking said, for the Picks page analytics.
         decision_source: governor.decision_source || null,
+        bet_type: governor.bet_type || 'SPREAD',
+        price: governor.price ?? null,
+        ev: governor.ev ?? null,
+        break_even: governor.break_even ?? null,
         capped_confidence: governor.capped_confidence ?? null,
         calibration: governor.calibration_detail ? { applied: true, ...governor.calibration_detail } : null,
         ranking_home_cover: governor.ranking_home_cover ?? null,
@@ -398,6 +410,7 @@ const EDGE_PHYSICS = (() => {
           coaching_delta: prior?.coaching?.delta ?? null,
           market_spread: prior?.market?.current_spread ?? null,
           home_cover: prior?.cover?.home_cover ?? null,
+          home_win: prior?.win?.home_cover ?? null,
           push: prior?.cover?.push ?? null,
           key_numbers: !!prior?.cover?.key_numbers,
           model_source: prior?.model_source ?? null,
@@ -466,6 +479,15 @@ const EDGE_PHYSICS = (() => {
     }
     const flat = parseFloat(localStorage.getItem('edge_unit_size') || '0');
     return flat > 0 ? flat : 50;
+  }
+
+  const FULL_SAMPLE_GAMES = { NFL: 8, NCAAF: 6, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 };
+
+  function ratingCertainty(prior, sport) {
+    const gh = Number(prior?.home_power?.games_played), ga = Number(prior?.away_power?.games_played);
+    if (!isFinite(gh) || !isFinite(ga)) return 1;
+    const full = FULL_SAMPLE_GAMES[sport] || 10;
+    return Math.max(0.25, Math.min(1, Math.min(gh, ga) / full));
   }
 
   function tierCeiling(confidence) {
