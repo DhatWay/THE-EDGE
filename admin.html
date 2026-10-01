@@ -251,6 +251,17 @@
 
       <div class="pipeline-panel">
         <div class="pipeline-head">
+          <div class="pipeline-title">Data Source Check</div>
+        </div>
+        <div class="pipeline-desc">
+          Checks whether this browser can reach the free data sources for the next upgrades: MLB probable pitchers, NHL goalies, NFL play-by-play efficiency (nflverse) and college data. Uses no Odds API credits.
+        </div>
+        <button class="pipeline-btn secondary" onclick="checkDataSources()">⇄ Check Sources</button>
+        <div class="pipeline-log" id="sourceLog"></div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
           <div class="pipeline-title">Sports</div>
         </div>
         <div class="pipeline-desc">
@@ -829,6 +840,36 @@
 
       logEl.textContent += `\n✓ ${result.families_updated} updated · ${result.picks_analyzed} picks analyzed`;
       showToast(`Learning: ${result.families_updated} families updated`, 'blue');
+    }
+
+    // ── DATA SOURCE CHECK ──
+    // A source the browser can read answers with data (or a 401/403
+    // asking for a key); one it can't read fails with a network error
+    // — a blocked cross-site request — and would need a relay.
+    async function checkDataSources() {
+      const logEl = document.getElementById('sourceLog');
+      logEl.textContent = 'Checking…\n';
+      const today = new Date().toISOString().slice(0, 10);
+      const sources = [
+        ['MLB probable pitchers', `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&hydrate=probablePitcher`],
+        ['NHL schedule and goalies', 'https://api-web.nhle.com/v1/schedule/now'],
+        ['NFL efficiency (nflverse)', 'https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats.csv'],
+        ['College data (CollegeFootballData)', 'https://api.collegefootballdata.com/teams/fbs'],
+      ];
+      for (const [name, url] of sources) {
+        const t0 = Date.now();
+        try {
+          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+          const ms = Date.now() - t0;
+          if (res.ok) logEl.textContent += `✓ ${name}: reachable (${ms} ms)\n`;
+          else if (res.status === 401 || res.status === 403) logEl.textContent += `✓ ${name}: reachable, needs a free API key (HTTP ${res.status})\n`;
+          else logEl.textContent += `! ${name}: answered HTTP ${res.status}\n`;
+          try { res.body && res.body.cancel && res.body.cancel(); } catch {}
+        } catch (e) {
+          logEl.textContent += `✗ ${name}: blocked from the browser (${e.message}) — would need a relay\n`;
+        }
+      }
+      logEl.textContent += '\nCopy this and send it back.';
     }
 
     // ============================================================
