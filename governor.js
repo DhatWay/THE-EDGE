@@ -53,7 +53,14 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20260930-02';
+  const BUILD = 'gov-20261001-01';
+
+  // Bets are decided on expected value at the real price, so a side
+  // at -120 needs a bigger edge than one at -105, and a moneyline
+  // underdog can be a bet below 50%. The tiers equal the old 53 / 55 /
+  // 57% chance-to-cover tiers at -110, so spread picks at -110 are
+  // decided exactly as before.
+  const EV_TIERS = { lean: 0.018, bet1u: 0.05, bet2u: 0.088 };
 
   // ── The ranking decides ──
   // The pick comes from the ranking: offense/defense and composite
@@ -212,7 +219,11 @@ const EDGE_GOVERNOR = (() => {
       });
     });
 
-    const rankingCover = prior?.cover && isFinite(prior.cover.home_cover) ? prior.cover : null;
+    // Moneyline bets (MLB, NHL) use the ranking's chance to win; spread
+    // bets its chance to cover.
+    const betType = prior?.bet_type === 'ML' ? 'ML' : 'SPREAD';
+    const rankingSource = betType === 'ML' ? prior?.win : prior?.cover;
+    const rankingCover = rankingSource && isFinite(rankingSource.home_cover) ? rankingSource : null;
     if (totalWeight === 0 && !rankingCover) {
       return emptyResult('No family outputs');
     }
@@ -265,7 +276,7 @@ const EDGE_GOVERNOR = (() => {
       modelHomeProb = clamp(0.5 + normalizedSignal / 2, 0.02, 0.98);
     }
 
-    const marketInfo = resolveMarket(prior, homeBaseline, sport);
+    const marketInfo = betType === 'ML' ? resolveMoneyline(prior) : resolveMarket(prior, homeBaseline, sport);
     const marketHomeProb = marketInfo.prob;
 
     // A cover chance already anchored to the market (a fitted lambda)
@@ -273,8 +284,16 @@ const EDGE_GOVERNOR = (() => {
     const effectiveShrink = (rankingCover && rankingCover.anchored_to_market) ? 0 : shrink;
     const posteriorHomeProb = (1 - effectiveShrink) * modelHomeProb + effectiveShrink * marketHomeProb;
 
-    // Raw edge in probability terms.
-    const edge = Math.abs(posteriorHomeProb - 0.5);
+    // Prices for each side: the spread's own price (consensus or the
+    // chosen book), or the moneyline. A missing spread price is -110.
+    const priceFor = side => {
+      const m = prior?.market || {};
+      const v = betType === 'ML'
+        ? (side === 'home' ? m.home_ml : m.away_ml)
+        : (side === 'home' ? m.home_spread_price : m.away_spread_price);
+      return isFinite(Number(v)) && Number(v) !== 0 ? Number(v) : (betType === 'ML' ? null : -110);
+    };
+    const homePrice = priceFor('home'), awayPrice = priceFor('away');
 
     // ── 4. Confidence ──
     // Three things produce confidence: how far the posterior
@@ -282,14 +301,25 @@ const EDGE_GOVERNOR = (() => {
     // on a direction, and how much data they had. All three
     // are already baked into normalizedSignal and agreement,
     // so the formula is short.
-    // Confidence is the posterior chance the chosen side covers.
-    const rawConfidence = Math.max(posteriorHomeProb, 1 - posteriorHomeProb) * 100;
-    const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
+    // The side: for spreads the one more likely to cover; for
+    // moneylines the one worth more at its price.
+    const evAt = (p, price) => price == null ? -1 : p * (americanToDecimal(price) - 1) - (1 - p);
+    let sideIsHome;
+    if (betType === 'ML') {
+      sideIsHome = evAt(posteriorHomeProb, homePrice) >= evAt(1 - posteriorHomeProb, awayPrice);
+    } else {
+      sideIsHome = posteriorHomeProb > 0.5;
+    }
+    const sideProb = sideIsHome ? posteriorHomeProb : 1 - posteriorHomeProb;
 
-    // Calibration is a pull, not a substitution. The blended value
-    // moves toward the observed hit rate in the bucket by a
-    // sample-weighted factor. See applyCalibration for the shape.
-    const calibrated = applyCalibration(cappedConfidence, sport);
+    // Confidence is the posterior chance the chosen side wins (covers,
+    // for spreads). Spread confidence is calibrated against the
+    // Slate Test's said-vs-happened table; moneylines are not yet.
+    const rawConfidence = sideProb * 100;
+    const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
+    const calibrated = betType === 'ML'
+      ? { value: round(cappedConfidence, 1), applied: false, detail: null }
+      : applyCalibration(cappedConfidence, sport);
 
     // ── 5. Data-availability caps ──
     // Two hard caps for missing inputs. These are the only caps
@@ -297,36 +327,35 @@ const EDGE_GOVERNOR = (() => {
     const dataCaps = [];
     let cap = 100;
 
-    // No spread posted: nothing to bet against the spread.
-    if (prior?.market?.current_spread == null) {
-      cap = Math.min(cap, 50);
-      dataCaps.push('no spread');
+    // Nothing to bet against: no spread, or no moneyline prices.
+    let blocked = false;
+    if (betType === 'SPREAD' && prior?.market?.current_spread == null) {
+      cap = Math.min(cap, 50); dataCaps.push('no spread'); blocked = true;
+    }
+    if (betType === 'ML' && (homePrice == null || awayPrice == null)) {
+      dataCaps.push('no moneyline'); blocked = true;
     }
 
     const finalConfidence = round(Math.min(calibrated.value, cap, MAX_CONFIDENCE), 1);
 
-    // ── 6. Decision ──
-    const direction = posteriorHomeProb > 0.5 ? 'home' : 'away';
+    // ── 6. Decision: expected value at the real price ──
+    const direction = sideIsHome ? 'home' : 'away';
+    const sidePrice = sideIsHome ? homePrice : awayPrice;
+    const otherPrice = sideIsHome ? awayPrice : homePrice;
+    const pDecide = finalConfidence / 100;
+    const ev = blocked ? -1 : evAt(pDecide, sidePrice);
+    const breakEven = sidePrice != null ? 1 / americanToDecimal(sidePrice) : 0.5238;
+    const edge = round(pDecide - breakEven, 4);
+
     let decision = 'PASS';
     let units = 0;
+    if (ev >= EV_TIERS.bet2u)      { decision = 'BET_2U'; units = 2; }
+    else if (ev >= EV_TIERS.bet1u) { decision = 'BET_1U'; units = 1; }
+    else if (ev >= EV_TIERS.lean)  { decision = 'LEAN';   units = 0.5; }
 
-    if (finalConfidence >= thresholds.bet2u && edge >= thresholds.minEdge2u) {
-      decision = 'BET_2U'; units = 2;
-    } else if (finalConfidence >= thresholds.bet1u && edge >= thresholds.minEdge1u) {
-      decision = 'BET_1U'; units = 1;
-    } else if (finalConfidence >= thresholds.lean && edge >= thresholds.minEdgeLean) {
-      decision = 'LEAN'; units = 0.5;
-    }
-
-    // ── 7. Kelly input for physics ──
+    // ── 7. Kelly input for physics, at the side's own price ──
     const kellyInput = buildKellyInput({
-      posteriorHomeProb,
-      marketHomeML: prior?.market?.home_ml,
-      marketAwayML: prior?.market?.away_ml,
-      spread: prior?.market?.current_spread,
-      sport,
-      direction,
-      units,
+      sideProb: pDecide, sidePrice, otherPrice, betType, units,
     });
 
     return {
@@ -337,6 +366,12 @@ const EDGE_GOVERNOR = (() => {
       direction,
       decision,
       units,
+
+      // Price and value
+      bet_type: betType,
+      price: sidePrice,
+      ev: round(ev, 4),
+      break_even: round(breakEven, 4),
 
       // Probability trail — every step the slate test can grade
       decision_source: decisionSource,
@@ -375,6 +410,19 @@ const EDGE_GOVERNOR = (() => {
       thresholds_used: thresholds,
       computed_at: new Date().toISOString(),
     };
+  }
+
+  // Moneyline market: each side's implied chance, vig removed.
+  function resolveMoneyline(prior) {
+    const pm = prior?.market || {};
+    if (pm.pin_home_ml && pm.pin_away_ml) {
+      const ih = americanToImplied(pm.pin_home_ml), ia = americanToImplied(pm.pin_away_ml);
+      return { prob: ih / (ih + ia), source: 'pinnacle' };
+    }
+    const h = prior?.market?.home_ml, a = prior?.market?.away_ml;
+    if (!h || !a) return { prob: 0.5, source: 'none' };
+    const ih = americanToImplied(h), ia = americanToImplied(a);
+    return { prob: ih / (ih + ia), source: 'moneyline' };
   }
 
   // ============================================================
@@ -432,14 +480,21 @@ const EDGE_GOVERNOR = (() => {
     }
     const finalConfidence = round(Math.min(rawConfidence, cap), 1);
 
+    // Same expected-value tiers as spreads, at the price entered when
+    // the pick is that side, else a standard -110.
     const direction = posteriorOver > 0.5 ? 'over' : 'under';
+    const sidePrice = (propPrior.price && direction === propPrior.side) ? Number(propPrior.price) : -110;
+    const pSide = finalConfidence / 100;
+    const ev = pSide * (americanToDecimal(sidePrice) - 1) - (1 - pSide);
     let decision = 'PASS', units = 0;
-    if (finalConfidence >= thresholds.bet2u && edge >= thresholds.minEdge2u) { decision = 'BET_2U'; units = 2; }
-    else if (finalConfidence >= thresholds.bet1u && edge >= thresholds.minEdge1u) { decision = 'BET_1U'; units = 1; }
-    else if (finalConfidence >= thresholds.lean && edge >= thresholds.minEdgeLean) { decision = 'LEAN'; units = 0.5; }
+    if (ev >= EV_TIERS.bet2u)      { decision = 'BET_2U'; units = 2; }
+    else if (ev >= EV_TIERS.bet1u) { decision = 'BET_1U'; units = 1; }
+    else if (ev >= EV_TIERS.lean)  { decision = 'LEAN';   units = 0.5; }
 
     return {
       decision_source: 'prop',
+      price: sidePrice,
+      ev: round(ev, 4),
       direction,
       decision,
       units,
@@ -479,6 +534,17 @@ const EDGE_GOVERNOR = (() => {
   // spread is posted.
   function resolveMarket(prior, homeBaseline, sport) {
     if (typeof prior?.market?.current_spread === 'number') {
+      // With Pinnacle's line and prices: the sharp market's chance the
+      // home side covers the line being bet — 50% at Pinnacle's own
+      // number (vig removed), moved for the half-points between its
+      // line and this one at about 3% a point.
+      const m = prior.market;
+      if (isFinite(m.pin_home_spread) && m.pin_home_price && m.pin_away_price) {
+        const ih = americanToImplied(m.pin_home_price), ia = americanToImplied(m.pin_away_price);
+        const atPin = ih / (ih + ia);
+        const shift = (m.current_spread - m.pin_home_spread) * 0.03;
+        return { prob: clamp(atPin + shift, 0.05, 0.95), source: 'pinnacle' };
+      }
       return { prob: 0.5, source: 'spread' };
     }
     if (prior?.market?.home_ml) {
@@ -679,26 +745,16 @@ const EDGE_GOVERNOR = (() => {
   // is used only when there is no spread, and then each side at its
   // own price — the away price used to be the home price negated,
   // which ignores the vig and overstated underdog payouts.
-  function buildKellyInput({ posteriorHomeProb, marketHomeML, marketAwayML, spread, sport, direction, units }) {
-    const ourProb = direction === 'home' ? posteriorHomeProb : 1 - posteriorHomeProb;
-
-    let marketProb, decimal, source;
-
-    if (typeof spread === 'number') {
-      marketProb = 0.5;
-      decimal = americanToDecimal(-110);
-      source = 'spread';
-    } else if (marketHomeML) {
-      const marketHome = americanToImplied(marketHomeML);
-      marketProb = direction === 'home' ? marketHome : 1 - marketHome;
-      const sidePrice = direction === 'home'
-        ? marketHomeML
-        : (marketAwayML || -marketHomeML);
-      decimal = americanToDecimal(sidePrice);
-      source = 'ml';
-    } else {
-      return { available: false, reason: 'No market data' };
-    }
+  // Kelly at the side's own price. The market's chance is the price's
+  // implied chance with the vig removed using the other side's price.
+  function buildKellyInput({ sideProb, sidePrice, otherPrice, betType, units }) {
+    const ourProb = sideProb;
+    if (sidePrice == null) return { available: false, reason: 'No price' };
+    const impSide = americanToImplied(sidePrice);
+    const impOther = otherPrice != null ? americanToImplied(otherPrice) : 1 - impSide;
+    const marketProb = (impSide + impOther) > 0 ? impSide / (impSide + impOther) : impSide;
+    const decimal = americanToDecimal(sidePrice);
+    const source = betType === 'ML' ? 'ml' : 'spread';
 
     const b = decimal - 1;
     const edge = ourProb - marketProb;
