@@ -450,7 +450,9 @@
       }
 
       try {
-        allPicks = await fetchAllPicks(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc`, key);
+        // Picks removed on the Picks page are gone from the record too.
+        allPicks = (await fetchAllPicks(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc`, key))
+          .filter(p => p.decision !== 'REMOVED');
       } catch (e) {
         logEdgeError('history.loadPicks', e);
         allPicks = [];
