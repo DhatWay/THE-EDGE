@@ -596,9 +596,12 @@ async function run() {
         : `  fitted model not saved · ${fitReport.reason}`);
     }
 
+    // ── Sport result for the pipeline's gate ──
+    if (evalRows.length) saveSportMetrics(sport, evalRows);
+
     // ── Calibration from this run ──
-    if (evalRows.length) {
-      const saved = await writeBacktestCalibration(sport, fromDate, toDate, evalRows);
+    if (evalRows.some(r => r.bet_type !== 'ML')) {
+      const saved = await writeBacktestCalibration(sport, fromDate, toDate, evalRows.filter(r => r.bet_type !== 'ML'));
       log(saved.ok
         ? `  calibration saved · ${saved.buckets} buckets from ${saved.games} games${saved.remote ? '' : ' (this device only)'}`
         : `  calibration not saved: ${saved.reason}`);
@@ -652,8 +655,8 @@ async function run() {
 // ============================================================
 
 async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
-  const colsWithOpen = 'game_id,home,away,spread,open_spread,total,home_score,away_score,game_date';
-  const colsPlain    = 'game_id,home,away,spread,total,home_score,away_score,game_date';
+  const colsWithOpen = 'game_id,home,away,spread,open_spread,total,home_ml,away_ml,home_score,away_score,game_date';
+  const colsPlain    = 'game_id,home,away,spread,total,home_ml,away_ml,home_score,away_score,game_date';
 
   const pageSize = 1000;
 
@@ -1013,9 +1016,11 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     open_spread: g.open_spread ?? null,
     current_spread: g.spread,
     total: g.total,
-    home_ml: null,
-    away_ml: null,
+    home_ml: g.home_ml ?? null,
+    away_ml: g.away_ml ?? null,
   };
+  const isMl = (sport === 'MLB' || sport === 'NHL') && localStorage.getItem('edge_ml_sports') !== 'false'
+               && g.home_ml != null && g.away_ml != null;
 
   const h2hKey = `${sport}:${[g.home, g.away].sort().join('|')}`;
 
@@ -1035,6 +1040,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
       market,
       league: power.league || null,
     });
+    if (isMl) prior.bet_type = 'ML';
   } catch { return null; }
 
   // ── Families ──
@@ -1135,7 +1141,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
       && phys.direction && phys.direction !== 'none') {
 
     const margin = g.home_score - g.away_score;
-    const coverMarginHome = margin + g.spread;
+    const coverMarginHome = isMl ? margin : margin + g.spread;
     const pickCoverMargin = phys.direction === 'home' ? coverMarginHome : -coverMarginHome;
 
     let result;
@@ -1159,6 +1165,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
       edge: phys.edge,
       units: phys.units,
       result,
+      bet_type: isMl ? 'ML' : 'SPREAD',
+      price: gov.price ?? -110,
       cover_margin: Math.round(pickCoverMargin * 100) / 100,
       families: allFamilies.map(f => ({
         family: f.family,
@@ -1171,7 +1179,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
   }
 
   const marginAll = g.home_score - g.away_score;
-  const coverHomeAll = marginAll + g.spread;
+  const coverHomeAll = isMl ? marginAll : marginAll + g.spread;
   const govSide = gov.direction === 'away' ? 'away' : 'home';
   const sideCover = govSide === 'home' ? coverHomeAll : -coverHomeAll;
   const evalRow = {
@@ -1192,6 +1200,12 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     rest_diff: (ctx.rest.home_rest_days != null && ctx.rest.away_rest_days != null)
       ? Math.max(-7, Math.min(7, ctx.rest.home_rest_days - ctx.rest.away_rest_days)) : 0,
     model_source: prior.model_source || null,
+    bet_type: isMl ? 'ML' : 'SPREAD',
+    price: gov.price ?? -110,
+    // Did the line move toward the model's side between open and close?
+    line_move: (g.open_spread != null && g.spread != null && g.open_spread !== g.spread)
+      ? ((govSide === 'home') === (g.spread < g.open_spread) ? 'toward' : 'away')
+      : null,
   };
 
   return { pick, situationRows: gradedSituationRows, evalRow };
@@ -1398,6 +1412,7 @@ async function renderReport(sport) {
 
   if (famRows.length) {
     html += `<div class="section"><div class="sec-title">BY <em>FAMILY</em></div>`;
+    html += `<div class="note">Trend reads ATS tables built over the whole window, so it sees results from after each game — its rate is inflated and it carries no weight in decisions. Market, line movement and weather carry no weight either.</div>`;
     html += `<div class="row head"><span>Family</span><span>Games</span><span>Record</span><span>Rate</span><span>Edge</span></div>`;
     famRows.forEach(r => {
       const total = r.wins + r.losses;
@@ -1641,6 +1656,33 @@ function fitRatingModel(sport, fromDate, toDate, rows) {
   return { ...report, saved: false, reason: 'governor.js is older than this page' };
 }
 
+function wilsonLow(w, n, z = 1.96) {
+  const p = w / n, d = 1 + z * z / n;
+  return (p + z * z / (2 * n) - z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
+}
+function wilsonHigh(w, n, z = 1.96) {
+  const p = w / n, d = 1 + z * z / n;
+  return (p + z * z / (2 * n) + z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
+}
+
+// The sport's backtest result, saved for the pipeline's sport gate.
+function saveSportMetrics(sport, rows) {
+  if (!EDGE_GOVERNOR.readCalibrationTable || !EDGE_GOVERNOR.saveCalibrationTable) return;
+  const spread = rows.filter(r => r.bet_type !== 'ML'), ml = rows.filter(r => r.bet_type === 'ML');
+  const table = EDGE_GOVERNOR.readCalibrationTable();
+  table.sport_metrics = table.sport_metrics || {};
+  const put = (key, set) => {
+    const sc = probabilityScores(set);
+    if (!sc || sc.games < 50) return;
+    const acc = spreadAccuracy(set);
+    table.sport_metrics[key] = { skill: sc.skill, brier: sc.brier, games: sc.games,
+      model_mae: acc ? acc.model_mae : null, market_mae: acc ? acc.market_mae : null, at: new Date().toISOString() };
+  };
+  put(sport, spread);
+  put(`${sport}_ML`, ml);
+  EDGE_GOVERNOR.saveCalibrationTable(table);
+}
+
 // Brier score and log loss of the chance the model gave its side,
 // against a coin flip (Brier 0.25). Skill above 0 beats the coin.
 function probabilityScores(rows) {
@@ -1686,11 +1728,12 @@ function renderFitReport() {
 // (the most the window could have paid).
 function profitSummary(stake) {
   const win = stake * (100 / 110);
+  const payout = r => { const pr = Number(r.price); return isFinite(pr) && pr !== 0 ? (pr > 0 ? pr / 100 : 100 / Math.abs(pr)) : 100 / 110; };
   const res = (rows, unitsOf) => {
     let w = 0, l = 0, p = 0, pnl = 0, risked = 0;
     rows.forEach(r => {
       const u = unitsOf ? unitsOf(r) : 1;
-      if (r.result === 'W') { w++; pnl += win * u; risked += stake * u; }
+      if (r.result === 'W') { w++; pnl += stake * payout(r) * u; risked += stake * u; }
       else if (r.result === 'L') { l++; pnl -= stake * u; risked += stake * u; }
       else if (r.result === 'P') { p++; }
     });
@@ -1715,14 +1758,26 @@ function renderProfit() {
     + `<span class="num neu">${r.w}-${r.l}-${r.p}</span>`
     + `<span class="num ${r.pnl >= 0 ? 'pos' : 'neg'}">${money(r.pnl)}</span>`
     + `<span class="num ${r.roi >= 0 ? 'pos' : 'neg'}">${(r.roi * 100).toFixed(1)}%</span></div>`;
+  const ci = (w, l) => { const n = w + l; if (!n) return ''; const lo = wilsonLow(w, n), hi = wilsonHigh(w, n);
+    return ` · ${(w / n * 100).toFixed(1)}% (95% range ${(lo * 100).toFixed(1)}–${(hi * 100).toFixed(1)}%)`; };
   let html = `<div class="section"><div class="sec-title">PROFIT <em>AT $${s.stake} A BET</em></div>`;
   html += `<div class="row head"><span>Bets</span><span>W-L-P</span><span>Profit</span><span>Return</span></div>`;
   html += line('Picks, flat amount', s.picksFlat);
   html += line('Picks, amount × units', s.picksUnits);
   html += line('Every game, model side', s.modelAll);
   html += line('Every game, covering side', s.perfect);
-  html += `<div class="note">At -110 a side must win 52.4% to break even, so a winning record can still lose money. `
+  html += `<div class="note">Picks${ci(s.picksFlat.w, s.picksFlat.l)} · model side${ci(s.modelAll.w, s.modelAll.l)}. `
+        + `The range is where the true win rate likely sits; if it reaches below break-even (52.4% at -110), the record can't yet tell skill from luck.</div>`;
+  html += `<div class="note">Paid at each bet's price (moneylines at their real price, spreads at -110 when no price is on file). `
         + `"Covering side" is the most this window could have paid.</div></div>`;
+  const mv = evalRows.filter(r => r.line_move);
+  if (mv.length) {
+    const toward = mv.filter(r => r.line_move === 'toward').length;
+    html += `<div class="section"><div class="sec-title">LINE <em>MOVEMENT</em></div>`
+          + `<div class="note">In ${mv.length} games where the line moved between open and close, it moved toward the model's side `
+          + `${toward} times (${(toward / mv.length * 100).toFixed(1)}%${ci(toward, mv.length - toward)}). `
+          + `Above 50% means the model spots value the market later agrees with — betting early pays even when results are noisy.</div></div>`;
+  }
   return html;
 }
 
