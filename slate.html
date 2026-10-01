@@ -199,10 +199,10 @@
     <div class="ctrl">
       <label>Games cap</label>
       <select id="cap">
-        <option value="200">200</option>
-        <option value="500" selected>500</option>
+        <option value="500">500</option>
         <option value="1000">1000</option>
-        <option value="2000">2000</option>
+        <option value="3000" selected>3000</option>
+        <option value="6000">6000</option>
       </select>
     </div>
     <div class="ctrl">
@@ -216,13 +216,19 @@
   </div>
 
   <div class="run-row">
+    <div class="ctrl">
+      <label>Bet amount ($)</label>
+      <input type="number" id="stake" value="100" min="1" step="1" inputmode="numeric" />
+    </div>
     <button class="btn" id="runBtn" onclick="run()">▶ Run Test</button>
+    <button class="btn" id="copyBtn" onclick="copyReport()">⧉ Copy Report</button>
     <button class="btn secondary" onclick="clearResults()">Clear</button>
     <button class="btn secondary" onclick="clearSituationResults()">Purge situation_results</button>
   </div>
 
   <div class="log" id="log">Ready.</div>
 
+  <div class="note" id="dataHint"></div>
   <div id="output"></div>
 </main>
 
@@ -252,7 +258,54 @@ const out = h => { document.getElementById('output').innerHTML = h; };
   const from = new Date(to.getTime() - 60 * 86400000);
   document.getElementById('from').value = from.toISOString().slice(0, 10);
   document.getElementById('to').value = to.toISOString().slice(0, 10);
+  const sel = document.getElementById('sport');
+  if (sel) { sel.addEventListener('change', fitDatesToData); fitDatesToData(); }
 })();
+
+// The window follows what's on file for the chosen sport: it ends
+// at the sport's last scored game and covers its length of season.
+// A sport out of season (or not caught up by Build ATS) used to land
+// on dates with no games, and looked broken.
+async function fitDatesToData() {
+  const sport = document.getElementById('sport')?.value;
+  const url = SB_URL(), key = SB_KEY();
+  const hint = document.getElementById('dataHint');
+  if (!sport || !url || !key) return;
+  try {
+    const q = (dir) => fetch(`${url}/rest/v1/historical_odds?sport=eq.${sport}&home_score=not.is.null&spread=not.is.null` +
+      `&select=game_date&order=game_date.${dir}&limit=1`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }).then(r => r.ok ? r.json() : []);
+    const [first, last] = await Promise.all([q('asc'), q('desc')]);
+    if (!last[0]) { if (hint) hint.textContent = `No scored ${sport} games with a line on file — run Build ATS for ${sport}.`; return; }
+    const end = new Date(last[0].game_date);
+    const spanDays = { NFL: 130, NCAAF: 110, NBA: 120, NCAAB: 120, NHL: 120, MLB: 90, WNBA: 90, MLS: 120 }[sport] || 90;
+    const start = new Date(Math.max(new Date(first[0].game_date).getTime(), end.getTime() - spanDays * 86400000));
+    const day = d => (window.EDGE_TIME ? EDGE_TIME.localDay(d) : d.toISOString().slice(0, 10));
+    document.getElementById('from').value = day(start);
+    document.getElementById('to').value = day(end);
+    if (hint) hint.textContent = `${sport} data on file: ${day(new Date(first[0].game_date))} to ${day(end)}.`;
+  } catch {}
+}
+
+function stakeAmount() {
+  const v = parseFloat(document.getElementById('stake')?.value);
+  return isFinite(v) && v > 0 ? v : 100;
+}
+
+async function copyReport() {
+  const text = document.getElementById('output')?.innerText || '';
+  if (!text.trim()) { log('Nothing to copy yet — run a test first.'); return; }
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  }
+  const b = document.getElementById('copyBtn');
+  if (b) { const t = b.textContent; b.textContent = ok ? '✓ Copied' : 'Copy failed'; setTimeout(() => { b.textContent = t; }, 1500); }
+}
 
 // ============================================================
 // NAV
@@ -286,6 +339,8 @@ let confStats = {};
 let evalRows = [];
 // Every game in the window, week by week, for the ATS board.
 let weeklyBoard = [];
+// Result of fitting the ranking model on this run.
+let fitReport = null;
 // Situations are not part of the decision, so the backtest skips
 // them too — faster, and the same path as live picks.
 const SITUATIONS_IN_BACKTEST = false;
@@ -524,6 +579,15 @@ async function run() {
       }),
     }));
 
+    // ── Fit the ranking model on this run ──
+    fitReport = null;
+    if (evalRows.length) {
+      fitReport = fitRatingModel(sport, fromDate, toDate, evalRows);
+      log(fitReport.saved
+        ? `  fitted model saved · held-out miss ${fitReport.test.fit_mae.toFixed(2)} vs ${fitReport.test.current_mae.toFixed(2)} current`
+        : `  fitted model not saved · ${fitReport.reason}`);
+    }
+
     // ── Calibration from this run ──
     if (evalRows.length) {
       const saved = await writeBacktestCalibration(sport, fromDate, toDate, evalRows);
@@ -595,7 +659,7 @@ async function loadScoredGames(sport, fromDate, toDate, cap, url, key) {
           `&home_score=not.is.null&away_score=not.is.null` +
           `&game_date=gte.${fromDate}&game_date=lte.${toDate}T23:59:59` +
           `&select=${selectCols}` +
-          `&order=game_date.asc&limit=${limit}&offset=${offset}`,
+          `&order=game_date.asc,game_id.asc&limit=${limit}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (!res.ok) return null;
@@ -1114,6 +1178,12 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     margin: marginAll,
     ratings_games: Math.min(Number(homeStats.games_played) || 0, Number(awayStats.games_played) || 0),
     picked: !!pick,
+    // Inputs for the fitted ranking model (home view).
+    proj_margin: prior.projection_spread != null ? -prior.projection_spread : null,
+    comp_margin: prior.composite_spread != null ? -prior.composite_spread : null,
+    rest_diff: (ctx.rest.home_rest_days != null && ctx.rest.away_rest_days != null)
+      ? Math.max(-7, Math.min(7, ctx.rest.home_rest_days - ctx.rest.away_rest_days)) : 0,
+    model_source: prior.model_source || null,
   };
 
   return { pick, situationRows: gradedSituationRows, evalRow };
@@ -1463,8 +1533,173 @@ async function writeBacktestCalibration(sport, fromDate, toDate, rows) {
   return { ok: true, buckets: Object.keys(buckets).length, games: rows.length, remote };
 }
 
+// ── Fitted ranking model ──
+// Least squares of the final home margin on: 1 (home field), the
+// offense/defense projection's margin, the composite's margin, and
+// the rest-day gap — ridge-damped so small samples can't produce wild
+// weights. Fit on the first 70% of games (in date order), tested on
+// the last 30% against the ranking as it stands and the market.
+// Saved only when it misses by less on the held-out games; the saved
+// fit is refit on every game.
+function ridgeFit(rows, lambda) {
+  const X = rows.map(r => [1, r.proj_margin, r.comp_margin, r.rest_diff]);
+  const y = rows.map(r => r.margin);
+  const k = 4;
+  const A = Array.from({ length: k }, () => new Array(k).fill(0));
+  const b = new Array(k).fill(0);
+  X.forEach((x, i) => {
+    for (let p = 0; p < k; p++) {
+      b[p] += x[p] * y[i];
+      for (let q = 0; q < k; q++) A[p][q] += x[p] * x[q];
+    }
+  });
+  for (let p = 1; p < k; p++) A[p][p] += lambda;
+  // Gaussian elimination
+  const M = A.map((row, i) => row.concat([b[i]]));
+  for (let c = 0; c < k; c++) {
+    let piv = c;
+    for (let r = c + 1; r < k; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    if (Math.abs(M[c][c]) < 1e-12) return null;
+    for (let r = 0; r < k; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let q = c; q <= k; q++) M[r][q] -= f * M[c][q];
+    }
+  }
+  return M.map((row, i) => row[k] / row[i]);
+}
+
+function predictFit(coef, r) {
+  return coef[0] + coef[1] * r.proj_margin + coef[2] * r.comp_margin + coef[3] * r.rest_diff;
+}
+
+function fitRatingModel(sport, fromDate, toDate, rows) {
+  const usable = rows.filter(r => isFinite(r.proj_margin) && isFinite(r.comp_margin) && isFinite(r.margin)
+                                && isFinite(r.model_spread) && isFinite(r.market_spread));
+  if (usable.length < 150) return { saved: false, reason: `needs 150 games with both ratings, has ${usable.length}` };
+  const cut = Math.floor(usable.length * 0.7);
+  const train = usable.slice(0, cut), test = usable.slice(cut);
+  const lambda = 0.05 * train.length;
+  const coefTrain = ridgeFit(train, lambda);
+  if (!coefTrain) return { saved: false, reason: 'fit failed (inputs too similar)' };
+
+  const mae = (arr, f) => arr.reduce((s, r) => s + Math.abs(r.margin - f(r)), 0) / arr.length;
+  const testStats = {
+    games: test.length,
+    fit_mae: mae(test, r => predictFit(coefTrain, r)),
+    current_mae: mae(test, r => -r.model_spread),
+    market_mae: mae(test, r => -r.market_spread),
+  };
+
+  const coefAll = ridgeFit(usable, 0.05 * usable.length);
+  if (!coefAll) return { saved: false, reason: 'fit failed on all games', test: testStats };
+  const resid = usable.map(r => r.margin - predictFit(coefAll, r));
+  const rmse = Math.sqrt(resid.reduce((s, e) => s + e * e, 0) / Math.max(1, resid.length - 4));
+  const report = { coef: coefAll.map(c => Math.round(c * 1000) / 1000), n: usable.length, rmse: Math.round(rmse * 100) / 100,
+                   test: testStats, train_games: train.length };
+
+  if (!(testStats.fit_mae < testStats.current_mae)) {
+    return { ...report, saved: false, reason: `held-out miss ${testStats.fit_mae.toFixed(2)} did not beat current ${testStats.current_mae.toFixed(2)}` };
+  }
+  if (EDGE_GOVERNOR.readCalibrationTable && EDGE_GOVERNOR.saveCalibrationTable) {
+    const table = EDGE_GOVERNOR.readCalibrationTable();
+    table.rating_fit = table.rating_fit || {};
+    table.rating_fit[sport] = { coef: report.coef, n: report.n, rmse: report.rmse, window: `${fromDate}|${toDate}`,
+                                test: testStats, at: new Date().toISOString() };
+    EDGE_GOVERNOR.saveCalibrationTable(table);
+    return { ...report, saved: true };
+  }
+  return { ...report, saved: false, reason: 'governor.js is older than this page' };
+}
+
+// Brier score and log loss of the chance the model gave its side,
+// against a coin flip (Brier 0.25). Skill above 0 beats the coin.
+function probabilityScores(rows) {
+  const r = rows.filter(x => x.result !== 'P' && isFinite(x.raw_confidence));
+  if (!r.length) return null;
+  let brier = 0, logLoss = 0;
+  r.forEach(x => {
+    const p = Math.min(0.99, Math.max(0.01, x.raw_confidence / 100));
+    const o = x.result === 'W' ? 1 : 0;
+    brier += (p - o) ** 2;
+    logLoss += -(o * Math.log(p) + (1 - o) * Math.log(1 - p));
+  });
+  brier /= r.length; logLoss /= r.length;
+  return { games: r.length, brier, logLoss, skill: 1 - brier / 0.25 };
+}
+
+function renderFitReport() {
+  if (!fitReport) return '';
+  let html = `<div class="section"><div class="sec-title">FITTED <em>RANKING MODEL</em></div>`;
+  if (fitReport.test) {
+    const t = fitReport.test;
+    html += `<div class="row head"><span>Held-out games</span><span>N</span><span>Fitted miss</span><span>Current miss</span><span>Market miss</span></div>`;
+    html += `<div class="row"><span class="name">Last 30%</span><span class="num neu">${t.games}</span>`
+          + `<span class="num ${t.fit_mae < t.current_mae ? 'pos' : 'neg'}">${t.fit_mae.toFixed(2)}</span>`
+          + `<span class="num neu">${t.current_mae.toFixed(2)}</span><span class="num neu">${t.market_mae.toFixed(2)}</span></div>`;
+  }
+  if (fitReport.coef) {
+    const c = fitReport.coef;
+    html += `<div class="note">Weights: home field ${c[0] >= 0 ? '+' : ''}${c[0]} pts · projection ×${c[1]} · composite ×${c[2]} · rest ${c[3] >= 0 ? '+' : ''}${c[3]} pts/day · `
+          + `typical miss ±${fitReport.rmse} (${fitReport.n} games).</div>`;
+  }
+  html += `<div class="note">${fitReport.saved
+    ? 'Saved — the pipeline and the next backtest use these weights for this sport.'
+    : 'Not saved: ' + (fitReport.reason || '') + '. The hand-set blend stays in use.'}</div></div>`;
+  return html;
+}
+
+// Profit at the bet amount, at -110 (the backtest has no historical
+// spread prices). A win pays amount × 100/110, a loss costs the
+// amount, a push returns it. Shown three ways: the picks the
+// governor would have made (flat, and sized by its units), every
+// game on the model's side, and every game on the side that covered
+// (the most the window could have paid).
+function profitSummary(stake) {
+  const win = stake * (100 / 110);
+  const res = (rows, unitsOf) => {
+    let w = 0, l = 0, p = 0, pnl = 0, risked = 0;
+    rows.forEach(r => {
+      const u = unitsOf ? unitsOf(r) : 1;
+      if (r.result === 'W') { w++; pnl += win * u; risked += stake * u; }
+      else if (r.result === 'L') { l++; pnl -= stake * u; risked += stake * u; }
+      else if (r.result === 'P') { p++; }
+    });
+    return { w, l, p, pnl, risked, roi: risked ? pnl / risked : 0 };
+  };
+  const picks = gameResults.filter(r => r.result);
+  const decided = evalRows.filter(r => r.result !== 'P').length;
+  return {
+    stake,
+    picksFlat: res(picks),
+    picksUnits: res(picks, r => r.units || 1),
+    modelAll: res(evalRows),
+    perfect: { w: decided, l: 0, p: evalRows.length - decided, pnl: decided * win, risked: decided * stake, roi: win / stake },
+  };
+}
+
+function renderProfit() {
+  if (!gameResults.length && !evalRows.length) return '';
+  const s = profitSummary(stakeAmount());
+  const money = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+  const line = (label, r) => `<div class="row"><span class="name">${label}</span>`
+    + `<span class="num neu">${r.w}-${r.l}-${r.p}</span>`
+    + `<span class="num ${r.pnl >= 0 ? 'pos' : 'neg'}">${money(r.pnl)}</span>`
+    + `<span class="num ${r.roi >= 0 ? 'pos' : 'neg'}">${(r.roi * 100).toFixed(1)}%</span></div>`;
+  let html = `<div class="section"><div class="sec-title">PROFIT <em>AT $${s.stake} A BET</em></div>`;
+  html += `<div class="row head"><span>Bets</span><span>W-L-P</span><span>Profit</span><span>Return</span></div>`;
+  html += line('Picks, flat amount', s.picksFlat);
+  html += line('Picks, amount × units', s.picksUnits);
+  html += line('Every game, model side', s.modelAll);
+  html += line('Every game, covering side', s.perfect);
+  html += `<div class="note">At -110 a side must win 52.4% to break even, so a winning record can still lose money. `
+        + `"Covering side" is the most this window could have paid.</div></div>`;
+  return html;
+}
+
 function renderAccuracyAndCalibration() {
-  let html = '';
+  let html = renderProfit() + renderFitReport();
   const acc = spreadAccuracy(evalRows);
   if (acc) {
     const early = spreadAccuracy(evalRows.filter(x => x.ratings_games < 5));
@@ -1501,6 +1736,11 @@ function renderAccuracyAndCalibration() {
         <span class="num ${cls}">${gap >= 0 ? '+' : ''}${gap.toFixed(1)}</span>
       </div>`;
     });
+    const sc = probabilityScores(evalRows);
+    if (sc) {
+      html += `<div class="note">Brier ${sc.brier.toFixed(4)} (coin flip 0.2500) · log loss ${sc.logLoss.toFixed(4)} (coin flip 0.6931) · `
+            + `skill ${(sc.skill * 100).toFixed(2)}% — above 0 means its chances beat a coin flip over ${sc.games} games.</div>`;
+    }
     html += `<div class="note">Every graded game, picked or not: the chance to cover the model gave its side, and how often that side covered. `
           + `Saved as calibration: live picks in each bucket are pulled toward what actually happened (fully once a bucket has 300 games).</div></div>`;
   }
@@ -1527,9 +1767,14 @@ function renderWeeklyBoard() {
     const picks = g.filter(x => x.pick);
     const pw = picks.filter(x => x.pick.result === 'W').length, pl = picks.filter(x => x.pick.result === 'L').length,
           pp = picks.filter(x => x.pick.result === 'P').length;
+    const stake = stakeAmount(), win = stake * (100 / 110);
+    const modelPnl = judged.reduce((s, x) => s + (x.model_side === x.covered ? win : -stake), 0);
+    const pickPnl = picks.reduce((s, x) => s + (x.pick.result === 'W' ? win : x.pick.result === 'L' ? -stake : 0), 0);
+    const m$ = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(0);
     html += `<details class="week"><summary><b>${week.label}</b> · ${g.length} games · ${decided} decided (${decided * 2} sides) · `
           + `${pushes} push${pushes === 1 ? '' : 'es'} · home ${home} / away ${away} · fav ${fav} / dog ${dog} · `
-          + `${tight} within 3 · model side ${modelRight}/${judged.length} · picks ${pw}-${pl}-${pp}</summary>`;
+          + `${tight} within 3 · model side ${modelRight}/${judged.length} (${m$(modelPnl)}) · picks ${pw}-${pl}-${pp} (${m$(pickPnl)}) · `
+          + `most possible ${m$(decided * win)}</summary>`;
     g.forEach(x => {
       const sp = (x.spread > 0 ? '+' : '') + x.spread;
       const cov = x.covered === 'push' ? 'PUSH' : `${x.covered === 'home' ? x.home : x.away} covered by ${Math.abs(x.cover)}`;
