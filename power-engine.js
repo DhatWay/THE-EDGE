@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260930-01';
+  const BUILD = 'pe-20261001-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -1139,6 +1139,15 @@ const EDGE_POWER = (() => {
       qb: { home_out: !!adjustments.qb_home_out, away_out: !!adjustments.qb_away_out, points: qbDelta },
       rest_days: { home: rest.home ?? null, away: rest.away ?? null },
       projection_weight: projectionWeight != null ? round(projectionWeight, 2) : null,
+
+      // Chance to win outright (moneylines): the same margin and
+      // spread of outcomes against a line of 0, not anchored to the
+      // spread market.
+      win: (core && totalModelSpread != null && isFinite(totalModelSpread))
+        ? core.coverProbability(-totalModelSpread, 0,
+            (modelSource === 'fitted' ? fit.rmse : null) ?? calib?.sigma_settled ?? calib?.projection_sigma ?? null,
+            { sport })
+        : null,
 
       // Cover chance from the full ranking margin — offense/defense
       // and composite blend, coaching, and the defense matchup — the
