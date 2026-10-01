@@ -29,7 +29,19 @@
 
 const EDGE_RATING = (() => {
 
-  const BUILD = 'rc-20260927-01';
+  const BUILD = 'rc-20260930-01';
+
+  // NFL final margins bunch on key numbers: about 15% of games end
+  // by exactly 3 and about 9% by 7, far more than a smooth curve
+  // gives. These multiply a normal curve at each whole margin (by
+  // size, either side), then the curve is re-normalised. They are
+  // rounded from long-run NFL results, and the Slate Test's
+  // said-vs-happened table is the check on them. Other sports keep
+  // the smooth curve.
+  const KEY_NUMBER_WEIGHTS = {
+    NFL: { 1: 0.8, 2: 0.75, 3: 2.4, 4: 1.0, 5: 0.8, 6: 1.05, 7: 1.7, 8: 0.85, 9: 0.7,
+           10: 1.25, 11: 0.8, 13: 0.9, 14: 1.25, 17: 1.2, 21: 1.1, 24: 1.05 },
+  };
 
   // ── GLICKO-2 CONSTANTS ──
   const SCALE = 173.7178;          // Glicko-1 → Glicko-2 conversion
@@ -607,13 +619,34 @@ const EDGE_RATING = (() => {
              : 13.5;
 
     const z = (anchored - needed) / sd;
-    let pHome = normalCdf(z);
 
-    // A whole number can push, which is neither side's win.
-    if (Number.isInteger(needed)) {
-      const pPush = normalPdf((needed - anchored) / sd) / sd;
-      pHome = pHome - pPush * push;
+    // Chance each side covers, with pushes set aside — the number that
+    // is compared with 50% and graded (a push is neither a win nor a
+    // loss). Key-number sports use the whole-margin distribution.
+    let pWin, pLose, pPush = 0;
+    const weights = options.sport ? KEY_NUMBER_WEIGHTS[options.sport] : null;
+    if (weights) {
+      let tot = 0, win = 0, lose = 0, tie = 0;
+      for (let m = -80; m <= 80; m++) {
+        if (m === 0) continue;                     // NFL ties are near zero
+        const w = (weights[Math.abs(m)] ?? 1) * normalPdf((m - anchored) / sd);
+        tot += w;
+        if (m > needed) win += w;
+        else if (m === needed) tie += w;
+        else lose += w;
+      }
+      pWin = win / tot; pLose = lose / tot; pPush = tie / tot;
+    } else {
+      if (Number.isInteger(needed)) {
+        pWin = 1 - normalCdf((needed + 0.5 - anchored) / sd);
+        pLose = normalCdf((needed - 0.5 - anchored) / sd);
+        pPush = Math.max(0, 1 - pWin - pLose);
+      } else {
+        pWin = normalCdf(z);
+        pLose = 1 - pWin;
+      }
     }
+    const pHome = (pWin + pLose) > 0 ? pWin / (pWin + pLose) : 0.5;
 
     const p = clamp(pHome, 0.01, 0.99);
     return {
@@ -621,6 +654,8 @@ const EDGE_RATING = (() => {
       away_cover: round(1 - p, 4),
       side: p > 0.5 ? 'home' : 'away',
       probability: round(Math.max(p, 1 - p), 4),
+      push: round(pPush, 4),
+      key_numbers: !!weights,
       edge_points: round(anchored - needed, 2),
       raw_edge_points: round(projectedMargin - needed, 2),
       anchored_margin: anchored,
