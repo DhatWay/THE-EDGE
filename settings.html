@@ -513,6 +513,16 @@
       </div>
       <div class="notif-row">
         <div class="notif-info">
+          <div class="notif-name">Low-vig books as the benchmark</div>
+          <div class="notif-desc">Measure the model's edge against LowVig / BetOnline (less shaded than the big apps) instead of the plain median. No extra credits. Pinnacle, when on, takes priority.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="edgeLowVig" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="notif-row">
+        <div class="notif-info">
           <div class="notif-name">Pinnacle as the sharp benchmark</div>
           <div class="notif-desc">Downloads Pinnacle too and uses its price as the market. Uses about twice the Odds API credits per refresh.</div>
         </div>
@@ -992,7 +1002,7 @@
       set('edge_sim_daily_cap',  document.getElementById('simDailyCap').value);
       const sg = document.getElementById('simAutoGrade');
       if (sg) localStorage.setItem('edge_sim_auto_grade', sg.checked);
-      [['edgeSportGate', 'edge_sport_gate'], ['edgeLockFirst', 'edge_lock_on_first'],
+      [['edgeSportGate', 'edge_sport_gate'], ['edgeLockFirst', 'edge_lock_on_first'], ['edgeLowVig', 'edge_lowvig_benchmark'],
        ['edgeMlSports', 'edge_ml_sports'], ['edgeUsePinnacle', 'edge_use_pinnacle']].forEach(([id, k]) => {
         const el = document.getElementById(id);
         if (el) localStorage.setItem(k, el.checked);
@@ -1072,6 +1082,7 @@
       set('edgeLockFirst', on('edge_lock_on_first', false));
       set('edgeMlSports', on('edge_ml_sports', true));
       set('edgeUsePinnacle', on('edge_use_pinnacle', false));
+      set('edgeLowVig', on('edge_lowvig_benchmark', true));
       let mine = [];
       try { mine = JSON.parse(localStorage.getItem('edge_my_books') || '[]'); } catch {}
       document.querySelectorAll('.my-book').forEach(b => { b.checked = mine.includes(b.value); });
