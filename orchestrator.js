@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20260930-03';
+  const BUILD = 'orch-20261001-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -58,6 +58,8 @@ const EDGE_ORCHESTRATOR = (() => {
   // the ranking decides. The engine is not run and its weights are
   // not loaded, which also saves the three table reads per run.
   const SITUATIONS_IN_DECISION = false;
+
+  const ML_SPORTS = new Set(['MLB', 'NHL']);
 
   // A pick is skipped if any pick for the same game_id was
   // written inside this window. Wide enough to cover a full
@@ -283,7 +285,9 @@ const EDGE_ORCHESTRATOR = (() => {
 
       const picks = finalResults
         .filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED')
-        .filter(p => p.confidence >= minConfidence)
+        // A moneyline underdog can be a bet below 50%: its value, not its
+        // chance, decided it, so the confidence floor applies to spreads.
+        .filter(p => p.governor_snapshot?.bet_type === 'ML' || p.confidence >= minConfidence)
         .sort((a, b) => {
           if (b.confidence !== a.confidence) return b.confidence - a.confidence;
           return Math.abs(b.edge) - Math.abs(a.edge);
@@ -316,6 +320,7 @@ const EDGE_ORCHESTRATOR = (() => {
       finalResults.forEach(p => {
         if (!p.direction || p.direction === 'none') return;
         const prior = priors.find(x => x.game_id === p.game_id) || {};
+        if (prior.bet_type === 'ML') return;
         const g = prior._raw_game || {};
         const isHome = p.direction === 'home';
         const point = isHome ? g.best_home_spread : g.best_away_spread;
@@ -338,6 +343,30 @@ const EDGE_ORCHESTRATOR = (() => {
         p.best = best;
         if (p.governor_snapshot) p.governor_snapshot.best = best;
       });
+
+      // Sport gate: a sport whose Slate Test scored worse than a coin
+      // flip makes no picks (its line still shows). Untested sports
+      // pass through, marked untested.
+      if (localStorage.getItem('edge_sport_gate') !== 'false') {
+        let metrics = {};
+        try { metrics = JSON.parse(localStorage.getItem('edge_governor_calibration') || '{}').sport_metrics || {}; } catch {}
+        let gated = 0;
+        finalResults.forEach(p => {
+          const prior = priors.find(x => x.game_id === p.game_id) || {};
+          const kind = prior.bet_type === 'ML' ? `${prior.sport}_ML` : prior.sport;
+          const m = metrics[kind] || metrics[prior.sport];
+          p.gate = m ? { tested: true, skill: m.skill, games: m.games } : { tested: false };
+          if (p.governor_snapshot) p.governor_snapshot.gate = p.gate;
+          if (m && isFinite(m.skill) && m.skill <= 0 && p.decision && p.decision !== 'PASS') {
+            p.decision = 'PASS';
+            p.units = 0;
+            p.gated = true;
+            gated++;
+          }
+        });
+        if (gated) log(`  ${gated} picks held back: their sport's Slate Test scored worse than a coin flip`);
+        for (let i = picks.length - 1; i >= 0; i--) if (picks[i].gated) picks.splice(i, 1);
+      }
 
       // Every game's result, picked or passed, for the board.
       summary.evaluations = finalResults.map(p => {
@@ -378,7 +407,7 @@ const EDGE_ORCHESTRATOR = (() => {
 
         const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
         const bettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
-        if (portfolio === 'sim' || bettingMode === 'auto') {
+        if (portfolio === 'sim' || bettingMode === 'auto' || localStorage.getItem('edge_lock_on_first') === 'true') {
           log(`Auto-placing sim bets (portfolio=${portfolio}, mode=${bettingMode})`);
           const placed = autoPlaceSimBets(picks, priors, portfolio);
           log(`  ${placed} sim bets placed`);
@@ -607,6 +636,11 @@ const EDGE_ORCHESTRATOR = (() => {
             away_ml: game.away_ml ?? null,
             home_spread_price: game.home_spread_price ?? null,
             away_spread_price: game.away_spread_price ?? null,
+            pin_home_spread: game.pin_home_spread ?? null,
+            pin_home_price: game.pin_home_price ?? null,
+            pin_away_price: game.pin_away_price ?? null,
+            pin_home_ml: game.pin_home_ml ?? null,
+            pin_away_ml: game.pin_away_ml ?? null,
             over_price: game.over_price ?? null,
             under_price: game.under_price ?? null,
             book: game.bookmaker ?? null,
@@ -615,6 +649,13 @@ const EDGE_ORCHESTRATOR = (() => {
             price_source: game.price_source ?? 'consensus',
           },
         });
+        // MLB and NHL are bet on the moneyline at its real price (Settings
+        // can turn this off). Their ±1.5 run and puck lines are priced
+        // far from -110, so grading them at -110 was not a real bet.
+        if (ML_SPORTS.has(sport) && localStorage.getItem('edge_ml_sports') !== 'false'
+            && game.ml != null && game.away_ml != null) {
+          prior.bet_type = 'ML';
+        }
         prior._raw_game = game;
         priors.push(prior);
       } catch (e) { logEdgeError('orch.priorBuild', e); }
@@ -1112,7 +1153,10 @@ const EDGE_ORCHESTRATOR = (() => {
     const isSim = portfolio === 'sim';
     let placed = 0;
 
-    const autoThreshold = parseFloat(localStorage.getItem('edge_auto_threshold') || '0');
+    // Lock the early number: every pick is placed the first time it
+    // appears, whatever its confidence, so its line is kept.
+    const lockFirst = localStorage.getItem('edge_lock_on_first') === 'true';
+    const autoThreshold = lockFirst ? 0 : parseFloat(localStorage.getItem('edge_auto_threshold') || '0');
     if (autoThreshold > 0) {
       picks = picks.filter(p => (p.confidence || 0) >= autoThreshold);
       if (!picks.length) return 0;
@@ -1158,7 +1202,9 @@ const EDGE_ORCHESTRATOR = (() => {
         ? `${prior.away_team} @ ${prior.home_team}`
         : '—';
 
-      const spread = pick.market_snapshot?.spread ?? null;
+      const gsnap = pick.governor_snapshot || {};
+      const isMl = gsnap.bet_type === 'ML';
+      const spread = gsnap.best?.home_line ?? pick.market_snapshot?.spread ?? null;
 
       placedBets.push({
         pick_id: pick.pick_id,
@@ -1166,9 +1212,9 @@ const EDGE_ORCHESTRATOR = (() => {
         sport: pick.sport,
         matchup,
         pick_label: pick.side_label?.team || pick.direction,
-        pick_type: 'ATS',
-        line: spread != null ? String(spread) : '',
-        odds: DEFAULT_SPREAD_PRICE,
+        pick_type: isMl ? 'ML' : 'ATS',
+        line: isMl ? '' : (spread != null ? String(spread) : ''),
+        odds: isMl ? (gsnap.price ?? null) : (gsnap.best?.price ?? gsnap.price ?? DEFAULT_SPREAD_PRICE),
         units,
         stake,
         confidence: pick.confidence,
