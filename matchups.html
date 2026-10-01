@@ -135,6 +135,10 @@
     .game-btn:hover { color: var(--gold); background: var(--gold-glow); }
     .game-btn.primary { color: var(--gold); }
 
+    .audit { border: 1px solid var(--border); margin: 8px 0; padding: 6px 10px; font-size: 12px; }
+    .audit summary { cursor: pointer; color: var(--gold); font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; }
+    .audit-row { padding: 4px 0; border-bottom: 1px solid var(--border); color: var(--text); }
+    .audit-miss { color: var(--text-dim); padding: 3px 0 0 10px; font-size: 11px; }
     .model-line { border-top: 1px solid var(--border); padding: 7px 12px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
     .model-line b { color: var(--gold); font-weight: 600; }
     .prop-panel { border-top: 1px solid var(--border); padding: 12px; background: var(--bg2, var(--surface)); }
@@ -289,6 +293,7 @@
       <div class="refresh-info">
         <span class="live-dot"></span>
         <span id="refreshStatus">Loading…</span>
+        <div id="inputAudit"></div>
       </div>
       <div class="refresh-actions">
         <button class="refresh-btn" id="refreshBtn" onclick="fetchMatchups({force:true})">↻ Refresh</button>
@@ -616,6 +621,22 @@
       const awaySpread = spreadMkt?.find(o => o.name === raw.away_team)?.point ?? null;
       const homeSpreadPrice = spreadMkt?.find(o => o.name === raw.home_team)?.price ?? null;
       const awaySpreadPrice = spreadMkt?.find(o => o.name === raw.away_team)?.price ?? null;
+
+      // Best number for each side across every book downloaded: the
+      // most points (or fewest laid), better price on a tie.
+      const bestFor = (teamName) => {
+        let best = null;
+        books.forEach(b => {
+          const o = b.markets?.find(m => m.key === 'spreads')?.outcomes?.find(x => x.name === teamName);
+          if (!o || typeof o.point !== 'number') return;
+          if (!best || o.point > best.point || (o.point === best.point && (o.price ?? -999) > (best.price ?? -999))) {
+            best = { point: o.point, price: o.price ?? null, book: b.title || b.key };
+          }
+        });
+        return best;
+      };
+      const bestHome = bestFor(raw.home_team);
+      const bestAway = bestFor(raw.away_team);
       const total      = totalMkt?.find(o => o.name === 'Over')?.point ?? null;
       const overPrice  = totalMkt?.find(o => o.name === 'Over')?.price ?? null;
       const underPrice = totalMkt?.find(o => o.name === 'Under')?.price ?? null;
@@ -634,6 +655,8 @@
         commence_time: raw.commence_time, time: raw.commence_time,
         spread: homeSpread, home_spread: homeSpread, away_spread: awaySpread,
         home_spread_price: homeSpreadPrice, away_spread_price: awaySpreadPrice,
+        best_home_spread: bestHome?.point ?? null, best_home_price: bestHome?.price ?? null, best_home_book: bestHome?.book ?? null,
+        best_away_spread: bestAway?.point ?? null, best_away_price: bestAway?.price ?? null, best_away_book: bestAway?.book ?? null,
         total, over_price: overPrice, under_price: underPrice,
         ml: homeML, home_ml: homeML, away_ml: awayML,
         bookmaker_count: books.length,
@@ -873,6 +896,8 @@
       return { cls: 'live', text: 'LIVE' };
     }
 
+    setTimeout(() => { try { renderInputAudit(); } catch {} }, 0);
+
     function renderGames() {
       const container = document.getElementById('gamesContainer');
       const games = currentSport === 'all'
@@ -1010,6 +1035,41 @@
           </div>
           ${propsAvailable(game, statusCls) ? `<div class="prop-panel" id="prop-${game.id}" hidden></div>` : ''}
         </div>`;
+    }
+
+    // ── DATA CHECK ──
+    // After a pipeline run: for every game evaluated, which of the
+    // inputs the decision uses were there. Anything missing is listed
+    // by game, so you can see what to run (ratings, rest, injuries).
+    function renderInputAudit() {
+      const box = document.getElementById('inputAudit');
+      if (!box) return;
+      let d = null;
+      try { d = JSON.parse(localStorage.getItem('edge_last_evaluations') || 'null'); } catch {}
+      const items = (d && Array.isArray(d.items)) ? d.items.filter(e => e.inputs) : [];
+      if (!items.length) { box.innerHTML = ''; return; }
+      const checks = [
+        ['projection', 'Offense/defense projection', 'Recompute Ratings'],
+        ['composite', 'Composite rating', 'Recompute Ratings'],
+        ['cover', 'Chance to cover', 'needs ratings and a spread'],
+        ['rest', 'Rest days', 'schedule fetch (ESPN)'],
+        ['injuries', 'Injury report', 'Build Rosters, then rerun'],
+      ];
+      const byId = Object.fromEntries(allGames.map(g => [g.id, g]));
+      const name = e => { const g = byId[e.game_id]; return g ? `${g.away_team} @ ${g.home_team}` : e.game_id; };
+      let html = `<details class="audit"><summary>Data check · ${items.length} games · ${new Date(d.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</summary>`;
+      checks.forEach(([k, label, fix]) => {
+        const missing = items.filter(e => !e.inputs[k]);
+        html += `<div class="audit-row"><b>${label}</b>: ${items.length - missing.length}/${items.length}` +
+          (missing.length ? ` · missing on ${missing.length} (${fix})<div class="audit-miss">${missing.slice(0, 12).map(e => escHtml(name(e))).join('<br>')}${missing.length > 12 ? '<br>…' : ''}</div>` : ' ✓') + `</div>`;
+      });
+      const thin = items.filter(e => (e.inputs.ratings_games || 0) < 4);
+      html += `<div class="audit-row"><b>Teams with under 4 games rated</b>: ${thin.length}` +
+        (thin.length ? `<div class="audit-miss">${thin.slice(0, 12).map(e => escHtml(name(e))).join('<br>')}</div>` : '') + `</div>`;
+      const cal = items.filter(e => e.inputs.calibrated).length;
+      html += `<div class="audit-row"><b>Calibration applied</b>: ${cal}/${items.length}${cal ? '' : ' (run the Slate Test to create it)'}</div>`;
+      html += `</details>`;
+      box.innerHTML = html;
     }
 
     // ── LAST PIPELINE RESULT PER GAME ──
@@ -1221,6 +1281,7 @@
         const pickCount = result.picks.length;
         const scope = currentSport === 'all' ? 'window' : currentSport;
         statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games · ${result.duration_ms}ms`;
+        renderInputAudit();
       } finally {
         btn.disabled = false;
       }
