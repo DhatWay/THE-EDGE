@@ -153,6 +153,8 @@
     .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
 
     .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
+    .best-line b { color: var(--gold); }
     .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
     .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
     .pick-action-btn.copy { color: var(--text); }
@@ -923,6 +925,7 @@
 
             <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
 
+            ${bestLineHtml(p)}
             ${buildAnalytics(p)}
           </div>
 
@@ -961,6 +964,15 @@
         ['Decided by', gs.decision_source || p.decision_path || '—'],
       ];
       if (gs.data_caps && gs.data_caps.length) rows.push(['Caps', gs.data_caps.join(', ')]);
+      rows.push(['Ranking model', r.model_source === 'fitted'
+        ? `fitted on ${r.fit?.n ?? '?'} games (miss ±${r.fit?.rmse != null ? Number(r.fit.rmse).toFixed(1) : '?'})`
+        : (r.model_source === 'blend' ? 'hand-set blend (no fit saved yet)' : '—')]);
+      if (r.qb && (r.qb.home_out || r.qb.away_out)) {
+        rows.push(['QB out', `${r.qb.home_out ? (p.home_team || 'home') : ''}${r.qb.home_out && r.qb.away_out ? ' and ' : ''}${r.qb.away_out ? (p.away_team || 'away') : ''} (${r.qb.points > 0 ? '+' : ''}${r.qb.points} pts to home)`]);
+      }
+      if (r.key_numbers) rows.push(['Push chance (key numbers)', r.push != null ? (r.push * 100).toFixed(1) + '%' : '—']);
+      if (gs.best) rows.push(['Best number', `${gs.best.point > 0 ? '+' : ''}${gs.best.point} at ${gs.best.book || '?'}${gs.best.price ? ' (' + gs.best.price + ')' : ''}` +
+        (gs.best.cover != null ? ` · ${(gs.best.cover * 100).toFixed(1)}% to cover there` : '')]);
       // Inputs: which of the things the decision uses were there.
       // Only these change the pick; the "not used" families below do not.
       const inp = gs.inputs || p.inputs || null;
@@ -984,6 +996,17 @@
       }));
       const claude = p.claude_verdict || p.claude_output || null;
       return { rows, fams, claude };
+    }
+
+    // Best number across books for the side picked, shown on the card.
+    function bestLineHtml(p) {
+      const b = (p.governor_snapshot || {}).best;
+      if (!b || b.point == null) return '';
+      const same = b.consensus != null && Number(b.consensus) === Number(b.point);
+      const pts = (b.point > 0 ? '+' : '') + b.point;
+      return `<div class="best-line">Best: <b>${pts}</b> at ${String(b.book || '?').replace(/[<>&]/g, '')}` +
+        `${b.price ? ' (' + b.price + ')' : ''}${b.cover != null ? ' · ' + (b.cover * 100).toFixed(1) + '% to cover' : ''}` +
+        `${same ? ' · same as consensus' : ''}</div>`;
     }
 
     function buildAnalytics(p) {
@@ -1262,8 +1285,11 @@
         matchup: `${pick.away_team} vs ${pick.home_team}`,
         pick_label: pick.side_team,
         pick_type: 'ATS',
-        line: spread != null ? String(spread) : '',
-        odds: -110,
+        // At the best number found across books when there is one
+        // (home spread, the sim grader's convention), else consensus.
+        line: (pick.governor_snapshot?.best?.home_line ?? spread) != null
+          ? String(pick.governor_snapshot?.best?.home_line ?? spread) : '',
+        odds: pick.governor_snapshot?.best?.price ?? -110,
         confidence: pick.confidence,
         edge: pick.edge,
         units,
