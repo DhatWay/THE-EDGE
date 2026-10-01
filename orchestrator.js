@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20260930-02';
+  const BUILD = 'orch-20260930-03';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -310,6 +310,35 @@ const EDGE_ORCHESTRATOR = (() => {
         p.inputs = inputs;
       });
 
+      // Best available number for the side picked, across the books
+      // Matchups downloaded (consensus mode). The decision stays the
+      // one made at the consensus line; this is where to bet it.
+      finalResults.forEach(p => {
+        if (!p.direction || p.direction === 'none') return;
+        const prior = priors.find(x => x.game_id === p.game_id) || {};
+        const g = prior._raw_game || {};
+        const isHome = p.direction === 'home';
+        const point = isHome ? g.best_home_spread : g.best_away_spread;
+        if (point == null || !isFinite(point)) return;
+        const homeLine = isHome ? point : -point;
+        let cover = null;
+        const core = window.EDGE_RATING;
+        const total = prior.total_model_spread ?? prior.model_spread;
+        if (core && isFinite(total)) {
+          const c = core.coverProbability(-total, homeLine, prior.cover?.sigma ?? null, { sport: prior.sport });
+          if (c) cover = isHome ? c.home_cover : c.away_cover;
+        }
+        const best = {
+          point, home_line: homeLine,
+          book: isHome ? g.best_home_book : g.best_away_book,
+          price: isHome ? g.best_home_price : g.best_away_price,
+          consensus: isHome ? g.home_spread ?? g.spread : g.away_spread,
+          cover,
+        };
+        p.best = best;
+        if (p.governor_snapshot) p.governor_snapshot.best = best;
+      });
+
       // Every game's result, picked or passed, for the board.
       summary.evaluations = finalResults.map(p => {
         const prior = priors.find(x => x.game_id === p.game_id) || {};
@@ -557,10 +586,16 @@ const EDGE_ORCHESTRATOR = (() => {
       const awayPower = { ...awayStats, _coach: awayCoach || null };
 
       try {
+        const inj = context?.injuriesByGame?.[game.id] || null;
         const prior = await EDGE_POWER.computeGamePrior(game, {
           homeStats: homePower,
           awayStats: awayPower,
           league: powerIndex.league?.[sport] || null,
+          adjustments: { qb_home_out: !!inj?.home_qb_out, qb_away_out: !!inj?.away_qb_out },
+          rest: {
+            home: context?.restByTeam?.[`${sport}:${game.home_team}`] ?? null,
+            away: context?.restByTeam?.[`${sport}:${game.away_team}`] ?? null,
+          },
           market: {
             open_spread: game.open_spread
                       ?? game.opening_spread
