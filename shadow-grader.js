@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20260929-01';
+  const BUILD = 'shadowgrade-20261001-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -305,7 +305,7 @@ const EDGE_SHADOW_GRADER = (() => {
         const res = await fetch(
           `${url}/rest/v1/shadow_picks?result=is.null` +
           `&created_at=gte.${since}` +
-          `&select=id,game_id,sport,direction,market_spread,units,decision,created_at` +
+          `&select=id,game_id,sport,direction,market_spread,units,decision,created_at,governor_snapshot` +
           `&order=created_at.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
@@ -380,15 +380,25 @@ const EDGE_SHADOW_GRADER = (() => {
     const direction = String(pick.direction || '').toLowerCase();
     if (direction !== 'home' && direction !== 'away') return null;
 
-    const spread = Number(pick.market_spread);
-    if (!isFinite(spread)) return null;
-
+    const gs = pick.governor_snapshot || {};
+    const isML = gs.bet_type === 'ML';
     const homeMargin = score.home_score - score.away_score;
-    const homeCover = homeMargin + spread;
-    const pickMargin = direction === 'home' ? homeCover : -homeCover;
 
+    // Moneyline: the side wins outright. Spread: against market_spread.
+    let pickMargin;
+    if (isML) {
+      pickMargin = direction === 'home' ? homeMargin : -homeMargin;
+    } else {
+      const spread = Number(pick.market_spread);
+      if (!isFinite(spread)) return null;
+      const homeCover = homeMargin + spread;
+      pickMargin = direction === 'home' ? homeCover : -homeCover;
+    }
+
+    // Paid at the pick's own price when it has one, else -110.
     const units = Number(pick.units) || 0;
-    const winMultiplier = 100 / Math.abs(DEFAULT_JUICE);
+    const price = isFinite(Number(gs.price)) && Number(gs.price) !== 0 ? Number(gs.price) : DEFAULT_JUICE;
+    const winMultiplier = price > 0 ? price / 100 : 100 / Math.abs(price);
 
     let result, pnl;
     if (Math.abs(pickMargin) < 0.01) {
