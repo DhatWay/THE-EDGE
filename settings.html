@@ -251,7 +251,9 @@
     .key-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
     .reveal-btn { background: none; border: none; color: var(--gold-dim); font-size: 11px; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; padding: 0; }
     .conn-note { font-size: 12px; color: var(--text-dim); font-weight: 300; line-height: 1.55; margin-top: 10px; }
-  </style>
+      .book-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+    .book-chip { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); padding: 6px 4px; border: 1px solid var(--border); }
+</style>
 </head>
 <body>
 
@@ -474,6 +476,69 @@
           <input type="checkbox" id="simAutoGrade" onchange="markUnsaved()" />
           <div class="toggle-track"></div><div class="toggle-thumb"></div>
         </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">EDGE <em>SETTINGS</em></div>
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Only pick sports that passed the Slate Test</div>
+          <div class="notif-desc">A sport whose backtest scored worse than a coin flip shows its line but makes no picks. Untested sports are allowed and marked untested.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="edgeSportGate" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Lock the early number</div>
+          <div class="notif-desc">Place a sim bet on every pick the first time it appears, so the line it was found at is kept (and checked against the close).</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="edgeLockFirst" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Moneylines for MLB and NHL</div>
+          <div class="notif-desc">Bet MLB and NHL on the moneyline at its real price instead of the ±1.5 run or puck line.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="edgeMlSports" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="notif-row">
+        <div class="notif-info">
+          <div class="notif-name">Pinnacle as the sharp benchmark</div>
+          <div class="notif-desc">Downloads Pinnacle too and uses its price as the market. Uses about twice the Odds API credits per refresh.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="edgeUsePinnacle" onchange="markUnsaved()" />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <div class="field-lbl">My books <span class="field-hint">best number only searches these · none ticked = all</span></div>
+        <div class="book-grid">
+        <label class="book-chip"><input type="checkbox" class="my-book" value="draftkings" onchange="markUnsaved()" /> DraftKings</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="fanduel" onchange="markUnsaved()" /> FanDuel</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="betmgm" onchange="markUnsaved()" /> BetMGM</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="williamhill_us" onchange="markUnsaved()" /> Caesars</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="espnbet" onchange="markUnsaved()" /> ESPN BET</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="fanatics" onchange="markUnsaved()" /> Fanatics</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="betrivers" onchange="markUnsaved()" /> BetRivers</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="hardrockbet" onchange="markUnsaved()" /> Hard Rock Bet</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="ballybet" onchange="markUnsaved()" /> Bally Bet</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="betonlineag" onchange="markUnsaved()" /> BetOnline</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="bovada" onchange="markUnsaved()" /> Bovada</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="mybookieag" onchange="markUnsaved()" /> MyBookie</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="lowvig" onchange="markUnsaved()" /> LowVig</label>
+        <label class="book-chip"><input type="checkbox" class="my-book" value="betus" onchange="markUnsaved()" /> BetUS</label>
+        </div>
       </div>
     </div>
 
@@ -927,6 +992,13 @@
       set('edge_sim_daily_cap',  document.getElementById('simDailyCap').value);
       const sg = document.getElementById('simAutoGrade');
       if (sg) localStorage.setItem('edge_sim_auto_grade', sg.checked);
+      [['edgeSportGate', 'edge_sport_gate'], ['edgeLockFirst', 'edge_lock_on_first'],
+       ['edgeMlSports', 'edge_ml_sports'], ['edgeUsePinnacle', 'edge_use_pinnacle']].forEach(([id, k]) => {
+        const el = document.getElementById(id);
+        if (el) localStorage.setItem(k, el.checked);
+      });
+      localStorage.setItem('edge_my_books', JSON.stringify(
+        Array.from(document.querySelectorAll('.my-book')).filter(b => b.checked).map(b => b.value)));
 
       SPORTS.forEach(s => {
         const el = document.getElementById('sport_' + s);
@@ -993,7 +1065,20 @@
       } catch (e) { logEdgeError('settings.sync', e); }
     }
 
+    function loadEdgeSettings() {
+      const on = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === 'true'; };
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+      set('edgeSportGate', on('edge_sport_gate', true));
+      set('edgeLockFirst', on('edge_lock_on_first', false));
+      set('edgeMlSports', on('edge_ml_sports', true));
+      set('edgeUsePinnacle', on('edge_use_pinnacle', false));
+      let mine = [];
+      try { mine = JSON.parse(localStorage.getItem('edge_my_books') || '[]'); } catch {}
+      document.querySelectorAll('.my-book').forEach(b => { b.checked = mine.includes(b.value); });
+    }
+
     function loadAll() {
+      setTimeout(loadEdgeSettings, 0);
       const get = (k, d) => localStorage.getItem(k) || d;
 
       document.getElementById('bankroll').value    = get('edge_bankroll', '');
