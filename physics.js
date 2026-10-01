@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20260930-02';
+  const BUILD = 'phys-20260930-03';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -398,6 +398,12 @@ const EDGE_PHYSICS = (() => {
           coaching_delta: prior?.coaching?.delta ?? null,
           market_spread: prior?.market?.current_spread ?? null,
           home_cover: prior?.cover?.home_cover ?? null,
+          push: prior?.cover?.push ?? null,
+          key_numbers: !!prior?.cover?.key_numbers,
+          model_source: prior?.model_source ?? null,
+          fit: prior?.fit ?? null,
+          qb: prior?.qb ?? null,
+          rest_days: prior?.rest_days ?? null,
         },
       },
 
