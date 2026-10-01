@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20260930-01';
+  const BUILD = 'gov-20260930-02';
 
   // ── The ranking decides ──
   // The pick comes from the ranking: offense/defense and composite
@@ -564,10 +564,27 @@ const EDGE_GOVERNOR = (() => {
       });
       Object.values((t.backtest_runs || {})[sport] || {}).forEach(run => add(run.buckets));
       add((t.live || {})[sport]);
+      // Isotonic: a higher said-chance can't have a lower cover rate.
+      // Adjacent buckets that break that are pooled (weighted by
+      // games) until the rates rise — noise in a thin bucket no longer
+      // flips a 58% below a 56%.
+      const keys = Object.keys(counts).filter(b => counts[b].n > 0).sort((a, b) => Number(a) - Number(b));
+      const blocks = keys.map(b => ({ keys: [b], n: counts[b].n, wins: counts[b].wins }));
+      for (let i = 0; i < blocks.length - 1;) {
+        const a = blocks[i], c = blocks[i + 1];
+        if (a.wins / a.n > c.wins / c.n) {
+          blocks.splice(i, 2, { keys: a.keys.concat(c.keys), n: a.n + c.n, wins: a.wins + c.wins });
+          if (i > 0) i--;
+        } else i++;
+      }
       t.sports[sport] = {};
-      Object.entries(counts).forEach(([b, v]) => {
-        if (v.n > 0) t.sports[sport][b] = { rate: round((v.wins / v.n) * 100, 1), samples: v.n };
-      });
+      blocks.forEach(bl => bl.keys.forEach(b => {
+        t.sports[sport][b] = {
+          rate: round((bl.wins / bl.n) * 100, 1),
+          rate_raw: round((counts[b].wins / counts[b].n) * 100, 1),
+          samples: counts[b].n,
+        };
+      }));
     });
     t.updated_at = new Date().toISOString();
     return t;
