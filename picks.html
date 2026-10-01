@@ -905,8 +905,10 @@
                 <div class="metric-lbl">Units</div>
               </div>
               <div class="metric-cell">
-                <div class="metric-val">${p.market_spread !== null && p.market_spread !== undefined ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—'}</div>
-                <div class="metric-lbl">Spread</div>
+                <div class="metric-val">${(p.governor_snapshot || {}).bet_type === 'ML'
+                  ? ((p.governor_snapshot.price > 0 ? '+' : '') + (p.governor_snapshot.price ?? '—'))
+                  : (p.market_spread !== null && p.market_spread !== undefined ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—')}</div>
+                <div class="metric-lbl">${(p.governor_snapshot || {}).bet_type === 'ML' ? 'Moneyline' : 'Spread'}</div>
               </div>
             </div>
 
@@ -960,7 +962,10 @@
         ['Rest/injury adjustment', gs.adjustment != null ? (gs.adjustment * 100).toFixed(1) + ' pts' : '—'],
         [`After market pull: ${home} covers`, pct(gs.posterior_home_prob)],
         ['Chance the pick covers', (p.confidence || 0).toFixed(1) + '%'],
-        ['Edge over 50%', ((p.edge || 0) * 100).toFixed(1) + ' pts'],
+        ['Bet', gs.bet_type === 'ML' ? `Moneyline ${gs.price > 0 ? '+' : ''}${gs.price}` : `Spread${gs.price ? ' at ' + (gs.price > 0 ? '+' : '') + gs.price : ''}`],
+        ['Break-even at that price', gs.break_even != null ? (gs.break_even * 100).toFixed(1) + '%' : '—'],
+        ['Edge over break-even', ((p.edge || 0) * 100).toFixed(1) + ' pts'],
+        ['Expected value per $1', gs.ev != null ? (gs.ev >= 0 ? '+' : '') + '$' + Number(gs.ev).toFixed(3) : '—'],
         ['Decided by', gs.decision_source || p.decision_path || '—'],
       ];
       if (gs.data_caps && gs.data_caps.length) rows.push(['Caps', gs.data_caps.join(', ')]);
@@ -1284,12 +1289,15 @@
         sport: pick.sport,
         matchup: `${pick.away_team} vs ${pick.home_team}`,
         pick_label: pick.side_team,
-        pick_type: 'ATS',
+        pick_type: (pick.governor_snapshot || {}).bet_type === 'ML' ? 'ML' : 'ATS',
         // At the best number found across books when there is one
         // (home spread, the sim grader's convention), else consensus.
-        line: (pick.governor_snapshot?.best?.home_line ?? spread) != null
-          ? String(pick.governor_snapshot?.best?.home_line ?? spread) : '',
-        odds: pick.governor_snapshot?.best?.price ?? -110,
+        line: (pick.governor_snapshot || {}).bet_type === 'ML' ? ''
+          : ((pick.governor_snapshot?.best?.home_line ?? spread) != null
+              ? String(pick.governor_snapshot?.best?.home_line ?? spread) : ''),
+        odds: (pick.governor_snapshot || {}).bet_type === 'ML'
+          ? (pick.governor_snapshot.price ?? null)
+          : (pick.governor_snapshot?.best?.price ?? pick.governor_snapshot?.price ?? -110),
         confidence: pick.confidence,
         edge: pick.edge,
         units,
