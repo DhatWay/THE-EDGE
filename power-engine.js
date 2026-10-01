@@ -58,7 +58,14 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20260929-01';
+  const BUILD = 'pe-20260930-01';
+
+  // A starting quarterback listed out or doubtful moves the ranking's
+  // spread this many points against his team. An estimate — there is
+  // no injury history to fit it from — sized to how far lines usually
+  // move. Its main job is to stop a false edge: without it the model
+  // rates a team with its healthy QB after the line has moved.
+  const QB_OUT_POINTS = { NFL: 4.5, NCAAF: 3.5 };
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -268,6 +275,17 @@ const EDGE_POWER = (() => {
       overall = (pyth * 100 * 0.45) + (offense * 0.20) + (defense * 0.20) + (mov * 0.15);
     }
     return round(overall, 1);
+  }
+
+  // The fitted ranking model for a sport, saved by the Slate Test in
+  // the calibration table. Only fits that beat the blend on held-out
+  // games are saved.
+  function ratingFitFor(sport) {
+    try {
+      const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null');
+      const f = t?.rating_fit?.[sport];
+      return (f && Array.isArray(f.coef) && f.coef.length === 4 && isFinite(f.rmse)) ? f : null;
+    } catch { return null; }
   }
 
   function effectiveMinGames(medianGames) {
@@ -973,7 +991,7 @@ const EDGE_POWER = (() => {
   }
 
   async function computeGamePrior(game, options = {}) {
-    const { homeStats, awayStats, market } = options;
+    const { homeStats, awayStats, market, adjustments = {}, rest = {} } = options;
     if (!homeStats || !awayStats) throw new Error('computeGamePrior requires homeStats and awayStats');
 
     const sport = game._sport || game.sport;
@@ -1047,8 +1065,28 @@ const EDGE_POWER = (() => {
     );
     const coachDelta = coachAdj - coachAdjAway;
 
+    // Fitted model (Slate Test): when this sport has a fit that beat
+    // the hand-set blend on held-out games, the ranking's margin comes
+    // from it — intercept (home field), the offense/defense projection,
+    // the composite, and the rest-day gap, each with a learned weight.
+    const fit = ratingFitFor(sport);
+    let modelSource = 'blend';
+    const projMargin = projectionSpread != null ? -projectionSpread : null;
+    const compMargin = compositeSpread != null ? -compositeSpread : null;
+    if (fit && projMargin != null && compMargin != null) {
+      const restDiff = (isFinite(rest.home) && isFinite(rest.away))
+        ? Math.max(-7, Math.min(7, rest.home - rest.away)) : 0;
+      const c = fit.coef;
+      const fitted = c[0] + c[1] * projMargin + c[2] * compMargin + c[3] * restDiff;
+      if (isFinite(fitted)) { modelSpread = round(-fitted, 2); modelSource = 'fitted'; }
+    }
+
+    // Starting quarterback out or doubtful (home view: positive helps home).
+    const qbPts = QB_OUT_POINTS[sport] || 0;
+    const qbDelta = qbPts ? ((adjustments.qb_away_out ? qbPts : 0) - (adjustments.qb_home_out ? qbPts : 0)) : 0;
+
     const totalModelSpread = round(
-      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1),
+      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1) - qbDelta,
       2
     );
 
@@ -1096,6 +1134,10 @@ const EDGE_POWER = (() => {
 
       projection_spread: projectionSpread,
       composite_spread: compositeSpread,
+      model_source: modelSource,
+      fit: modelSource === 'fitted' ? { n: fit.n, rmse: fit.rmse, window: fit.window || null } : null,
+      qb: { home_out: !!adjustments.qb_home_out, away_out: !!adjustments.qb_away_out, points: qbDelta },
+      rest_days: { home: rest.home ?? null, away: rest.away ?? null },
       projection_weight: projectionWeight != null ? round(projectionWeight, 2) : null,
 
       // Cover chance from the full ranking margin — offense/defense
@@ -1104,9 +1146,10 @@ const EDGE_POWER = (() => {
       // produced a spread, not only when the projection ran.
       cover: (core && totalModelSpread != null && isFinite(totalModelSpread) && marketSpread !== null)
         ? core.coverProbability(-totalModelSpread, marketSpread,
-            calib?.sigma_settled ?? calib?.projection_sigma ?? null,
+            (modelSource === 'fitted' ? fit.rmse : null) ?? calib?.sigma_settled ?? calib?.projection_sigma ?? null,
             {
-              lambda: calib?.market_lambda ?? null,
+              lambda: modelSource === 'fitted' ? null : (calib?.market_lambda ?? null),
+              sport,
               blendSigma: calib?.blend_sigma ?? null,
             })
         : null,
