@@ -38,7 +38,7 @@
 
 const EDGE_INJURY = (() => {
 
-  const BUILD = 'inj-20260930-01';
+  const BUILD = 'inj-20260930-02';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -167,7 +167,23 @@ const EDGE_INJURY = (() => {
       const awayOff = round(sumDeduction(awayInjuries, 'offensive_contribution') * awayScale, 2);
       const awayDef = round(sumDeduction(awayInjuries, 'defensive_contribution') * awayScale, 2);
 
+      // Starting quarterback out or doubtful: the team's highest-rated
+      // QB on the roster, listed at out/doubtful strength (0.8+).
+      const qbOut = (injured, players) => {
+        if (sport !== 'NFL' && sport !== 'NCAAF') return null;
+        const starter = (players || [])
+          .filter(p => String(p.position || '').toUpperCase() === 'QB')
+          .sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0))[0];
+        if (!starter) return null;
+        const hit = injured.find(i => i.name === starter.name && (i.multiplier || 0) >= 0.8);
+        return hit ? { name: starter.name, status: hit.status } : null;
+      };
+      const homeQb = qbOut(homeInjuries, roster[homeNorm]);
+      const awayQb = qbOut(awayInjuries, roster[awayNorm]);
+
       out[g.id] = {
+        home_qb_out: homeQb,
+        away_qb_out: awayQb,
         home: homeInjuries,
         away: awayInjuries,
         home_off_deduction: homeOff,
