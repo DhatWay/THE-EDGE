@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261001-01';
+  const BUILD = 'orch-20261001-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -368,10 +368,28 @@ const EDGE_ORCHESTRATOR = (() => {
         for (let i = picks.length - 1; i >= 0; i--) if (picks[i].gated) picks.splice(i, 1);
       }
 
+      // Why each passed game passed — so a run with no picks still says
+      // where every game stopped.
+      const reasonFor = (p) => {
+        if (p.decision && p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED') return null;
+        const gs = p.governor_snapshot || {};
+        if (p.gated) return `held back — ${p.sport || ''} backtest did worse than a coin flip`;
+        if ((gs.data_caps || []).some(c => /no spread|no moneyline/.test(c))) return 'no line to bet';
+        if (p.decision === 'VETOED') return 'vetoed by Claude';
+        if (p.decision === 'CAPPED') return 'over a daily or bankroll cap';
+        if (gs.decision && gs.decision !== 'PASS') return 'governor liked it; bet size came out to zero';
+        const ev = gs.ev;
+        const cal = gs.calibration;
+        const calNote = cal && cal.applied && gs.capped_confidence != null
+          ? ` (calibration moved ${Number(gs.capped_confidence).toFixed(1)}% to ${Number(gs.confidence).toFixed(1)}%)` : '';
+        return ev != null ? `value too small: ${(ev * 100).toFixed(1)}% per bet, lean starts at 1.8%${calNote}` : 'no edge';
+      };
+
       // Every game's result, picked or passed, for the board.
       summary.evaluations = finalResults.map(p => {
         const prior = priors.find(x => x.game_id === p.game_id) || {};
         return {
+          reason: reasonFor(p),
           game_id: p.game_id,
           decision: p.decision,
           direction: p.direction,
@@ -386,6 +404,17 @@ const EDGE_ORCHESTRATOR = (() => {
       try {
         localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations }));
       } catch {}
+
+      // Where the passed games stopped, in one line.
+      const tally = {};
+      summary.evaluations.forEach(e => {
+        if (!e.reason) return;
+        const k = e.reason.startsWith('value too small') ? 'value too small'
+          : e.reason.startsWith('held back') ? 'held back by the sport gate' : e.reason;
+        tally[k] = (tally[k] || 0) + 1;
+      });
+      summary.pass_reasons = tally;
+      if (Object.keys(tally).length) log('  passed: ' + Object.entries(tally).map(([k, n]) => `${n} ${k}`).join(' · '));
 
       summary.picks = picks;
       summary.stages.final_picks = picks.length;
@@ -641,6 +670,7 @@ const EDGE_ORCHESTRATOR = (() => {
             pin_away_price: game.pin_away_price ?? null,
             pin_home_ml: game.pin_home_ml ?? null,
             pin_away_ml: game.pin_away_ml ?? null,
+            bench_book: game.bench_book ?? null,
             over_price: game.over_price ?? null,
             under_price: game.under_price ?? null,
             book: game.bookmaker ?? null,
