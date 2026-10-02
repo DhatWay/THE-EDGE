@@ -341,9 +341,14 @@ let evalRows = [];
 let weeklyBoard = [];
 // Result of fitting the ranking model on this run.
 let fitReport = null;
+// Spot records and the strength-weight fit from this run.
+let spotReport = null, blendReport = null;
 // Situations are not part of the decision, so the backtest skips
 // them too — faster, and the same path as live picks.
-const SITUATIONS_IN_BACKTEST = false;
+// Situations are scored every game, against ATS and head-to-head
+// records rebuilt from games before the step only, and reach the
+// governor as spots — the same way live picks get them.
+const SITUATIONS_IN_BACKTEST = true;
 let currentRunId = null;
 let openSpreadAvailable = false;
 let situationsTableAvailable = false;
@@ -463,8 +468,8 @@ async function run() {
 
     // ── 3. ATS + H2H ──
     log('Loading ATS form and H2H…');
-    const atsIndex = await loadAtsForSport(sport, url, key);
-    const h2hIndex = await loadH2HForSport(sport, url, key);
+    // Built per step from games already played (no look-ahead).
+    let atsIndex = {}, h2hIndex = {};
     log(`  ${Object.keys(atsIndex).length} ATS rows · ${Object.keys(h2hIndex).length} H2H pairs`);
 
     // ── 4. Situation weights ──
@@ -535,6 +540,10 @@ async function run() {
       log(`  step ${si + 1}/${steps.length} · ${step.label} · ` +
           `${history.length} prior games · ${step.games.length} to grade`);
 
+      const wf = buildWalkForwardAts(sport, allScored, step.start);
+      atsIndex = wf.ats;
+      h2hIndex = wf.h2h;
+
       for (const g of step.games) {
         try {
           const ctx = {
@@ -596,8 +605,17 @@ async function run() {
         : `  fitted model not saved · ${fitReport.reason}`);
     }
 
-    // ── Sport result for the pipeline's gate ──
+    // ── Sport result (sizes bets by how proven the sport is) ──
     if (evalRows.length) saveSportMetrics(sport, evalRows);
+
+    // ── Spot records and the strength weight, saved for live picks ──
+    spotReport = null; blendReport = null;
+    if (evalRows.length) {
+      spotReport = saveSpotRecords(sport, fromDate, toDate, evalRows);
+      blendReport = fitAndSaveBlend(sport, evalRows);
+      log(`  spots: ${spotReport.count} situations recorded · strength weight ` +
+          (blendReport.saved ? `${blendReport.w} saved` : `kept at default (${blendReport.reason})`));
+    }
 
     // ── Calibration from this run ──
     if (evalRows.some(r => r.bet_type !== 'ML')) {
@@ -1120,13 +1138,17 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     } catch (e) { /* situations failed, continue with families only */ }
   }
 
-  const allFamilies = sitFamily ? [sitFamily, ...families] : families;
+  // Spots reach the governor with no record — the default belief —
+  // so the backtest never scores a game with records learned from it.
+  prior.spots = (sitResult?.situations || [])
+    .filter(s => s.side === 'home' || s.side === 'away')
+    .map(s => ({ id: s.id, label: s.label, side: s.side, wins: 0, losses: 0 }));
 
-  // ── Governor ──
-  const dyn = EDGE_GOVERNOR.getDynamicWeights(sport);
-  const merged = { ...dyn, situations: 12 };
+  const allFamilies = families;
+
+  // ── Governor: the default blend, never weights learned from these games ──
   let gov;
-  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { dynamicWeights: merged }); }
+  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { blend: EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 } }); }
   catch { return null; }
 
   // ── Physics ──
@@ -1182,7 +1204,9 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
   const coverHomeAll = isMl ? marginAll : marginAll + g.spread;
   const govSide = gov.direction === 'away' ? 'away' : 'home';
   const sideCover = govSide === 'home' ? coverHomeAll : -coverHomeAll;
+  const mHome = isFinite(gov.market_home_prob) ? gov.market_home_prob : 0.5;
   const evalRow = {
+    market_prob: govSide === 'home' ? mHome : 1 - mHome,
     game_id: g.game_id,
     sport,
     side: govSide,
@@ -1202,6 +1226,13 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     model_source: prior.model_source || null,
     bet_type: isMl ? 'ML' : 'SPREAD',
     price: gov.price ?? -110,
+    // For the blend fit (home view, log-odds) and the spot records.
+    blend_x: (gov.components && gov.components.strength_home != null)
+      ? lg(gov.components.strength_home) - lg(gov.components.market_home) : null,
+    blend_off: gov.components
+      ? lg(gov.components.market_home) + (gov.components.spots_term || 0) + (gov.components.context_term || 0) : null,
+    home_result: Math.abs(coverHomeAll) < 0.01 ? 'P' : coverHomeAll > 0 ? 'W' : 'L',
+    spots: (prior.spots || []).map(s => ({ id: s.id, label: s.label, side: s.side })),
     // Did the line move toward the model's side between open and close?
     line_move: (g.open_spread != null && g.spread != null && g.open_spread !== g.spread)
       ? ((govSide === 'home') === (g.spread < g.open_spread) ? 'toward' : 'away')
@@ -1338,7 +1369,8 @@ async function renderReport(sport) {
   const settled = w + l;
   const hitRate = settled > 0 ? (w / settled) * 100 : 0;
 
-  const flatPnl = gameResults.reduce((s, g) => s + (g.result === 'W' ? 0.91 : g.result === 'L' ? -1 : 0), 0);
+  const winUnits = g => { const p = Number(g.price); return isFinite(p) && p !== 0 ? (p > 0 ? p / 100 : 100 / Math.abs(p)) : 100 / 110; };
+  const flatPnl = gameResults.reduce((s, g) => s + (g.result === 'W' ? winUnits(g) : g.result === 'L' ? -1 : 0), 0);
   const breaksEven = hitRate >= 52.4;
 
   let pooled = [];
@@ -1656,6 +1688,189 @@ function fitRatingModel(sport, fromDate, toDate, rows) {
   return { ...report, saved: false, reason: 'governor.js is older than this page' };
 }
 
+function lg(p) { const q = Math.min(0.999, Math.max(0.001, p)); return Math.log(q / (1 - q)); }
+function sg(x) { return 1 / (1 + Math.exp(-x)); }
+
+// ATS and head-to-head records from games before the cutoff only —
+// the same fields team_ats / matchup_ats carry, so the trend family
+// and the situations read them unchanged. The database tables are
+// built over the whole window and would let the backtest see results
+// from after the game it grades.
+function buildWalkForwardAts(sport, games, cutoff) {
+  const label = seasonOf(sport, cutoff);
+  const hist = games
+    .filter(x => new Date(x.game_date) < cutoff && x.spread != null && x.home_score != null && x.away_score != null)
+    .sort((a, b) => new Date(a.game_date) - new Date(b.game_date));
+  const teams = {}, pairs = {};
+  const team = n => teams[n] || (teams[n] = { results: [], sW: 0, sL: 0, sP: 0, hW: 0, hL: 0, aW: 0, aL: 0 });
+  hist.forEach(x => {
+    const cover = (x.home_score - x.away_score) + x.spread;
+    const rh = cover > 0 ? 'W' : cover < 0 ? 'L' : 'P';
+    const ra = rh === 'W' ? 'L' : rh === 'L' ? 'W' : 'P';
+    const H = team(x.home), A = team(x.away);
+    H.results.push(rh); A.results.push(ra);
+    if (seasonOf(sport, new Date(x.game_date)) === label) {
+      if (rh === 'W') { H.sW++; H.hW++; A.sL++; A.aL++; }
+      else if (rh === 'L') { H.sL++; H.hL++; A.sW++; A.aW++; }
+      else { H.sP++; A.sP++; }
+    }
+    const [a, b] = [x.home, x.away].sort();
+    const k = `${sport}:${a}|${b}`;
+    const p = pairs[k] || (pairs[k] = { a, b, meetings: 0, aW: 0, bW: 0, decided: 0, homeCoverSum: 0 });
+    p.meetings++; p.homeCoverSum += cover;
+    if (rh !== 'P') {
+      p.decided++;
+      const aCovered = x.home === a ? rh === 'W' : ra === 'W';
+      if (aCovered) p.aW++; else p.bW++;
+    }
+  });
+  const pct = (w, l) => (w + l) > 0 ? w / (w + l) : null;
+  const ats = {};
+  Object.entries(teams).forEach(([n, t]) => {
+    const decided = t.results.filter(r => r !== 'P');
+    const last10 = decided.slice(-10);
+    const lw = last10.filter(r => r === 'W').length, ll = last10.length - lw;
+    let streak = 0;
+    for (let i = decided.length - 1; i >= 0; i--) {
+      const won = decided[i] === 'W';
+      if (streak === 0) streak = won ? 1 : -1;
+      else if (won === (streak > 0)) streak += streak > 0 ? 1 : -1;
+      else break;
+    }
+    ats[`${sport}:${n}`] = {
+      sport, team_name: n, season_label: label,
+      season_wins: t.sW, season_losses: t.sL, season_pushes: t.sP, season_cover_pct: pct(t.sW, t.sL),
+      last10_wins: lw, last10_losses: ll, last10_cover_pct: pct(lw, ll),
+      home_wins: t.hW, home_losses: t.hL, home_cover_pct: pct(t.hW, t.hL),
+      away_wins: t.aW, away_losses: t.aL, away_cover_pct: pct(t.aW, t.aL),
+      current_streak: streak,
+    };
+  });
+  const h2h = {};
+  Object.entries(pairs).forEach(([k, p]) => {
+    h2h[k] = {
+      sport, team_a: p.a, team_b: p.b, meetings: p.meetings,
+      team_a_cover_pct: p.decided ? p.aW / p.decided : null,
+      team_b_cover_pct: p.decided ? p.bW / p.decided : null,
+      avg_home_cover_margin: p.meetings ? p.homeCoverSum / p.meetings : null,
+    };
+  });
+  return { ats, h2h };
+}
+
+// Each situation's record in this run, from the side it pointed to.
+// Saved per window and pooled, so rerunning a window replaces it.
+function saveSpotRecords(sport, fromDate, toDate, rows) {
+  const byKind = {};
+  rows.forEach(r => {
+    if (!r.spots || !r.spots.length || r.home_result === 'P') return;
+    const kind = r.bet_type === 'ML' ? `${sport}_ML` : sport;
+    const rec = byKind[kind] = byKind[kind] || {};
+    r.spots.forEach(s => {
+      const e = rec[s.id] = rec[s.id] || { wins: 0, losses: 0, label: s.label };
+      const won = s.side === 'home' ? r.home_result === 'W' : r.home_result === 'L';
+      if (won) e.wins++; else e.losses++;
+    });
+  });
+  let count = 0;
+  if (EDGE_GOVERNOR.readCalibrationTable && EDGE_GOVERNOR.saveCalibrationTable) {
+    const t = EDGE_GOVERNOR.readCalibrationTable();
+    t.spot_runs = t.spot_runs || {};
+    t.spot_records = t.spot_records || {};
+    Object.entries(byKind).forEach(([kind, rec]) => {
+      t.spot_runs[kind] = t.spot_runs[kind] || {};
+      t.spot_runs[kind][`${fromDate}|${toDate}`] = rec;
+      const pooled = {};
+      Object.values(t.spot_runs[kind]).forEach(run => Object.entries(run).forEach(([id, v]) => {
+        const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, label: v.label };
+        p.wins += v.wins || 0; p.losses += v.losses || 0;
+      }));
+      t.spot_records[kind] = pooled;
+      count += Object.keys(rec).length;
+    });
+    EDGE_GOVERNOR.saveCalibrationTable(t);
+  }
+  return { count, byKind };
+}
+
+// How much of the ranking's disagreement with the market turned out
+// real: a one-weight logistic fit of the home result on that
+// disagreement, the market, spots and context held fixed. Fit on the
+// first 70% of games, tested on the last 30% against the default;
+// saved only when it does better there.
+function fitAndSaveBlend(sport, rows) {
+  const def = (EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6 }).w_strength;
+  const kindOf = r => r.bet_type === 'ML' ? `${sport}_ML` : sport;
+  const usable = rows.filter(r => isFinite(r.blend_x) && isFinite(r.blend_off) && r.home_result !== 'P');
+  if (usable.length < 150) return { saved: false, reason: `needs 150 games, has ${usable.length}` };
+  const fit = (set) => {
+    let w = def;
+    for (let it = 0; it < 30; it++) {
+      let g = -2 * 10 * (w - def), h = -2 * 10;            // gentle pull toward the default
+      set.forEach(r => {
+        const p = sg(r.blend_off + w * r.blend_x), y = r.home_result === 'W' ? 1 : 0;
+        g += (y - p) * r.blend_x; h -= p * (1 - p) * r.blend_x * r.blend_x;
+      });
+      const step = g / h;
+      w = Math.max(0, Math.min(1.5, w - step));
+      if (Math.abs(step) < 1e-6) break;
+    }
+    return w;
+  };
+  const ll = (set, w) => set.reduce((s, r) => {
+    const p = Math.min(0.999, Math.max(0.001, sg(r.blend_off + w * r.blend_x)));
+    return s - (r.home_result === 'W' ? Math.log(p) : Math.log(1 - p));
+  }, 0) / set.length;
+  const cut = Math.floor(usable.length * 0.7);
+  const train = usable.slice(0, cut), test = usable.slice(cut);
+  const wTrain = fit(train);
+  const testFit = ll(test, wTrain), testDef = ll(test, def);
+  const wAll = Math.round(fit(usable) * 1000) / 1000;
+  const report = { w: wAll, default: def, test_logloss_fit: testFit, test_logloss_default: testDef, games: usable.length };
+  if (!(testFit < testDef)) return { ...report, saved: false, reason: 'did not beat the default on held-out games' };
+  if (EDGE_GOVERNOR.readCalibrationTable && EDGE_GOVERNOR.saveCalibrationTable) {
+    const t = EDGE_GOVERNOR.readCalibrationTable();
+    t.blend = t.blend || {};
+    const kind = kindOf(usable[0]);
+    t.blend[kind] = { w_strength: wAll, w_spots: 1, games: usable.length, test: { fit: testFit, default: testDef }, at: new Date().toISOString() };
+    EDGE_GOVERNOR.saveCalibrationTable(t);
+  }
+  return { ...report, saved: true };
+}
+
+function renderSpotsAndBlend() {
+  let html = '';
+  if (blendReport) {
+    html += `<div class="section"><div class="sec-title">STRENGTH <em>WEIGHT</em></div><div class="note">`;
+    html += blendReport.test_logloss_fit != null
+      ? `How much of the ranking's disagreement with the market turned out real: ${blendReport.w} (default ${blendReport.default}). `
+        + `Held-out log loss ${blendReport.test_logloss_fit.toFixed(4)} fitted vs ${blendReport.test_logloss_default.toFixed(4)} default. `
+      : '';
+    html += blendReport.saved ? 'Saved — live picks use it for this sport.' : `Not saved: ${blendReport.reason}. The default stays.`;
+    html += `</div></div>`;
+  }
+  if (spotReport && spotReport.count) {
+    const prior = EDGE_GOVERNOR.SPOT_PRIOR_RATE || 0.53, k = EDGE_GOVERNOR.SPOT_PRIOR_GAMES || 60;
+    html += `<div class="section"><div class="sec-title">SPOTS <em>· RECORDS</em></div>`;
+    html += `<div class="row head"><span>Situation</span><span>Fired</span><span>Record</span><span>Rate</span><span>Counts as</span></div>`;
+    Object.values(spotReport.byKind).forEach(rec => {
+      Object.entries(rec).sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses)).forEach(([id, v]) => {
+        const n = v.wins + v.losses, rate = n ? v.wins / n : 0;
+        const shrunk = (v.wins + prior * k) / (n + k);
+        const pts = (shrunk - 0.5) * 100;
+        html += `<div class="row"><span class="name">${v.label || id}</span><span class="num neu">${n}</span>`
+              + `<span class="num neu">${v.wins}-${v.losses}</span>`
+              + `<span class="num ${rate >= 0.55 ? 'pos' : rate < 0.5 ? 'neg' : 'neu'}">${(rate * 100).toFixed(1)}%</span>`
+              + `<span class="num ${pts >= 0 ? 'pos' : 'neg'}">${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts</span></div>`;
+      });
+    });
+    html += `<div class="note">Each spot's record from the side it pointed to, in games before each step only. `
+          + `"Counts as" is its pull on the chance to cover in live picks: its record blended with ${k} games at ${(prior * 100).toFixed(0)}%, `
+          + `so a new spot counts a little and its own results take over as they add up.</div></div>`;
+  }
+  return html;
+}
+
 function wilsonLow(w, n, z = 1.96) {
   const p = w / n, d = 1 + z * z / n;
   return (p + z * z / (2 * n) - z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
@@ -1688,15 +1903,21 @@ function saveSportMetrics(sport, rows) {
 function probabilityScores(rows) {
   const r = rows.filter(x => x.result !== 'P' && isFinite(x.raw_confidence));
   if (!r.length) return null;
-  let brier = 0, logLoss = 0;
+  let brier = 0, logLoss = 0, brierMkt = 0;
   r.forEach(x => {
     const p = Math.min(0.99, Math.max(0.01, x.raw_confidence / 100));
+    const m = Math.min(0.99, Math.max(0.01, isFinite(x.market_prob) ? x.market_prob : 0.5));
     const o = x.result === 'W' ? 1 : 0;
     brier += (p - o) ** 2;
+    brierMkt += (m - o) ** 2;
     logLoss += -(o * Math.log(p) + (1 - o) * Math.log(1 - p));
   });
-  brier /= r.length; logLoss /= r.length;
-  return { games: r.length, brier, logLoss, skill: 1 - brier / 0.25 };
+  brier /= r.length; logLoss /= r.length; brierMkt /= r.length;
+  // Skill is measured against the market's own chances — a coin flip
+  // for spreads, the vig-free moneyline for moneylines. Against a coin
+  // flip, a moneyline model scored well just by knowing favourites win
+  // more often, which the market already knows.
+  return { games: r.length, brier, logLoss, brier_market: brierMkt, skill: 1 - brier / brierMkt };
 }
 
 function renderFitReport() {
@@ -1782,7 +2003,8 @@ function renderProfit() {
 }
 
 function renderAccuracyAndCalibration() {
-  let html = renderProfit() + renderFitReport();
+  let html = renderProfit() + renderSpotsAndBlend() + renderFitReport();
+  const mlOnly = evalRows.length && evalRows.every(x => x.bet_type === 'ML');
   const acc = spreadAccuracy(evalRows);
   if (acc) {
     const early = spreadAccuracy(evalRows.filter(x => x.ratings_games < 5));
@@ -1799,10 +2021,12 @@ function renderAccuracyAndCalibration() {
     html += line('All', acc) + line('Teams under 5 games', early) + line('Teams 5+ games', later);
     html += `<div class="note">Average points each spread missed the final margin by. If the ranking misses by more than the market, `
           + `its disagreements with the line are mostly noise. Ranking bias ${acc.bias >= 0 ? '+' : ''}${acc.bias.toFixed(2)} `
-          + `(positive: home teams did better than the ranking said).</div></div>`;
+          + `(positive: home teams did better than the ranking said).`
+          + (mlOnly ? ` For moneyline sports the market's line is the ±1.5 run or puck line, not a margin forecast, so "market miss" isn't a fair comparison here — skill below is.` : '')
+          + `</div></div>`;
   }
 
-  const buckets = calibrationRows(evalRows);
+  const buckets = calibrationRows(evalRows.filter(x => x.bet_type !== 'ML'));
   const keys = Object.keys(buckets).sort((a, b) => Number(a) - Number(b));
   if (keys.length) {
     html += `<div class="section"><div class="sec-title">CALIBRATION <em>· SAID vs HAPPENED</em></div>`;
@@ -1821,8 +2045,8 @@ function renderAccuracyAndCalibration() {
     });
     const sc = probabilityScores(evalRows);
     if (sc) {
-      html += `<div class="note">Brier ${sc.brier.toFixed(4)} (coin flip 0.2500) · log loss ${sc.logLoss.toFixed(4)} (coin flip 0.6931) · `
-            + `skill ${(sc.skill * 100).toFixed(2)}% — above 0 means its chances beat a coin flip over ${sc.games} games.</div>`;
+      html += `<div class="note">Brier ${sc.brier.toFixed(4)} vs the market's ${sc.brier_market.toFixed(4)} · log loss ${sc.logLoss.toFixed(4)} · `
+            + `skill ${(sc.skill * 100).toFixed(2)}% — above 0 means its chances beat the market's own (a coin flip for spreads, the moneyline for moneylines) over ${sc.games} games.</div>`;
     }
     html += `<div class="note">Every graded game, picked or not: the chance to cover the model gave its side, and how often that side covered. `
           + `Saved as calibration: live picks in each bucket are pulled toward what actually happened (fully once a bucket has 300 games).</div></div>`;
