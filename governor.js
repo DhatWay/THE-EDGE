@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261001-01';
+  const BUILD = 'gov-20261002-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -175,117 +175,116 @@ const EDGE_GOVERNOR = (() => {
   // ── MAIN ──
   // ============================================================
 
+  // ============================================================
+  // ── RUN: ONE PROBABILITY ──
+  //
+  // Every input feeds a single chance for each side, built in
+  // log-odds (where independent evidence adds):
+  //
+  //   start   the market's chance (benchmark book, or consensus)
+  //   +       strength: the ranking's disagreement with the market,
+  //           times w_strength — how much of that disagreement has
+  //           historically turned out real (Slate Test, per sport)
+  //   +       spots: each situation that fired, by its tested record
+  //           (shrunk toward 50% until it has a sample), times w_spots
+  //   +       context: rest and injuries, a small capped nudge
+  //
+  // Then: calibration once (spreads), expected value at the real
+  // price, Kelly-sized by physics. Nothing here can veto a bet;
+  // weak evidence produces a small probability edge and so a small
+  // bet. The family votes are shown for reading, and the three that
+  // measure team strength are already inside the ranking.
+  // ============================================================
+
+  const DEFAULT_BLEND = { w_strength: 0.6, w_spots: 1.0 };
+  const SPOT_PRIOR_GAMES = 60;      // a spot's record is blended with 60 games at the prior rate
+  // The belief a spot starts with before it has a record: a modest
+  // 53%, so a situation you encoded counts a little from day one, and
+  // its own results take over as they come in (a spot that keeps
+  // failing turns negative).
+  const SPOT_PRIOR_RATE = 0.53;
+
+
+  const SPOT_CAP = 0.35;            // spots together move log-odds at most this much (~±8.7 pts at 50%)
+  const CONTEXT_CAP = 0.16;         // rest + injuries, at most ~±4 pts
+  const STRENGTH_FAMILIES = new Set(['team_quality', 'offense_defense', 'coaching']);
+
+  function logit(p) { const q = clamp(p, 0.001, 0.999); return Math.log(q / (1 - q)); }
+  function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+
+  // Blend weights for a sport (and bet type), from the Slate Test.
+  function blendFor(sport, betType) {
+    try {
+      const t = readCalibrationTable();
+      const key = betType === 'ML' ? `${sport}_ML` : sport;
+      const b = t?.blend?.[key];
+      if (b && isFinite(b.w_strength) && isFinite(b.w_spots)) return { ...b, source: 'fitted' };
+    } catch {}
+    return { ...DEFAULT_BLEND, source: 'default' };
+  }
+
+  // Spots: the situations that fired for this game, each with its
+  // tested record { id, label, side: 'home'|'away', wins, losses }.
+  // A spot's edge is its record blended toward 50% by sample size,
+  // in log-odds; overlapping spots are damped by the square root of
+  // how many fired, then capped.
+  function spotEvidence(spots) {
+    const list = (spots || []).filter(x => x && (x.side === 'home' || x.side === 'away'));
+    if (!list.length) return { logit: 0, detail: [] };
+    const detail = list.map(x => {
+      const w = Number(x.wins) || 0, l = Number(x.losses) || 0;
+      const rate = (w + SPOT_PRIOR_RATE * SPOT_PRIOR_GAMES) / (w + l + SPOT_PRIOR_GAMES);
+      const edge = logit(rate);
+      return { id: x.id, label: x.label || x.id, side: x.side, record: `${w}-${l}`,
+               rate: round(rate, 4), edge: round(x.side === 'home' ? edge : -edge, 4) };
+    });
+    const sum = detail.reduce((s, d) => s + d.edge, 0) / Math.sqrt(detail.length);
+    return { logit: clamp(sum, -SPOT_CAP, SPOT_CAP), detail };
+  }
+
   function run(familyOutputs, prior, options = {}) {
     const sport = prior?.sport || 'DEFAULT';
-    const weights = options.dynamicWeights || getDynamicWeights(sport);
     const thresholds = THRESHOLDS[sport] || THRESHOLDS.DEFAULT;
-    const shrink = options.shrinkage ?? (MARKET_SHRINK[sport] ?? MARKET_SHRINK.DEFAULT);
     const homeBaseline = HOME_BASELINE[sport] ?? HOME_BASELINE.DEFAULT;
+    const betType = prior?.bet_type === 'ML' ? 'ML' : 'SPREAD';
 
-    // ── 1. Weighted family signal ──
-    // Each family's `signal` field is a number in [-1, +1]. Zero
-    // means the family has no opinion. Positive favors home.
-    const breakdown = [];
-    let weightedSignal = 0;
-    let totalWeight = 0;
-
-    (familyOutputs || []).forEach(f => {
-      const w = EXCLUDED_FAMILIES.has(f.family) ? 0 : (weights[f.family] ?? 7);
+    // ── Family votes: read, and two of them nudge ──
+    const breakdown = (familyOutputs || []).map(f => {
       const sig = typeof f.signal === 'number' && isFinite(f.signal) ? f.signal : 0;
       const conf = clamp(f.confidence ?? 0.5, 0, 1);
-
-      // Effective contribution: weight times signal times the
-      // family's own confidence. Neutral families contribute
-      // nothing to the numerator but still count in the
-      // denominator so a slate of neutral families produces a
-      // near-zero final signal rather than an overconfident one.
-      const contribution = w * sig * conf;
-      weightedSignal += contribution;
-      totalWeight += w;
-
-      breakdown.push({
-        family: f.family,
-        vote: f.vote,
-        signal: round(sig, 3),
-        confidence: round(conf, 3),
-        edge: round(f.edge || 0, 4),
-        weight: w,
-        contribution: round(contribution, 3),
-        reason: f.reason || '',
-        // The situations family carries per-rule detail here.
-        // Other families do not, but the slot is uniform so
-        // consumers can iterate breakdown without branching.
-        data: f.data || {},
-      });
+      const role = ADJUSTMENT_FAMILIES.has(f.family) ? 'context'
+        : STRENGTH_FAMILIES.has(f.family) ? 'in strength' : 'not used';
+      return {
+        family: f.family, vote: f.vote, signal: round(sig, 3), confidence: round(conf, 3),
+        edge: round(f.edge || 0, 4), weight: role === 'context' ? 1 : 0, role,
+        contribution: 0, reason: f.reason || '', data: f.data || {},
+      };
     });
+    let cNum = 0, cDen = 0;
+    breakdown.forEach(b => { if (b.role === 'context') { cNum += b.signal * b.confidence; cDen += b.confidence; } });
+    const contextLogit = cDen > 0 ? clamp(cNum / cDen, -1, 1) * CONTEXT_CAP : 0;
 
-    // Moneyline bets (MLB, NHL) use the ranking's chance to win; spread
-    // bets its chance to cover.
-    const betType = prior?.bet_type === 'ML' ? 'ML' : 'SPREAD';
-    const rankingSource = betType === 'ML' ? prior?.win : prior?.cover;
-    const rankingCover = rankingSource && isFinite(rankingSource.home_cover) ? rankingSource : null;
-    if (totalWeight === 0 && !rankingCover) {
-      return emptyResult('No family outputs');
-    }
-
-    // Normalized signal: weighted average, bounded to [-1, +1].
-    // weightSum of confidence-weighted families keeps the scale
-    // sane even when some families are neutral.
-    const weightSumConf = breakdown.reduce((s, b) => s + b.weight * b.confidence, 0);
-    const normalizedSignal = weightSumConf > 0
-      ? clamp(weightedSignal / weightSumConf, -1, 1)
-      : 0;
-
-    // ── 2. Agreement index ──
-    // How much do the families actually agree? Used as a
-    // diagnostic and to scale confidence. Not used as a separate
-    // penalty — confidence already carries per-family certainty.
-    const yesFams = breakdown.filter(b => b.vote === 'yes');
-    const noFams  = breakdown.filter(b => b.vote === 'no');
-    const neuFams = breakdown.filter(b => b.vote === 'neu');
-
-    const yesWeight = yesFams.reduce((s, b) => s + b.weight, 0);
-    const noWeight  = noFams.reduce((s, b) => s + b.weight, 0);
-    const denom = yesWeight + noWeight;
-    const agreement = denom > 0
-      ? Math.abs(yesWeight - noWeight) / denom
-      : 0;
-
-    // ── 3. Model probability, then shrink toward the market ──
-    // The model's own home win probability, before any market
-    // influence. Then the market pulls it back by the shrink
-    // factor. The result is the number the app acts on.
-    // With a ranking cover chance on hand, it is the model. The
-    // adjustment families nudge it; nothing else votes. Without one
-    // (no spread posted, no ratings), the weighted family signal is
-    // the fallback, excluded families still at zero.
-    let modelHomeProb;
-    let adjustment = 0;
-    let decisionSource = 'families';
-    if (rankingCover) {
-      let adjNum = 0, adjDen = 0;
-      breakdown.forEach(b => {
-        if (!ADJUSTMENT_FAMILIES.has(b.family) || !b.weight) return;
-        adjNum += b.weight * b.signal * b.confidence;
-        adjDen += b.weight * b.confidence;
-      });
-      adjustment = adjDen > 0 ? clamp(adjNum / adjDen, -1, 1) * ADJUST_MAX : 0;
-      modelHomeProb = clamp(rankingCover.home_cover + adjustment, 0.02, 0.98);
-      decisionSource = 'ranking';
-    } else {
-      modelHomeProb = clamp(0.5 + normalizedSignal / 2, 0.02, 0.98);
-    }
-
+    // ── Market ──
     const marketInfo = betType === 'ML' ? resolveMoneyline(prior) : resolveMarket(prior, homeBaseline, sport);
     const marketHomeProb = marketInfo.prob;
 
-    // A cover chance already anchored to the market (a fitted lambda)
-    // is not pulled toward it a second time.
-    const effectiveShrink = (rankingCover && rankingCover.anchored_to_market) ? 0 : shrink;
-    const posteriorHomeProb = (1 - effectiveShrink) * modelHomeProb + effectiveShrink * marketHomeProb;
+    // ── Strength ──
+    const rankingSource = betType === 'ML' ? prior?.win : prior?.cover;
+    const strengthHomeProb = rankingSource && isFinite(rankingSource.home_cover) ? rankingSource.home_cover : null;
 
-    // Prices for each side: the spread's own price (consensus or the
-    // chosen book), or the moneyline. A missing spread price is -110.
+    // ── Spots ──
+    const spots = spotEvidence(prior?.spots);
+
+    // ── One probability ──
+    // The Slate Test passes its own blend (the defaults) so a backtest
+    // is never scored with weights learned from the same games.
+    const blend = options.blend ? { ...options.blend, source: options.blend.source || 'given' } : blendFor(sport, betType);
+    const strengthTerm = strengthHomeProb != null
+      ? blend.w_strength * (logit(strengthHomeProb) - logit(marketHomeProb)) : 0;
+    const spotTerm = blend.w_spots * spots.logit;
+    const posteriorHomeProb = sigmoid(logit(marketHomeProb) + strengthTerm + spotTerm + contextLogit);
+
+    // ── Prices ──
     const priceFor = side => {
       const m = prior?.market || {};
       const v = betType === 'ML'
@@ -294,51 +293,28 @@ const EDGE_GOVERNOR = (() => {
       return isFinite(Number(v)) && Number(v) !== 0 ? Number(v) : (betType === 'ML' ? null : -110);
     };
     const homePrice = priceFor('home'), awayPrice = priceFor('away');
-
-    // ── 4. Confidence ──
-    // Three things produce confidence: how far the posterior
-    // moved from a coin flip, how strongly the families agreed
-    // on a direction, and how much data they had. All three
-    // are already baked into normalizedSignal and agreement,
-    // so the formula is short.
-    // The side: for spreads the one more likely to cover; for
-    // moneylines the one worth more at its price.
     const evAt = (p, price) => price == null ? -1 : p * (americanToDecimal(price) - 1) - (1 - p);
-    let sideIsHome;
-    if (betType === 'ML') {
-      sideIsHome = evAt(posteriorHomeProb, homePrice) >= evAt(1 - posteriorHomeProb, awayPrice);
-    } else {
-      sideIsHome = posteriorHomeProb > 0.5;
-    }
+
+    // ── Side: worth more at its price ──
+    const sideIsHome = evAt(posteriorHomeProb, homePrice) >= evAt(1 - posteriorHomeProb, awayPrice);
     const sideProb = sideIsHome ? posteriorHomeProb : 1 - posteriorHomeProb;
 
-    // Confidence is the posterior chance the chosen side wins (covers,
-    // for spreads). Spread confidence is calibrated against the
-    // Slate Test's said-vs-happened table; moneylines are not yet.
+    // ── Calibration, once (spreads) ──
     const rawConfidence = sideProb * 100;
     const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
     const calibrated = betType === 'ML'
       ? { value: round(cappedConfidence, 1), applied: false, detail: null }
       : applyCalibration(cappedConfidence, sport);
 
-    // ── 5. Data-availability caps ──
-    // Two hard caps for missing inputs. These are the only caps
-    // that aren't coming from the math itself.
+    // ── Nothing to bet against ──
     const dataCaps = [];
-    let cap = 100;
-
-    // Nothing to bet against: no spread, or no moneyline prices.
     let blocked = false;
-    if (betType === 'SPREAD' && prior?.market?.current_spread == null) {
-      cap = Math.min(cap, 50); dataCaps.push('no spread'); blocked = true;
-    }
-    if (betType === 'ML' && (homePrice == null || awayPrice == null)) {
-      dataCaps.push('no moneyline'); blocked = true;
-    }
+    if (betType === 'SPREAD' && prior?.market?.current_spread == null) { dataCaps.push('no spread'); blocked = true; }
+    if (betType === 'ML' && (homePrice == null || awayPrice == null)) { dataCaps.push('no moneyline'); blocked = true; }
 
-    const finalConfidence = round(Math.min(calibrated.value, cap, MAX_CONFIDENCE), 1);
+    const finalConfidence = round(Math.min(calibrated.value, MAX_CONFIDENCE), 1);
 
-    // ── 6. Decision: expected value at the real price ──
+    // ── Decision: expected value at the real price ──
     const direction = sideIsHome ? 'home' : 'away';
     const sidePrice = sideIsHome ? homePrice : awayPrice;
     const otherPrice = sideIsHome ? awayPrice : homePrice;
@@ -347,66 +323,66 @@ const EDGE_GOVERNOR = (() => {
     const breakEven = sidePrice != null ? 1 / americanToDecimal(sidePrice) : 0.5238;
     const edge = round(pDecide - breakEven, 4);
 
-    let decision = 'PASS';
-    let units = 0;
+    let decision = 'PASS', units = 0;
     if (ev >= EV_TIERS.bet2u)      { decision = 'BET_2U'; units = 2; }
     else if (ev >= EV_TIERS.bet1u) { decision = 'BET_1U'; units = 1; }
     else if (ev >= EV_TIERS.lean)  { decision = 'LEAN';   units = 0.5; }
 
-    // ── 7. Kelly input for physics, at the side's own price ──
-    const kellyInput = buildKellyInput({
-      sideProb: pDecide, sidePrice, otherPrice, betType, units,
-    });
+    const kellyInput = buildKellyInput({ sideProb: pDecide, sidePrice, otherPrice, betType, units });
+
+    // Votes for reading (agreement among the families shown).
+    const yes = breakdown.filter(b => b.vote === 'yes').length;
+    const no = breakdown.filter(b => b.vote === 'no').length;
+    const agreement = (yes + no) > 0 ? Math.abs(yes - no) / (yes + no) : 0;
+    const signed = (yes - no) / Math.max(1, breakdown.length);
 
     return {
-      // Primary outputs
-      consensus_score: round(normalizedSignal, 4),
+      consensus_score: round(signed, 4),
       confidence: finalConfidence,
-      edge: round(edge, 4),
+      edge,
       direction,
       decision,
       units,
 
-      // Price and value
       bet_type: betType,
       price: sidePrice,
       ev: round(ev, 4),
       break_even: round(breakEven, 4),
 
-      // Probability trail — every step the slate test can grade
-      decision_source: decisionSource,
-      ranking_home_cover: rankingCover ? round(rankingCover.home_cover, 4) : null,
-      adjustment: round(adjustment, 4),
-      model_home_prob: round(modelHomeProb, 4),
+      // The probability, piece by piece (home view, log-odds terms)
+      decision_source: strengthHomeProb != null ? 'blend' : 'market + spots',
+      components: {
+        market_home: round(marketHomeProb, 4),
+        strength_home: strengthHomeProb != null ? round(strengthHomeProb, 4) : null,
+        strength_term: round(strengthTerm, 4),
+        spots_term: round(spotTerm, 4),
+        context_term: round(contextLogit, 4),
+        w_strength: round(blend.w_strength, 3),
+        w_spots: round(blend.w_spots, 3),
+        blend_source: blend.source,
+        spots: spots.detail,
+      },
+      ranking_home_cover: strengthHomeProb != null ? round(strengthHomeProb, 4) : null,
+      adjustment: round(contextLogit, 4),
+      model_home_prob: strengthHomeProb != null ? round(strengthHomeProb, 4) : round(marketHomeProb, 4),
       market_home_prob: round(marketHomeProb, 4),
       posterior_home_prob: round(posteriorHomeProb, 4),
 
-      // Diagnostics
       agreement_index: round(agreement, 3),
-      shrinkage: round(effectiveShrink, 3),
+      shrinkage: 0,
       market_source: marketInfo.source,
       calibrated: calibrated.applied,
       calibration_detail: calibrated.detail,
       data_caps: dataCaps,
-      data_cap: cap,
+      data_cap: MAX_CONFIDENCE,
 
       raw_confidence: round(rawConfidence, 1),
       capped_confidence: round(cappedConfidence, 1),
 
-      // Family vote counts and breakdown
-      alignment: {
-        yes_count: yesFams.length,
-        no_count: noFams.length,
-        neu_count: neuFams.length,
-        yes_weight: round(yesWeight, 1),
-        no_weight: round(noWeight, 1),
-      },
+      alignment: { yes_count: yes, no_count: no, neu_count: breakdown.length - yes - no },
       breakdown,
 
-      // Kelly sizing details
       kelly: kellyInput,
-
-      // Thresholds used, for audit
       thresholds_used: thresholds,
       computed_at: new Date().toISOString(),
     };
@@ -606,19 +582,19 @@ const EDGE_GOVERNOR = (() => {
   }
 
   function emptyCalibrationTable() {
-    return { version: 2, bucket_width: 2, backtest_runs: {}, live: {}, sports: {}, updated_at: null };
+    return { version: 3, bucket_width: 2, backtest_runs: {}, live: {}, sports: {}, updated_at: null };
   }
 
   function readCalibrationTable() {
     try {
       const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null');
-      if (t && t.version === 2) return t;
+      if (t && t.version === 3) return t;
     } catch {}
     return emptyCalibrationTable();
   }
 
   function poolCalibration(table) {
-    const t = table && table.version === 2 ? table : emptyCalibrationTable();
+    const t = table && table.version === 3 ? table : emptyCalibrationTable();
     const sports = new Set([...Object.keys(t.backtest_runs || {}), ...Object.keys(t.live || {})]);
     t.sports = {};
     sports.forEach(sport => {
@@ -664,8 +640,8 @@ const EDGE_GOVERNOR = (() => {
   }
 
   function applyCalibration(confidence, sport) {
-    // Version 2: this sport's bucket, 2 points wide.
-    if (CALIBRATION && CALIBRATION.version === 2) {
+    // This sport's bucket, 2 points wide (table version 3).
+    if (CALIBRATION && CALIBRATION.version === 3) {
       const bucket = calibrationBucket(confidence);
       const entry = CALIBRATION.sports?.[sport]?.[bucket];
       if (!entry || !isFinite(entry.rate) || (entry.samples || 0) < CALIBRATION_MIN_SAMPLES) {
@@ -676,64 +652,13 @@ const EDGE_GOVERNOR = (() => {
       return {
         value: round(final, 1),
         applied: true,
-        detail: { bucket, sport, rate: entry.rate, samples: entry.samples, pull: round(pull, 3), shape: 'v2' },
+        detail: { bucket, sport, rate: entry.rate, samples: entry.samples, pull: round(pull, 3), shape: 'v3' },
       };
     }
 
-    const keys = Object.keys(CALIBRATION);
-    if (!keys.length) {
-      return { value: round(confidence, 1), applied: false, detail: null };
-    }
-
-    const bucket = Math.round(confidence / 5) * 5;
-    const entry = CALIBRATION[String(bucket)];
-    if (entry == null) {
-      return { value: round(confidence, 1), applied: false, detail: null };
-    }
-
-    // Support both table shapes.
-    let rate = null;
-    let samples = null;
-    let shape = 'unknown';
-
-    if (typeof entry === 'number') {
-      rate = entry;
-      samples = null;
-      shape = 'legacy';
-    } else if (entry && typeof entry === 'object') {
-      if (typeof entry.rate === 'number') rate = entry.rate;
-      if (typeof entry.samples === 'number') samples = entry.samples;
-      shape = 'structured';
-    }
-
-    if (rate == null || !isFinite(rate)) {
-      return { value: round(confidence, 1), applied: false, detail: null };
-    }
-
-    // Bucket rate is a percent (e.g. 58.2). Confidence is also a
-    // percent. Both on the same scale — good.
-    const sampleWeight = samples != null
-      ? clamp(samples / CALIBRATION_FULL_SAMPLE, 0, 1)
-      : LEGACY_SAMPLE_WEIGHT;
-
-    const pull = MAX_CALIBRATION_PULL * sampleWeight;
-    const blended = confidence + (rate - confidence) * pull;
-    const final = clamp(blended, 0, MAX_CONFIDENCE);
-
-    return {
-      value: round(final, 1),
-      applied: true,
-      detail: {
-        bucket,
-        bucket_rate: round(rate, 2),
-        samples,
-        sample_weight: round(sampleWeight, 3),
-        pull: round(pull, 3),
-        input: round(confidence, 1),
-        output: round(final, 1),
-        shape,
-      },
-    };
+    // Older tables (learned before the one-probability governor) are
+    // not applied; rerun the Slate Test to build a current one.
+    return { value: round(confidence, 1), applied: false, detail: null };
   }
 
   // ============================================================
@@ -839,6 +764,12 @@ const EDGE_GOVERNOR = (() => {
     BUILD,
     run,
     runProp,
+    DEFAULT_BLEND,
+    SPOT_PRIOR_RATE,
+    SPOT_PRIOR_GAMES,
+    spotEvidence,
+    blendFor,
+    DEFAULT_BLEND,
     calibrationBucket,
     readCalibrationTable,
     poolCalibration,
