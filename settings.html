@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EDGE — Settings</title>
+  <title>THE EDGE — Today's Picks</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
@@ -12,11 +12,13 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
   <script src="claude.js"></script>
+  <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
@@ -68,192 +70,194 @@
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
-    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px,12vw,72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* SAVE BAR */
-    .save-bar { position: sticky; top: 60px; z-index: 50; display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(8px); gap: 10px; flex-wrap: wrap; }
-    .save-status { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
-    .save-status.saved  { color: var(--green); }
-    .save-status.unsaved { color: var(--gold); }
-    .save-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; padding: 8px 22px; cursor: pointer; transition: opacity 0.2s; }
-    .save-btn:hover { opacity: 0.85; }
+    .portfolio-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 14px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
+    .pf-btn:last-child { border-right: none; }
+    .pf-btn.active.real { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .pf-btn.active.sim { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .pf-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+    .pf-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .pf-btn.active.real .pf-val { color: var(--gold); }
+    .pf-btn.active.sim .pf-val { color: var(--blue); }
 
-    .section { padding: 20px 20px; border-bottom: 1px solid var(--border); }
-    .sec-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px; color: var(--text); margin-bottom: 14px; }
-    .sec-title em { color: var(--gold); font-style: normal; }
-    .sec-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: -8px; margin-bottom: 14px; }
+    .mode-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
+    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; }
+    .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
+    .mode-pill.det { border-color: var(--gold-dim); color: var(--gold); }
+    .mode-pill.ai  { border-color: var(--blue); color: var(--blue); }
+    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* DECISION ENGINE CARDS */
-    .decision-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .decision-card { background: var(--surface); border: 2px solid var(--border); padding: 16px 14px; cursor: pointer; transition: all 0.2s; text-align: center; }
-    .decision-card.active.math { border-color: var(--gold); background: var(--gold-glow); }
-    .decision-card.active.ai   { border-color: var(--blue); background: rgba(74,144,217,0.08); }
-    .decision-card:hover { border-color: var(--border-bright); }
-    .decision-icon { font-size: 22px; margin-bottom: 8px; opacity: 0.75; }
-    .decision-name { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: var(--text); margin-bottom: 4px; }
-    .decision-card.active.math .decision-name { color: var(--gold); }
-    .decision-card.active.ai .decision-name   { color: var(--blue); }
-    .decision-desc { font-size: 11px; color: var(--text-dim); line-height: 1.4; font-weight: 300; }
+    .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
+    .sum-cell { padding: 12px 8px; border-right: 1px solid var(--border); text-align: center; }
+    .sum-cell:last-child { border-right: none; }
+    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .sum-val.gold { color: var(--gold); }
+    .sum-val.green { color: var(--green); }
+    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* PORTFOLIO CARDS */
-    .portfolio-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-    .portfolio-card { background: var(--surface); border: 2px solid var(--border); padding: 16px 14px; cursor: pointer; transition: all 0.2s; text-align: center; }
-    .portfolio-card.active.real { border-color: var(--gold); background: var(--gold-glow); }
-    .portfolio-card.active.sim  { border-color: var(--blue); background: rgba(74,144,217,0.08); }
-    .portfolio-card:hover { border-color: var(--border-bright); }
-    .portfolio-icon { font-size: 22px; margin-bottom: 8px; opacity: 0.75; }
-    .portfolio-name { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: var(--text); margin-bottom: 4px; }
-    .portfolio-card.active.real .portfolio-name { color: var(--gold); }
-    .portfolio-card.active.sim .portfolio-name  { color: var(--blue); }
-    .portfolio-desc { font-size: 11px; color: var(--text-dim); line-height: 1.4; font-weight: 300; }
+    .filter-strip { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .filter-strip::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
 
-    /* FIELD */
-    .field { margin-bottom: 14px; }
-    .field:last-child { margin-bottom: 0; }
-    .field-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .field-hint { font-size: 10px; color: var(--text-dim); font-weight: 300; letter-spacing: 0; text-transform: none; }
-    .field-input { width: 100%; background: var(--bg4); border: 1px solid var(--border); color: var(--text); font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 2px; padding: 12px 14px; transition: border-color 0.2s; }
-    .field-input:focus { outline: none; border-color: var(--gold); }
-    .field-input::placeholder { color: var(--text-dim); }
-    .field-input.sm { font-family: 'Barlow', sans-serif; font-size: 15px; letter-spacing: 0; }
-    .field-input.cred { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-                        font-size: 13px; letter-spacing: 0; text-transform: none; }
-    textarea.field-input.cred { width: 100%; resize: vertical; line-height: 1.45;
-                        word-break: break-all; min-height: 72px; }
-    .cred-check { font-size: 11.5px; font-weight: 300; line-height: 1.5; margin-top: 6px; color: var(--text-dim); }
-    .cred-check.ok { color: var(--green); }
-    .cred-check.err { color: var(--red); }
+    .picks-list { padding: 16px 20px; }
+    .pick-card { background: var(--surface); border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+    .pick-card:hover { border-color: var(--border-bright); }
+    .pick-card.tier-elite  { border-left: 3px solid var(--gold); }
+    .pick-card.tier-high   { border-left: 3px solid var(--green); }
+    .pick-card.tier-solid  { border-left: 3px solid var(--text-mid); }
+    .pick-card.tier-lean   { border-left: 3px solid var(--text-dim); }
+    .pick-card.vetoed      { opacity: 0.5; }
+    .pick-card.passed      { opacity: 0.55; }
 
-    /* UNIT TOGGLE */
-    .unit-toggle { display: flex; border: 1px solid var(--border); margin-bottom: 14px; }
-    .unit-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; transition: all 0.2s; text-align: center; }
-    .unit-btn:last-child { border-right: none; }
-    .unit-btn.active { color: var(--gold); background: var(--gold-glow); }
+    .pick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px; gap: 8px; }
+    .pick-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .pick-time { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); }
+    .decision-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid; }
+    .decision-tag.bet2u { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.1); }
+    .decision-tag.bet1u { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
+    .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
+    .decision-tag.pass  { border-color: var(--text-dim); color: var(--text-dim); }
+    .decision-tag.capped { border-color: var(--text-dim); color: var(--text-dim); }
+    .mode-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--border); color: var(--text-dim); }
+    .mode-badge.ai { border-color: var(--blue); color: var(--blue); }
 
-    /* SLIDER FIELD */
-    .slider-field { background: var(--surface); border: 1px solid var(--border); padding: 14px 14px; margin-bottom: 10px; }
-    .slider-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .slider-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); }
-    .slider-val { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; color: var(--gold); }
-    .slider { width: 100%; -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg4); outline: none; border: none; }
-    .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: var(--gold); cursor: pointer; }
-    .slider-hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; font-weight: 300; }
+    .pick-body { padding: 6px 14px 12px; }
+    .pick-matchup { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; line-height: 1.1; margin-bottom: 4px; }
+    .pick-side { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
+    .pick-side.away { color: var(--blue); }
 
-    /* SPORT TOGGLES */
-    .sport-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .sport-toggle-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; }
-    .sport-toggle-name { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text); }
-    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0; }
-    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-    .toggle-track { position: absolute; inset: 0; background: var(--bg4); border: 1px solid var(--border); transition: all 0.25s; }
-    .toggle input:checked + .toggle-track { background: var(--gold-glow); border-color: var(--gold); }
-    .toggle-thumb { position: absolute; top: 4px; left: 4px; width: 14px; height: 14px; background: var(--text-dim); transition: all 0.25s; }
-    .toggle input:checked ~ .toggle-thumb { left: 24px; background: var(--gold); }
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); margin-bottom: 12px; }
+    .metric-cell { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .metric-cell:last-child { border-right: none; }
+    .metric-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .metric-val.gold  { color: var(--gold); }
+    .metric-val.green { color: var(--green); }
+    .metric-val.red   { color: var(--red); }
+    .metric-val.blue  { color: var(--blue); }
+    .metric-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* NOTIFICATION ROWS */
-    .notif-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-top: none; padding: 12px 14px; gap: 10px; }
-    .notif-row:first-of-type { border-top: 1px solid var(--border); }
-    .notif-info { flex: 1; }
-    .notif-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); }
-    .notif-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-weight: 300; }
+    .cons-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .cons-track { flex: 1; background: var(--bg4); height: 5px; overflow: hidden; }
+    .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
+    .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
 
-    /* THEME */
-    .theme-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
-    .theme-card { background: var(--surface); border: 2px solid var(--border); padding: 14px 10px; text-align: center; cursor: pointer; transition: all 0.2s; }
-    .theme-card.active { border-color: var(--gold); }
-    .theme-swatch { width: 32px; height: 32px; border-radius: 50%; margin: 0 auto 8px; }
-    .theme-name { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
-    .theme-card.active .theme-name { color: var(--gold); }
+    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
 
-    /* SIMULATION SECTION */
-    .sim-badge { display: inline-block; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 8px; border: 1px solid var(--blue); color: var(--blue); margin-left: 8px; }
+    .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
+    .best-line b { color: var(--gold); }
+    .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
+    .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
+    .pick-action-btn.copy { color: var(--text); }
+    .bankroll-note { border: 1px solid var(--gold); color: var(--gold); font-size: 12px; line-height: 1.5; padding: 8px 10px; margin: 0 0 10px; }
+    .bankroll-note[hidden] { display: none; }
+    .analytics { margin: 4px 0 10px; border: 1px solid var(--border); }
+    .analytics summary { cursor: pointer; padding: 8px 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+    .analytics-body { padding: 0 10px 10px; font-size: 12px; line-height: 1.6; color: var(--text); }
+    .analytics-body .row { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 3px 0; }
+    .analytics-body .row span:first-child { color: var(--text-dim); }
+    .analytics-body .fam { padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .analytics-body .fam b { font-weight: 600; }
+    .analytics-body .fam.off { opacity: 0.45; }
+    .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
+    .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
+    .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
+    .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
 
-    /* DANGER */
-    .danger-btn { display: block; width: 100%; background: none; border: 1px solid rgba(231,76,60,0.3); color: var(--red); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 13px; cursor: pointer; text-align: center; transition: all 0.2s; margin-bottom: 8px; }
-    .danger-btn:hover { background: rgba(231,76,60,0.08); border-color: var(--red); }
+    .context-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      border-radius: 2px;
+    }
+    .ctx-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(201,168,76,0.06);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.8px;
+    }
+    .ctx-row:last-child { border-bottom: none; }
+    .ctx-label {
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ctx-value { color: var(--text-mid); text-align: right; font-weight: 600; }
+    .ctx-value .pos { color: var(--green); }
+    .ctx-value .neg { color: var(--red); }
+    .ctx-value .gold { color: var(--gold); }
+    .ctx-value .blue { color: var(--blue); }
 
-    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-    .toast.blue { background: var(--blue); color: #fff; }
-    .toast.red  { background: var(--red); color: #fff; }
+    .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
+    .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
+    .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
+
+    .pick-actions { display: flex; gap: 0; border-top: 1px solid var(--border); }
+    .pick-action-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; }
+    .pick-action-btn:last-child { border-right: none; }
+    .pick-action-btn.approve { color: var(--green); }
+    .pick-action-btn.approve:hover { background: rgba(39,174,96,0.08); }
+    .pick-action-btn.skip { color: var(--red); }
+    .pick-action-btn.skip:hover { background: rgba(231,76,60,0.06); }
+    .pick-action-btn.simbet { color: var(--blue); }
+    .pick-action-btn.simbet:hover { background: rgba(74,144,217,0.08); }
+    .pick-action-btn.analysis { color: var(--gold); }
+    .pick-action-btn.analysis:hover { background: var(--gold-glow); }
+    .pick-action-btn.done { color: var(--text-dim); cursor: default; }
+    .pick-action-btn.bet-placed { color: var(--gold); background: var(--gold-glow); }
+    .pick-action-btn.sim-placed { color: var(--blue); background: rgba(74,144,217,0.08); }
+
+    .empty-state { padding: 48px 20px; text-align: center; }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
+    .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
+    .go-btn { display: inline-block; margin-top: 20px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; padding: 10px 24px; cursor: pointer; text-decoration: none; transition: all 0.2s; }
+    .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
 
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
     .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red { background: var(--red); color: #fff; }
 
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
       --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
     }
-    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
-    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
-      box-shadow: var(--lift);
-      border-radius: 2px;
-      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
-      will-change: transform;
-    }
-    .pick-card, .clv-card, .game-card {
-      box-shadow: var(--lift-gold);
-    }
-    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-      box-shadow: var(--lift-high);
-      transform: translateY(-2px);
-    }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
-    }
+    .pick-card, .stat-card, .game-card, .context-panel { box-shadow: var(--lift); border-radius: 2px; transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease; }
+    .pick-card { box-shadow: var(--lift-gold); }
+    .pick-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
     @media (prefers-reduced-motion: reduce) {
-      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card {
-        transition: none;
-      }
-      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-        transform: none;
-      }
+      .pick-card { transition: none; }
+      .pick-card:hover { transform: none; }
     }
 
-    .offline-bar {
-      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
-      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
-      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
-      padding: 7px 20px; text-align: center;
-      transform: translateY(-100%); transition: transform 0.25s ease;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
-    }
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
     .offline-bar.show { transform: translateY(0); }
-
-    .conn-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-    .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
-    .conn-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
-    .conn-dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
-    .conn-dot.busy { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
-    .conn-state { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); }
-    .conn-state.ok { color: var(--green); }
-    .conn-state.err { color: var(--red); }
-    .key-actions { display: flex; gap: 8px; margin-top: 8px; }
-    .key-btn { flex: 1; background: var(--bg4); border: 1px solid var(--border); color: var(--text-mid); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 9px 10px; cursor: pointer; transition: all 0.2s; }
-    .key-btn:hover { border-color: var(--gold); color: var(--gold); }
-    .key-btn.primary { background: var(--gold); border-color: var(--gold); color: #000; }
-    .reveal-btn { background: none; border: none; color: var(--gold-dim); font-size: 11px; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; padding: 0; }
-    .conn-note { font-size: 12px; color: var(--text-dim); font-weight: 300; line-height: 1.55; margin-top: 10px; }
-      .book-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
-    .book-chip { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); padding: 6px 4px; border: 1px solid var(--border); }
-</style>
+  </style>
 </head>
 <body>
 
@@ -275,7 +279,7 @@
     <div class="drawer-section">Core</div>
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
-    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="picks.html" class="active"><span class="ico">✓</span> Today's Picks</a>
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
@@ -289,7 +293,7 @@
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
-    <a href="settings.html" class="active"><span class="ico">◈</span> Settings</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
   </div>
 
@@ -298,389 +302,95 @@
   <main>
 
     <div class="page-header">
-      <div class="page-eye">Preferences</div>
-      <div class="page-title">SETTINGS</div>
+      <div class="page-eye">Algorithm Output</div>
+      <div class="page-title">TODAY'S <em>PICKS</em></div>
     </div>
 
-    <div class="save-bar">
-      <span class="save-status saved" id="saveStatus">All changes saved</span>
-      <button class="save-btn" onclick="saveAll()">SAVE</button>
+    <div class="portfolio-bar">
+      <button class="pf-btn real active" id="pfReal" onclick="setPortfolio('real')">
+        <div class="pf-lbl">Real Bankroll</div>
+        <div class="pf-val" id="realBankroll">$0</div>
+      </button>
+      <button class="pf-btn sim" id="pfSim" onclick="setPortfolio('sim')">
+        <div class="pf-lbl">Simulation Bankroll</div>
+        <div class="pf-val" id="simBankroll">$0</div>
+      </button>
     </div>
 
-    <div class="section">
-      <div class="sec-title">CONNE<em>CTIONS</em></div>
-
-      <div class="field">
-        <div class="conn-row">
-          <span class="conn-dot" id="dotSupabase"></span>
-          <span class="conn-state" id="stateSupabase">Not connected</span>
-        </div>
-        <div class="field-lbl">Supabase Project URL</div>
-        <input type="text" class="field-input cred" id="supabaseUrl" placeholder="https://yourproject.supabase.co" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
+    <div class="mode-bar">
+      <div class="mode-info">
+        <span class="mode-pill" id="modePill">—</span>
+        <span id="modeDesc">Deterministic · no AI overlay</span>
       </div>
-
-      <div class="field">
-        <div class="field-lbl">Supabase anon key <button class="reveal-btn" onclick="toggleReveal('supabaseKey')">show</button></div>
-        <textarea class="field-input cred" id="supabaseKey" rows="3" placeholder="eyJhbGciOi…"
-                  oninput="markUnsaved(); inspectKey()" autocomplete="off" spellcheck="false"
-                  autocapitalize="off" autocorrect="off"></textarea>
-        <div class="cred-check" id="keyCheck"></div>
-        <div class="key-actions">
-          <button class="key-btn" onclick="testConnection('supabase')">Test Supabase</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="conn-row">
-          <span class="conn-dot" id="dotOdds"></span>
-          <span class="conn-state" id="stateOdds">Not connected</span>
-        </div>
-        <div class="field-lbl">The Odds API key <button class="reveal-btn" onclick="toggleReveal('oddsKey')">show</button></div>
-        <input type="text" class="field-input cred" id="oddsKey" placeholder="Your the-odds-api.com key" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
-        <div class="key-actions">
-          <button class="key-btn" onclick="testConnection('odds')">Test Odds API</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="conn-row">
-          <span class="conn-dot" id="dotClaude"></span>
-          <span class="conn-state" id="stateClaude">Not connected</span>
-        </div>
-        <div class="field-lbl">Anthropic API key <span class="field-hint">AI-assisted mode only</span> <button class="reveal-btn" onclick="toggleReveal('claudeKey')">show</button></div>
-        <input type="text" class="field-input cred" id="claudeKey" placeholder="sk-ant-…" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
-        <div class="key-actions">
-          <button class="key-btn" onclick="testConnection('claude')">Test Anthropic</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="conn-row">
-          <span class="conn-dot" id="dotEspn"></span>
-          <span class="conn-state" id="stateEspn">Not checked</span>
-        </div>
-        <div class="field-lbl">ESPN <span class="field-hint">public, no key needed</span></div>
-        <div class="key-actions">
-          <button class="key-btn" onclick="testConnection('espn')">Test ESPN</button>
-          <button class="key-btn" onclick="testConnection('all')">Test all</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="field-lbl">Edge Function proxy URL <span class="field-hint">optional</span></div>
-        <input type="text" class="field-input cred" id="proxyUrl" placeholder="https://yourproject.supabase.co/functions/v1/edge-proxy" oninput="markUnsaved()" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="text" />
-        <div class="conn-note">Set this to route Odds API and Anthropic calls through a Supabase Edge Function so those keys live in Supabase secrets instead of this browser. Leave blank to call both services directly with the keys above.</div>
-      </div>
-
-      <div class="key-actions">
-        <button class="key-btn primary" onclick="saveConnections()">Save connections</button>
-        <button class="key-btn" onclick="clearConnections()">Clear all keys</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="run-btn" id="runBtn" onclick="runPipeline()">▶ RUN</button>
+        <button class="run-btn" id="refreshBtn" onclick="loadPicks()" style="background:none;border:1px solid var(--border);color:var(--text-mid);">↻</button>
+        <button class="run-btn" id="copyBtn" onclick="copyPicks()" style="background:none;border:1px solid var(--border);color:var(--text-mid);">⧉</button>
+        <button class="run-btn" id="clearBtn" onclick="clearTodaysPicks()" style="background:none;border:1px solid rgba(231,76,60,0.4);color:var(--red);">✕ CLEAR</button>
       </div>
     </div>
 
-    <div class="section">
-      <div class="sec-title">DECISION <em>ENGINE</em></div>
-      <div class="sec-sub">Deterministic always runs. AI overlays when enabled.</div>
-      <div class="decision-cards">
-        <div class="decision-card math active" id="dcMath" onclick="setDecisionMode('math_only')">
-          <div class="decision-icon">∑</div>
-          <div class="decision-name">Math Only</div>
-          <div class="decision-desc">Pure physics. No AI overlay.</div>
-        </div>
-        <div class="decision-card ai" id="dcAi" onclick="setDecisionMode('ai_assisted')">
-          <div class="decision-icon">◎</div>
-          <div class="decision-name">AI-Assisted</div>
-          <div class="decision-desc">Claude reviews, can veto or reduce.</div>
-        </div>
+    <div class="summary-row">
+      <div class="sum-cell">
+        <div class="sum-val" id="sumTotal">0</div>
+        <div class="sum-lbl">Picks</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val gold" id="sumUnits">0u</div>
+        <div class="sum-lbl">Total Units</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val green" id="sumAvgConf">—</div>
+        <div class="sum-lbl">Avg Conf</div>
+      </div>
+      <div class="sum-cell">
+        <div class="sum-val" id="sumAvgEdge">—</div>
+        <div class="sum-lbl">Avg Edge</div>
       </div>
     </div>
 
-    <div class="section">
-      <div class="sec-title">ACTIVE <em>PORTFOLIO</em></div>
-      <div class="sec-sub">Real money or simulation mode</div>
-      <div class="portfolio-cards">
-        <div class="portfolio-card real active" id="pfReal" onclick="setPortfolio('real')">
-          <div class="portfolio-icon">$</div>
-          <div class="portfolio-name">Real</div>
-          <div class="portfolio-desc">Actual bankroll</div>
-        </div>
-        <div class="portfolio-card sim" id="pfSim" onclick="setPortfolio('sim')">
-          <div class="portfolio-icon">▷</div>
-          <div class="portfolio-name">Simulation</div>
-          <div class="portfolio-desc">Practice mode</div>
-        </div>
-      </div>
+    <div class="filter-strip">
+      <button class="fchip active" data-filter="all">All</button>
+      <button class="fchip" data-filter="elite">Elite 60+</button>
+      <button class="fchip" data-filter="high">High 57+</button>
+      <button class="fchip" data-filter="solid">Solid 55+</button>
+      <button class="fchip" data-filter="bet2u">BET 2U</button>
+      <button class="fchip" data-filter="bet1u">BET 1U</button>
+      <button class="fchip" data-filter="lean">Lean</button>
+      <button class="fchip" data-filter="hot">ATS Hot</button>
+      <button class="fchip" data-filter="cold">ATS Cold</button>
+      <button class="fchip" data-filter="hurt">Heavy Injuries</button>
+      <button class="fchip" data-filter="NFL">NFL</button>
+      <button class="fchip" data-filter="NBA">NBA</button>
+      <button class="fchip" data-filter="NCAAF">NCAAF</button>
+      <button class="fchip" data-filter="NCAAB">NCAAB</button>
     </div>
 
-    <div class="section">
-      <div class="sec-title">REAL <em>BANKROLL</em></div>
-      <div class="field">
-        <div class="field-lbl">Starting Bankroll <span class="field-hint">USD</span></div>
-        <input type="number" class="field-input" id="bankroll" placeholder="2000" min="0" oninput="markUnsaved()" />
-      </div>
-
-      <div class="field">
-        <div class="field-lbl">Unit Type</div>
-        <div class="unit-toggle">
-          <button class="unit-btn active" id="unitFlat" onclick="setUnitType('flat')">Flat $</button>
-          <button class="unit-btn" id="unitPct" onclick="setUnitType('pct')">% of Bankroll</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="field-lbl" id="unitSizeLbl">Unit Size (flat $) <span class="field-hint">per bet</span></div>
-        <input type="number" class="field-input" id="unitSize" placeholder="50" min="1" oninput="markUnsaved()" />
-      </div>
+    <div class="bankroll-note" id="bankrollNote" hidden>
+      Bankroll isn't set — units are sized on a $1,000 bankroll with $50 units.
+      Set your bankroll and unit size in Settings.
     </div>
 
-    <div class="section">
-      <div class="sec-title">REAL LOSS <em>CAPS</em></div>
-      <div class="field">
-        <div class="field-lbl">Daily Loss Cap <span class="field-hint">USD</span></div>
-        <input type="number" class="field-input" id="dailyCap" placeholder="200" min="0" oninput="markUnsaved()" />
-      </div>
-      <div class="field">
-        <div class="field-lbl">Weekly Loss Cap <span class="field-hint">USD</span></div>
-        <input type="number" class="field-input" id="weeklyCap" placeholder="500" min="0" oninput="markUnsaved()" />
-      </div>
-      <div class="field">
-        <div class="field-lbl">Max Bets Per Day</div>
-        <input type="number" class="field-input" id="maxBets" placeholder="5" min="1" oninput="markUnsaved()" />
-      </div>
-      <div class="field">
-        <div class="field-lbl">Max Unit Size Per Bet <span class="field-hint">units</span></div>
-        <input type="number" class="field-input" id="maxUnitSize" placeholder="2" min="1" step="0.25" oninput="markUnsaved()" />
-      </div>
+    <div class="picks-tools">
+      <button class="tool-btn" onclick="copyAllPicks()">⧉ Copy All</button>
+      <button class="tool-btn gold" id="betAllBtn" onclick="betAllPicks()">▶ Bet All</button>
     </div>
 
-    <div class="section">
-      <div class="sec-title">SIMULATION <span class="sim-badge">SIM</span></div>
-      <div class="field">
-        <div class="field-lbl">Sim Bankroll <span class="field-hint">Fake USD</span></div>
-        <input type="number" class="field-input" id="simBankroll" placeholder="10000" min="0" oninput="markUnsaved()" />
+    <div class="picks-list" id="picksList">
+      <div class="empty-state">
+        <div class="empty-icon">✓</div>
+        <div class="empty-title">NO PICKS YET</div>
+        <div class="empty-sub">
+          Tap RUN to generate picks<br>
+          from today's matchups
+        </div>
+        <a href="matchups.html" class="go-btn">Go to Matchups →</a>
       </div>
-      <div class="field">
-        <div class="field-lbl">Sim Unit Size <span class="field-hint">per bet</span></div>
-        <input type="number" class="field-input" id="simUnitSize" placeholder="100" min="1" oninput="markUnsaved()" />
-      </div>
-      <div class="field">
-        <div class="field-lbl">Sim Daily Cap <span class="field-hint">max per day</span></div>
-        <input type="number" class="field-input" id="simDailyCap" placeholder="500" min="0" oninput="markUnsaved()" />
-      </div>
-      <div class="notif-row" style="border-top:1px solid var(--border); margin-top:10px;">
-        <div class="notif-info">
-          <div class="notif-name">Auto-Grade Sim Results</div>
-          <div class="notif-desc">Grade sim bets when ESPN posts final scores</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="simAutoGrade" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">EDGE <em>SETTINGS</em></div>
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Only pick sports that passed the Slate Test</div>
-          <div class="notif-desc">A sport whose backtest scored worse than a coin flip shows its line but makes no picks. Untested sports are allowed and marked untested.</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="edgeSportGate" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Lock the early number</div>
-          <div class="notif-desc">Place a sim bet on every pick the first time it appears, so the line it was found at is kept (and checked against the close).</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="edgeLockFirst" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Moneylines for MLB and NHL</div>
-          <div class="notif-desc">Bet MLB and NHL on the moneyline at its real price instead of the ±1.5 run or puck line.</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="edgeMlSports" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Low-vig books as the benchmark</div>
-          <div class="notif-desc">Measure the model's edge against LowVig / BetOnline (less shaded than the big apps) instead of the plain median. No extra credits. Pinnacle, when on, takes priority.</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="edgeLowVig" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Pinnacle as the sharp benchmark</div>
-          <div class="notif-desc">Downloads Pinnacle too and uses its price as the market. Uses about twice the Odds API credits per refresh.</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="edgeUsePinnacle" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div class="field" style="margin-top:10px;">
-        <div class="field-lbl">My books <span class="field-hint">best number only searches these · none ticked = all</span></div>
-        <div class="book-grid">
-        <label class="book-chip"><input type="checkbox" class="my-book" value="draftkings" onchange="markUnsaved()" /> DraftKings</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="fanduel" onchange="markUnsaved()" /> FanDuel</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="betmgm" onchange="markUnsaved()" /> BetMGM</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="williamhill_us" onchange="markUnsaved()" /> Caesars</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="espnbet" onchange="markUnsaved()" /> ESPN BET</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="fanatics" onchange="markUnsaved()" /> Fanatics</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="betrivers" onchange="markUnsaved()" /> BetRivers</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="hardrockbet" onchange="markUnsaved()" /> Hard Rock Bet</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="ballybet" onchange="markUnsaved()" /> Bally Bet</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="betonlineag" onchange="markUnsaved()" /> BetOnline</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="bovada" onchange="markUnsaved()" /> Bovada</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="mybookieag" onchange="markUnsaved()" /> MyBookie</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="lowvig" onchange="markUnsaved()" /> LowVig</label>
-        <label class="book-chip"><input type="checkbox" class="my-book" value="betus" onchange="markUnsaved()" /> BetUS</label>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="sec-title">PICK <em>FILTERS</em></div>
-
-      <div class="slider-field">
-        <div class="slider-head">
-          <span class="slider-lbl">Min Confidence to Show</span>
-          <span class="slider-val" id="confDisplay">50%</span>
-        </div>
-        <input type="range" class="slider" id="minConf" min="0" max="90" value="50"
-          oninput="updateSlider('minConf','confDisplay', this.value+'%'); markUnsaved();" />
-        <div class="slider-hint">Picks below this confidence are hidden from Today's Picks</div>
-      </div>
-
-      <div class="slider-field">
-        <div class="slider-head">
-          <span class="slider-lbl">Auto-Bet Threshold</span>
-          <span class="slider-val" id="autoDisplay">70%</span>
-        </div>
-        <input type="range" class="slider" id="autoThreshold" min="40" max="90" value="70"
-          oninput="updateSlider('autoThreshold','autoDisplay', this.value+'%'); markUnsaved();" />
-        <div class="slider-hint">Auto mode only queues picks at or above this confidence</div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="sec-title">SPORTS <em>TRACKING</em></div>
-      <div class="sport-grid" id="sportGrid"></div>
-    </div>
-
-    <div class="section">
-      <div class="sec-title">NOTIFI<em>CATIONS</em></div>
-
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Steam Move Alert</div>
-          <div class="notif-desc">Notify when a steam move is detected</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="notifSteam" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">New Pick Generated</div>
-          <div class="notif-desc">Alert when a new high-confidence pick is produced</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="notifPick" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Cap Warning</div>
-          <div class="notif-desc">Alert when daily or weekly cap is 80% used</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="notifCap" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Result Posted</div>
-          <div class="notif-desc">Notify when a game result is logged</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="notifResult" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="notif-row">
-        <div class="notif-info">
-          <div class="notif-name">Claude Veto Alert</div>
-          <div class="notif-desc">Notify when Claude vetoes a model pick</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="notifVeto" onchange="markUnsaved()" />
-          <div class="toggle-track"></div><div class="toggle-thumb"></div>
-        </label>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="sec-title">THEME</div>
-      <div class="theme-grid" id="themeGrid">
-        <div class="theme-card active" data-theme="dark-gold" onclick="setTheme('dark-gold', this)">
-          <div class="theme-swatch" style="background:linear-gradient(135deg,#080808,#C9A84C)"></div>
-          <div class="theme-name">Dark Gold</div>
-        </div>
-        <div class="theme-card" data-theme="dark-green" onclick="setTheme('dark-green', this)">
-          <div class="theme-swatch" style="background:linear-gradient(135deg,#080808,#27AE60)"></div>
-          <div class="theme-name">Dark Green</div>
-        </div>
-        <div class="theme-card" data-theme="dark-red" onclick="setTheme('dark-red', this)">
-          <div class="theme-swatch" style="background:linear-gradient(135deg,#080808,#E74C3C)"></div>
-          <div class="theme-name">Dark Red</div>
-        </div>
-        <div class="theme-card" data-theme="midnight" onclick="setTheme('midnight', this)">
-          <div class="theme-swatch" style="background:linear-gradient(135deg,#05050F,#4A4AFF)"></div>
-          <div class="theme-name">Midnight</div>
-        </div>
-        <div class="theme-card" data-theme="slate" onclick="setTheme('slate', this)">
-          <div class="theme-swatch" style="background:linear-gradient(135deg,#0A0A12,#8888AA)"></div>
-          <div class="theme-name">Slate</div>
-        </div>
-        <div class="theme-card" data-theme="pure-black" onclick="setTheme('pure-black', this)">
-          <div class="theme-swatch" style="background:linear-gradient(135deg,#000,#222)"></div>
-          <div class="theme-name">Pure Black</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="sec-title">DANGER <em>ZONE</em></div>
-      <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
-      <button class="danger-btn" onclick="resetSimBankroll()">Reset Simulation Bankroll</button>
-      <button class="danger-btn" onclick="resetLearning()">Reset Learning Loop Timestamp</button>
-      <button class="danger-btn" onclick="resetAll()">Reset All Settings to Default</button>
     </div>
 
     <footer>
       <div class="foot-logo">EDGE</div>
-      <div class="foot-txt">Settings stored locally · Syncs to Supabase when connected · © 2026</div>
+      <div class="foot-txt">Deterministic + AI-assisted modes · © 2026 · Not financial advice</div>
     </footer>
 
   </main>
@@ -705,483 +415,945 @@
       } catch {}
     }
 
-    const CONN_FIELDS = [
-      { input: 'supabaseUrl', store: 'edge_supabase_url' },
-      { input: 'supabaseKey', store: 'edge_supabase_key' },
-      { input: 'oddsKey',     store: 'edge_odds_api_key' },
-      { input: 'claudeKey',   store: 'edge_claude_api_key' },
-      { input: 'proxyUrl',    store: 'edge_proxy_url' },
-    ];
-
-    // Reveal hides/reveals a credential field. Inputs and textareas
-    // differ — textareas have no .type, so that approach silently
-    // did nothing on the Supabase key.
-    function toggleReveal(id) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if (el.tagName === 'TEXTAREA') {
-        el.style.webkitTextSecurity = el.style.webkitTextSecurity === 'disc' ? 'none' : 'disc';
-      } else {
-        el.type = el.type === 'password' ? 'text' : 'password';
-      }
-    }
-
-    function loadConnections() {
-      CONN_FIELDS.forEach(({ input, store }) => {
-        const el = document.getElementById(input);
-        if (el) el.value = localStorage.getItem(store) || '';
-      });
-      refreshConnectionDots();
-      inspectKey();
-    }
-
-    function inspectKey() {
-      const el = document.getElementById('supabaseKey');
-      const out = document.getElementById('keyCheck');
-      if (!el || !out) return true;
-
-      const key = el.value.trim();
-      if (!key) { out.textContent = ''; out.className = 'cred-check'; return true; }
-
-      const parts = key.split('.');
-      if (parts.length !== 3) {
-        out.textContent = 'Not a JWT — a Supabase anon key has three dot-separated parts. Check the paste is complete.';
-        out.className = 'cred-check err';
-        return false;
-      }
-      try {
-        const p = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        const url = document.getElementById('supabaseUrl').value.trim();
-        const urlRef = (url.match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i) || [])[1];
-
-        if (p.role === 'service_role') {
-          out.textContent = 'This is a service_role key. It bypasses every policy and must never be used in a browser. Use anon public.';
-          out.className = 'cred-check err';
-          return false;
-        }
-        if (urlRef && p.ref && urlRef !== p.ref) {
-          out.textContent = `Key belongs to project "${p.ref}" but the URL points at "${urlRef}". They must match.`;
-          out.className = 'cred-check err';
-          return false;
-        }
-        const exp = p.exp ? new Date(p.exp * 1000) : null;
-        if (exp && exp < new Date()) {
-          out.textContent = 'This key expired on ' + exp.toISOString().slice(0, 10) + '.';
-          out.className = 'cred-check err';
-          return false;
-        }
-        out.textContent = `Valid ${p.role} key` + (p.ref ? ` for project ${p.ref}` : '') +
-                          (exp ? `, expires ${exp.toISOString().slice(0, 10)}` : '');
-        out.className = 'cred-check ok';
-        return true;
-      } catch (e) {
-        logEdgeError('settings.inspectKey', e);
-        out.textContent = 'Could not decode this key. It may be truncated or altered.';
-        out.className = 'cred-check err';
-        return false;
-      }
-    }
-
-    // Save only writes. An empty field is treated as "leave what's
-    // there alone", because a blank input is far more often a rendering
-    // glitch than a deliberate instruction to delete the key.
-    // Clearing is a separate, explicit action.
-    function saveConnections() {
-      CONN_FIELDS.forEach(({ input, store }) => {
-        const el = document.getElementById(input);
-        if (!el) return;
-        const val = el.value.trim().replace(/\/+$/, '');
-        if (val) localStorage.setItem(store, val);
-      });
-      refreshConnectionDots();
-      inspectKey();
-      markSaved();
-      showToast('Connections saved');
-    }
-
-    function clearConnections() {
-      if (!confirm('Remove every saved API key from this browser?')) return;
-      CONN_FIELDS.forEach(({ store }) => localStorage.removeItem(store));
-      CONN_FIELDS.forEach(({ input }) => {
-        const el = document.getElementById(input);
-        if (el) el.value = '';
-      });
-      refreshConnectionDots();
-      showToast('Keys removed');
-    }
-
-    function refreshConnectionDots() {
-      setConn('Supabase', localStorage.getItem('edge_supabase_url') && localStorage.getItem('edge_supabase_key') ? 'saved' : 'unset');
-      setConn('Odds', localStorage.getItem('edge_odds_api_key') ? 'saved' : 'unset');
-      setConn('Claude', localStorage.getItem('edge_claude_api_key') ? 'saved' : 'unset');
-    }
-
-    function setConn(name, state, text) {
-      const dot = document.getElementById('dot' + name);
-      const lbl = document.getElementById('state' + name);
-      if (!dot || !lbl) return;
-      const map = {
-        saved:   ['', 'Key saved — not tested'],
-        unset:   ['', 'Not connected'],
-        busy:    ['busy', 'Testing…'],
-        ok:      ['ok', 'Connected'],
-        err:     ['err', 'Failed'],
-      };
-      const [cls, def] = map[state] || ['', ''];
-      dot.className = 'conn-dot ' + cls;
-      lbl.className = 'conn-state ' + cls;
-      lbl.textContent = text || def;
-    }
-
-    async function testConnection(which) {
-      if (which === 'all') {
-        await testConnection('supabase');
-        await testConnection('odds');
-        await testConnection('espn');
-        await testConnection('claude');
-        return;
-      }
-
-      if (which === 'supabase') {
-        const url = document.getElementById('supabaseUrl').value.trim().replace(/\/+$/, '');
-        const key = document.getElementById('supabaseKey').value.trim();
-        if (!url || !key) { setConn('Supabase', 'err', 'Enter URL and key'); return; }
-        setConn('Supabase', 'busy');
-        try {
-          const res = await fetch(`${url}/rest/v1/shadow_picks?select=id&limit=1`, {
-            headers: { apikey: key, Authorization: `Bearer ${key}` }
-          });
-          if (res.ok) setConn('Supabase', 'ok');
-          else setConn('Supabase', 'err', 'HTTP ' + res.status);
-        } catch (e) { setConn('Supabase', 'err', 'Unreachable'); logEdgeError('settings.test.supabase', e); }
-        return;
-      }
-
-      if (which === 'odds') {
-        const key = document.getElementById('oddsKey').value.trim();
-        if (!key) { setConn('Odds', 'err', 'Enter a key'); return; }
-        setConn('Odds', 'busy');
-        try {
-          const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${key}`);
-          if (res.ok) {
-            const remaining = res.headers.get('x-requests-remaining');
-            setConn('Odds', 'ok', remaining ? `Connected — ${remaining} requests left` : 'Connected');
-          } else {
-            setConn('Odds', 'err', res.status === 401 ? 'Invalid key' : 'HTTP ' + res.status);
-          }
-        } catch (e) { setConn('Odds', 'err', 'Unreachable'); logEdgeError('settings.test.odds', e); }
-        return;
-      }
-
-      if (which === 'espn') {
-        setConn('Espn', 'busy');
-        try {
-          const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
-          setConn('Espn', res.ok ? 'ok' : 'err', res.ok ? 'Reachable' : 'HTTP ' + res.status);
-        } catch (e) { setConn('Espn', 'err', 'Unreachable'); logEdgeError('settings.test.espn', e); }
-        return;
-      }
-
-      if (which === 'claude') {
-        const key = document.getElementById('claudeKey').value.trim();
-        const proxy = document.getElementById('proxyUrl').value.trim();
-        if (!key && !proxy) { setConn('Claude', 'err', 'Enter a key or proxy URL'); return; }
-        setConn('Claude', 'busy');
-        try {
-          const endpoint = proxy ? proxy.replace(/\/+$/, '') + '/messages' : 'https://api.anthropic.com/v1/messages';
-          const headers = { 'Content-Type': 'application/json' };
-          if (!proxy) {
-            headers['x-api-key'] = key;
-            headers['anthropic-version'] = '2023-06-01';
-            headers['anthropic-dangerous-direct-browser-access'] = 'true';
-          }
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              model: 'claude-sonnet-4-20250514',
-              max_tokens: 8,
-              messages: [{ role: 'user', content: 'ping' }],
-            }),
-          });
-          if (res.ok) setConn('Claude', 'ok', proxy ? 'Connected via proxy' : 'Connected');
-          else setConn('Claude', 'err', res.status === 401 ? 'Invalid key' : 'HTTP ' + res.status);
-        } catch (e) { setConn('Claude', 'err', 'Blocked or unreachable'); logEdgeError('settings.test.claude', e); }
-        return;
-      }
-    }
-
-    const SPORTS = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
-
-    function buildSportToggles() {
-      const grid = document.getElementById('sportGrid');
-      grid.innerHTML = SPORTS.map(s => {
-        const on = localStorage.getItem('edge_sport_' + s) !== 'false';
-        return `
-          <div class="sport-toggle-row">
-            <span class="sport-toggle-name">${s}</span>
-            <label class="toggle">
-              <input type="checkbox" id="sport_${s}" ${on ? 'checked' : ''} onchange="markUnsaved()" />
-              <div class="toggle-track"></div><div class="toggle-thumb"></div>
-            </label>
-          </div>`;
-      }).join('');
-    }
-
-    function setDecisionMode(mode) {
-      localStorage.setItem('edge_decision_mode', mode);
-      document.getElementById('dcMath').classList.toggle('active', mode === 'math_only');
-      document.getElementById('dcAi').classList.toggle('active', mode === 'ai_assisted');
-      markSaved();
-      showToast(mode === 'ai_assisted' ? 'AI-Assisted mode set' : 'Deterministic mode set',
-                mode === 'ai_assisted' ? 'blue' : '');
-    }
+    let portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
+    let currentFilter = 'all';
+    let allPicks = [];
+    let contextIndex = {};
 
     function setPortfolio(p) {
+      portfolio = p;
       localStorage.setItem('edge_active_portfolio', p);
       document.getElementById('pfReal').classList.toggle('active', p === 'real');
       document.getElementById('pfSim').classList.toggle('active', p === 'sim');
-      markSaved();
+      renderPicks();
     }
 
-    let unitType = localStorage.getItem('edge_unit_type') || 'flat';
-
-    function setUnitType(type) {
-      unitType = type;
-      document.getElementById('unitFlat').classList.toggle('active', type === 'flat');
-      document.getElementById('unitPct').classList.toggle('active', type === 'pct');
-      document.getElementById('unitSizeLbl').innerHTML = type === 'flat'
-        ? 'Unit Size (flat $) <span class="field-hint">per bet</span>'
-        : 'Unit Size (% of bankroll) <span class="field-hint">per bet</span>';
-      markUnsaved();
-    }
-
-    function updateSlider(inputId, displayId, displayVal) {
-      document.getElementById(displayId).textContent = displayVal;
-    }
-
-    function setTheme(theme, el) {
-      document.querySelectorAll('.theme-card').forEach(c => c.classList.remove('active'));
-      el.classList.add('active');
-      localStorage.setItem('edge_theme', theme);
-      markUnsaved();
-    }
-
-    function markUnsaved() {
-      const el = document.getElementById('saveStatus');
-      el.textContent = 'Unsaved changes';
-      el.className = 'save-status unsaved';
-    }
-
-    function markSaved() {
-      const el = document.getElementById('saveStatus');
-      el.textContent = 'All changes saved';
-      el.className = 'save-status saved';
-    }
-
-    // Save reads every input and writes what it finds. Empty numeric
-    // fields are still written as empty because the field is small
-    // enough that an empty value is a deliberate clear; the connection
-    // fields behave differently because an empty credential field is
-    // almost always a rendering artifact.
-    function saveAll() {
-      const set = (k, v) => { if (v !== '' && v !== null && v !== undefined) localStorage.setItem(k, v); };
-
-      set('edge_bankroll',       document.getElementById('bankroll').value);
-      set('edge_unit_type',      unitType);
-      set('edge_unit_size',      document.getElementById('unitSize').value);
-      set('edge_daily_cap',      document.getElementById('dailyCap').value);
-      set('edge_weekly_cap',     document.getElementById('weeklyCap').value);
-      set('edge_max_bets',       document.getElementById('maxBets').value);
-      set('edge_max_unit_size',  document.getElementById('maxUnitSize').value);
-      set('edge_min_conf',       document.getElementById('minConf').value);
-      set('edge_auto_threshold', document.getElementById('autoThreshold').value);
-
-      set('edge_sim_bankroll',   document.getElementById('simBankroll').value);
-      set('edge_sim_unit_size',  document.getElementById('simUnitSize').value);
-      set('edge_sim_daily_cap',  document.getElementById('simDailyCap').value);
-      const sg = document.getElementById('simAutoGrade');
-      if (sg) localStorage.setItem('edge_sim_auto_grade', sg.checked);
-      [['edgeSportGate', 'edge_sport_gate'], ['edgeLockFirst', 'edge_lock_on_first'], ['edgeLowVig', 'edge_lowvig_benchmark'],
-       ['edgeMlSports', 'edge_ml_sports'], ['edgeUsePinnacle', 'edge_use_pinnacle']].forEach(([id, k]) => {
-        const el = document.getElementById(id);
-        if (el) localStorage.setItem(k, el.checked);
+    document.querySelectorAll('.fchip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('.fchip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        currentFilter = chip.dataset.filter;
+        renderPicks();
       });
-      localStorage.setItem('edge_my_books', JSON.stringify(
-        Array.from(document.querySelectorAll('.my-book')).filter(b => b.checked).map(b => b.value)));
+    });
 
-      SPORTS.forEach(s => {
-        const el = document.getElementById('sport_' + s);
-        if (el) localStorage.setItem('edge_sport_' + s, el.checked);
-      });
-
-      ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) localStorage.setItem('edge_' + id, el.checked);
-      });
-
-      // Same rule as saveConnections — write when populated, leave
-      // the existing key alone when empty.
-      CONN_FIELDS.forEach(({ input, store }) => {
-        const el = document.getElementById(input);
-        if (!el) return;
-        const v = el.value.trim().replace(/\/+$/, '');
-        if (v) localStorage.setItem(store, v);
-      });
-      refreshConnectionDots();
-
-      syncToSupabase();
-      markSaved();
-      showToast('Settings saved');
+    function updateBankrolls() {
+      const real = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+      const sim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+      document.getElementById('realBankroll').textContent = '$' + real.toLocaleString();
+      document.getElementById('simBankroll').textContent = '$' + sim.toLocaleString();
     }
 
-    // The settings table has a single row with id = 1. A PATCH with
-    // ?id=eq.1 does nothing if the row was never seeded, so this uses
-    // POST with merge-duplicates, which inserts on first save and
-    // updates thereafter. The SQL to create the table ships alongside
-    // this file — see the settings schema note in Admin.
-    async function syncToSupabase() {
+    function updateModeIndicator() {
+      const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
+      const pill = document.getElementById('modePill');
+      const desc = document.getElementById('modeDesc');
+      if (mode === 'ai_assisted') {
+        pill.textContent = 'AI-ASSISTED';
+        pill.className = 'mode-pill ai';
+        desc.textContent = 'Deterministic + Claude risk review';
+      } else {
+        pill.textContent = 'DETERMINISTIC';
+        pill.className = 'mode-pill det';
+        desc.textContent = 'Pure math · no AI overlay';
+      }
+    }
+
+    // ── LOAD PICKS + CONTEXT ──
+    //
+    // Filter is by commence_time, not created_at.
+    //
+    // The pipeline dedups on game_id across a 14-day window,
+    // so a game is written exactly once. A pick created on
+    // Monday for a Saturday kickoff is the only pick that game
+    // will ever have. Filtering by created_at = today meant
+    // that pick vanished from the page by Tuesday, even though
+    // its game had not been played. Filtering by commence_time
+    // in the next seven days shows every pending pick for every
+    // upcoming game.
+    async function loadPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { allPicks = loadCachedPicks(); renderPicks(); return; }
+
+      try {
+        // Every pick for a game that hasn't finished — no 7-day cut-off.
+        // The board can hold games further out (next week's NFL lines),
+        // and their picks were saved but never shown here.
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const res = await fetch(
+          `${url}/rest/v1/shadow_picks?select=*` +
+          `&commence_time=gte.${todayStart.toISOString()}` +
+          `&order=commence_time.asc,confidence.desc&limit=500`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        // Picks you removed stay removed — the pipeline won't re-add them.
+        allPicks = (await res.json()).filter(p => p.decision !== 'REMOVED');
+      } catch (e) {
+        logEdgeError('picks.loadFromSupabase', e);
+        allPicks = loadCachedPicks();
+        if (allPicks.length) showToast('Offline — showing last saved picks', '');
+      }
+      if (!allPicks.length) allPicks = loadCachedPicks();
+
+      await loadContextIndex();
+
+      renderPicks();
+    }
+
+    function loadCachedPicks() {
+      try {
+        const last = JSON.parse(localStorage.getItem('edge_last_run') || 'null');
+        return last && Array.isArray(last.picks) ? last.picks : [];
+      } catch { return []; }
+    }
+
+    // ── LOAD CONTEXT FOR TODAY'S TEAMS ──
+    async function loadContextIndex() {
+      contextIndex = {};
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key || !allPicks.length) return;
+
+      const teamsBySport = {};
+      allPicks.forEach(p => {
+        const s = p.sport;
+        if (!s) return;
+        if (!teamsBySport[s]) teamsBySport[s] = new Set();
+        if (p.home_team) teamsBySport[s].add(p.home_team);
+        if (p.away_team) teamsBySport[s].add(p.away_team);
+      });
+
+      for (const sport of Object.keys(teamsBySport)) {
+        const teams = Array.from(teamsBySport[sport]);
+        if (!teams.length) continue;
+        const inList = teams.map(t => `"${t}"`).join(',');
+        try {
+          const res = await fetch(
+            `${url}/rest/v1/team_ats?sport=eq.${sport}&team_name=in.(${inList})&select=*`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
+          if (res.ok) {
+            const rows = await res.json();
+            rows.forEach(r => {
+              const k = `${sport}:${r.team_name}`;
+              if (!contextIndex[k]) contextIndex[k] = {};
+              contextIndex[k].ats = r;
+            });
+          }
+        } catch (e) { logEdgeError('picks.ctx.ats.' + sport, e); }
+      }
+
+      const gameIds = allPicks.map(p => p.game_id).filter(Boolean);
+      if (gameIds.length) {
+        try {
+          const res = await fetch(
+            `${url}/rest/v1/matchup_ats?sport=neq.none&select=*&limit=200`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+          );
+          if (res.ok) {
+            const rows = await res.json();
+            allPicks.forEach(p => {
+              if (!p.home_team || !p.away_team) return;
+              const [a, b] = [p.home_team, p.away_team].sort();
+              const match = rows.find(r => r.sport === p.sport && r.team_a === a && r.team_b === b);
+              if (match) {
+                const k = `${p.sport}:${p.home_team}`;
+                if (!contextIndex[k]) contextIndex[k] = {};
+                contextIndex[k].h2h = match;
+              }
+            });
+          }
+        } catch (e) { logEdgeError('picks.ctx.h2h', e); }
+      }
+    }
+
+    // ── RUN PIPELINE ──
+    async function runPipeline() {
+      const btn = document.getElementById('runBtn');
+      if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'red'); return; }
+      const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+      if (!games.length) { showToast('No games — refresh Matchups first', 'red'); return; }
+
+      btn.disabled = true;
+      btn.textContent = 'RUNNING…';
+
+      try {
+        const result = await window.EDGE_ORCHESTRATOR.run({
+          games,
+          minConfidence: parseFloat(localStorage.getItem('edge_min_conf') || '0'),
+          onProgress: (msg) => { btn.textContent = msg.slice(0, 20); },
+        });
+
+        if (result.errors.length) {
+          showToast('Error: ' + result.errors[0], 'red');
+          return;
+        }
+        await loadPicks();
+        showToast(`✓ ${result.picks.length} pick${result.picks.length === 1 ? '' : 's'}`, '');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '▶ RUN';
+      }
+    }
+
+    async function clearTodaysPicks() {
+      const url = localStorage.getItem('edge_supabase_url');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Supabase not connected', 'red'); return; }
+      if (!confirm('Delete all of today\'s picks? Cannot be undone.')) return;
+
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      try {
+        await fetch(
+          `${url}/rest/v1/shadow_picks?created_at=gte.${todayStart.toISOString()}`,
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+
+        const flags = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('edge_bet_sim_') || k.startsWith('edge_bet_real_'))) flags.push(k);
+        }
+        flags.forEach(k => localStorage.removeItem(k));
+
+        allPicks = [];
+        renderPicks();
+        showToast('Today\'s picks cleared', '');
+      } catch (e) {
+        logEdgeError('picks.clearTodaysPicks', e);
+        showToast('Clear failed: ' + e.message, 'red');
+      }
+    }
+
+    // ── COPY ──
+    function copyPicks() {
+      const visible = applyFilter(allPicks);
+      if (!visible.length) { showToast('No picks to copy', 'red'); return; }
+
+      const lines = visible.map((p, i) => {
+        const num = String(i + 1).padStart(2, '0');
+        const sport = (p.sport || '').padEnd(6);
+        const matchup = `${(p.away_team || '?')} @ ${(p.home_team || '?')}`.padEnd(50);
+        const side = (p.side_team || p.direction || '—').padEnd(28);
+        const conf = String(Math.round(p.confidence || 0)).padStart(3) + '%';
+        const edge = (((p.edge || 0) * 100).toFixed(2) + '%').padStart(7);
+        const units = ((p.units || 0) + 'u').padEnd(5);
+        const decision = p.decision || '—';
+        return `${num}  ${sport}  ${matchup}  ${side}  ${conf}  ${edge}  ${units}  ${decision}`;
+      });
+
+      const header = 'EDGE — Today\'s Picks\n' +
+                     '='.repeat(125) + '\n' +
+                     '#   SPORT   MATCHUP'.padEnd(64) +
+                     'SIDE'.padEnd(30) + 'CONF    EDGE     UNITS  DECISION\n' +
+                     '-'.repeat(125);
+
+      const totalUnits = visible.reduce((s, p) => s + (p.units || 0), 0);
+      const avgConf = visible.reduce((s, p) => s + (p.confidence || 0), 0) / visible.length;
+      const summary = '\n\n' +
+        `Total: ${visible.length} picks · Units: ${totalUnits.toFixed(1)}u · Avg Conf: ${avgConf.toFixed(1)}%`;
+
+      const text = header + '\n' + lines.join('\n') + summary;
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => showToast(`Copied ${visible.length} picks`, ''))
+          .catch(() => fallbackCopy(text, visible.length));
+      } else {
+        fallbackCopy(text, visible.length);
+      }
+    }
+
+    function fallbackCopy(text, count) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        showToast(`Copied ${count} picks`, '');
+      } catch {
+        showToast('Copy failed — long-press to select manually', 'red');
+      }
+      document.body.removeChild(ta);
+    }
+
+    function updateSummary(picks) {
+      document.getElementById('sumTotal').textContent = picks.length;
+      const totalUnits = picks.reduce((s, p) => s + (p.units || 0), 0);
+      document.getElementById('sumUnits').textContent = totalUnits.toFixed(1) + 'u';
+
+      const confs = picks.map(p => p.confidence).filter(c => typeof c === 'number');
+      document.getElementById('sumAvgConf').textContent = confs.length
+        ? (confs.reduce((a, b) => a + b, 0) / confs.length).toFixed(1) + '%'
+        : '—';
+
+      const edges = picks.map(p => p.edge).filter(e => typeof e === 'number');
+      document.getElementById('sumAvgEdge').textContent = edges.length
+        ? ((edges.reduce((a, b) => a + b, 0) / edges.length) * 100).toFixed(2) + '%'
+        : '—';
+    }
+
+    function applyFilter(picks) {
+      if (currentFilter === 'all') return picks;
+      if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 60);
+      if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 57);
+      if (currentFilter === 'solid') return picks.filter(p => (p.confidence || 0) >= 55);
+      if (currentFilter === 'bet2u') return picks.filter(p => p.decision === 'BET_2U' || (p.decision === 'BET' && (p.units || 0) >= 2));
+      if (currentFilter === 'bet1u') return picks.filter(p => p.decision === 'BET_1U' || (p.decision === 'BET' && (p.units || 0) < 2));
+      if (currentFilter === 'lean')  return picks.filter(p => p.decision === 'LEAN');
+      if (currentFilter === 'hot')   return picks.filter(p => pickHasHotAts(p));
+      if (currentFilter === 'cold')  return picks.filter(p => pickHasColdAts(p));
+      if (currentFilter === 'hurt')  return picks.filter(p => pickHasHeavyInjuries(p));
+      return picks.filter(p => p.sport === currentFilter);
+    }
+
+    function pickHasHotAts(p) {
+      const ctx = getPickContext(p);
+      if (!ctx) return false;
+      const ats = ctx.ats;
+      if (!ats) return false;
+      return ats.trend_label === 'heating_up' || (ats.last10_cover_pct >= 0.65);
+    }
+
+    function pickHasColdAts(p) {
+      const ctx = getPickContext(p);
+      if (!ctx) return false;
+      const ats = ctx.ats;
+      if (!ats) return false;
+      return ats.trend_label === 'cooling_off' || (ats.last10_cover_pct != null && ats.last10_cover_pct <= 0.35);
+    }
+
+    function pickHasHeavyInjuries(p) {
+      const ph = p.physics_output || p;
+      const gs = ph.governor_snapshot || p.governor_snapshot || {};
+      const bd = gs.breakdown || [];
+      const inj = bd.find(b => b.family === 'injury');
+      if (!inj) return false;
+      return inj.vote === 'no' && inj.confidence >= 0.7;
+    }
+
+    function getPickContext(p) {
+      const homeKey = `${p.sport}:${p.home_team}`;
+      const awayKey = `${p.sport}:${p.away_team}`;
+      return {
+        homeAts: contextIndex[homeKey]?.ats || null,
+        awayAts: contextIndex[awayKey]?.ats || null,
+        h2h: contextIndex[homeKey]?.h2h || null,
+      };
+    }
+
+    function tier(conf) {
+      if (conf >= 60) return 'elite';
+      if (conf >= 57) return 'high';
+      if (conf >= 55) return 'solid';
+      return 'lean';
+    }
+
+    function renderPicks() {
+      const note = document.getElementById('bankrollNote');
+      if (note) note.hidden = parseFloat(localStorage.getItem('edge_bankroll') || '0') > 0;
+      const filtered = applyFilter(allPicks);
+      updateSummary(filtered);
+      const list = document.getElementById('picksList');
+
+      if (!filtered.length) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">✓</div>
+            <div class="empty-title">${allPicks.length ? 'NO MATCHES' : 'NO PICKS YET'}</div>
+            <div class="empty-sub">
+              ${allPicks.length
+                ? 'No picks match current filter'
+                : 'Tap RUN to generate picks'}
+            </div>
+            ${!allPicks.length ? '<a href="matchups.html" class="go-btn">Go to Matchups →</a>' : ''}
+          </div>`;
+        return;
+      }
+
+      list.innerHTML = filtered.map(buildPickCard).join('');
+    }
+
+    function buildPickCard(p) {
+      const conf = p.confidence || 0;
+      const t = tier(conf);
+      const isAi = p.decision_mode === 'ai_assisted';
+      const isVetoed = p.decision === 'VETOED';
+      const isPassed = p.decision === 'PASS' || p.decision === 'CAPPED';
+      const dir = p.direction === 'home' ? 'home' : 'away';
+      const sideTeam = p.side_team || (dir === 'home' ? p.home_team : p.away_team) || '—';
+
+      const decisionTag = isVetoed ? 'VETOED'
+                        : p.decision === 'BET_2U' ? 'BET 2U'
+                        : p.decision === 'BET_1U' ? 'BET 1U'
+                        : p.decision === 'BET' ? (p.units >= 2 ? 'BET 2U' : 'BET 1U')
+                        : p.decision === 'LEAN' ? 'LEAN'
+                        : p.decision === 'CAPPED' ? 'CAPPED'
+                        : 'PASS';
+
+      const tagCls = isVetoed ? 'vetoed'
+                   : p.decision === 'BET_2U' ? 'bet2u'
+                   : p.decision === 'BET_1U' ? 'bet1u'
+                   : p.decision === 'BET' ? 'bet1u'
+                   : p.decision === 'LEAN' ? 'lean'
+                   : p.decision === 'CAPPED' ? 'capped'
+                   : 'pass';
+
+      const cardCls = ['pick-card', 'tier-' + t, isVetoed ? 'vetoed' : '', isPassed ? 'passed' : ''].filter(Boolean).join(' ');
+
+      const matchup = `${p.away_team || 'Away'} vs ${p.home_team || 'Home'}`;
+      const gameTime = p.commence_time
+        ? new Date(p.commence_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' +
+          new Date(p.commence_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '—';
+
+      const ph = p.physics_output || p;
+      const gs = p.governor_snapshot || ph.governor_snapshot || {};
+      const breakdown = gs.breakdown || [];
+      const familyChips = breakdown.map(b => {
+        const vote = b.vote === 'yes' ? '▲' : b.vote === 'no' ? '▼' : '●';
+        const label = (b.family || '').replace('_', ' ');
+        return `<span class="family-chip ${b.vote}">${label} ${vote}</span>`;
+      }).join('');
+
+      const contextPanel = buildContextPanel(p);
+
+      const claudeNote = isAi && p.claude_output
+        ? `<div class="claude-note">
+            <div class="claude-note-lbl">Claude · ${(p.claude_output.decision || '').toUpperCase()}</div>
+            <div class="claude-note-txt">${p.claude_output.reason || 'No reason provided'}</div>
+          </div>`
+        : '';
+
+      const enc = encodeURIComponent(JSON.stringify({
+        id: p.game_id, home: p.home_team, away: p.away_team,
+        sport: p.sport, time: p.commence_time,
+      }));
+
+      const pickKey = p.pick_id || p.game_id || p.id;
+      const betPlacedReal = localStorage.getItem(`edge_bet_real_${pickKey}`) === 'true';
+      const betPlacedSim  = localStorage.getItem(`edge_bet_sim_${pickKey}`) === 'true';
+
+      let actions = '';
+      if (isVetoed || isPassed) {
+        actions = `
+          <button class="pick-action-btn done" disabled>${decisionTag}</button>
+          <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          <button class="pick-action-btn done" disabled>${Math.round(conf)}%</button>
+        `;
+      } else if (portfolio === 'real') {
+        actions = betPlacedReal
+          ? `
+            <button class="pick-action-btn done bet-placed" disabled>✓ BET PLACED</button>
+            <button class="pick-action-btn skip" onclick="undoBet('real','${pickKey}')">Undo</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `
+          : `
+            <button class="pick-action-btn approve" onclick="placeBet('real','${pickKey}')">✓ Approve ${p.units}u</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Skip</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `;
+      } else {
+        actions = betPlacedSim
+          ? `
+            <button class="pick-action-btn done sim-placed" disabled>✓ SIM BET PLACED</button>
+            <button class="pick-action-btn skip" onclick="undoBet('sim','${pickKey}')">Undo</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `
+          : `
+            <button class="pick-action-btn simbet" onclick="placeBet('sim','${pickKey}')">▶ Bet Sim ${p.units}u</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Skip</button>
+            <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
+          `;
+      }
+
+      return `
+        <div class="${cardCls}">
+          <div class="pick-head">
+            <div class="pick-meta">
+              <span class="sport-tag">${p.sport || '—'}</span>
+              <span class="pick-time">${gameTime}</span>
+              <span class="decision-tag ${tagCls}">${decisionTag}</span>
+              ${isAi ? '<span class="mode-badge ai">AI-REVIEWED</span>' : '<span class="mode-badge">DETERMINISTIC</span>'}
+            </div>
+          </div>
+
+          <div class="pick-body">
+            <div class="pick-matchup">${matchup}</div>
+            <div class="pick-side ${dir === 'away' ? 'away' : ''}">▶ ${sideTeam}</div>
+
+            <div class="metric-row">
+              <div class="metric-cell">
+                <div class="metric-val ${conf >= 57 ? 'gold' : conf >= 55 ? 'green' : ''}">${conf.toFixed(1)}%</div>
+                <div class="metric-lbl">To cover</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val ${p.edge > 0 ? 'green' : 'red'}">${((p.edge || 0) * 100).toFixed(2)}%</div>
+                <div class="metric-lbl">Edge</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val gold">${p.units || 0}u</div>
+                <div class="metric-lbl">Units</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val">${(p.governor_snapshot || {}).bet_type === 'ML'
+                  ? ((p.governor_snapshot.price > 0 ? '+' : '') + (p.governor_snapshot.price ?? '—'))
+                  : (p.market_spread !== null && p.market_spread !== undefined ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—')}</div>
+                <div class="metric-lbl">${(p.governor_snapshot || {}).bet_type === 'ML' ? 'Moneyline' : 'Spread'}</div>
+              </div>
+            </div>
+
+            <div class="cons-row">
+              <span class="cons-lbl">Consensus</span>
+              <div class="cons-track">
+                <div class="cons-fill" style="width:${Math.min(Math.abs((gs.consensus_score || 0) * 100), 100)}%"></div>
+              </div>
+              <span class="cons-num">${((gs.consensus_score || 0) * 100).toFixed(0)}%</span>
+            </div>
+
+            <div class="family-mini">${familyChips}</div>
+
+            ${contextPanel}
+            ${claudeNote}
+
+            <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
+
+            ${bestLineHtml(p)}
+            ${buildAnalytics(p)}
+          </div>
+
+          <div class="pick-actions">
+            ${actions}
+            <button class="pick-action-btn copy" onclick="copyPick('${pickKey}')">⧉ Copy</button>
+          </div>
+        </div>`;
+    }
+
+    // ── ANALYTICS ──
+    // Everything the decision was made from: the ranking's spread
+    // against the market, its chance to cover, the rest and injury
+    // adjustment, every family's vote and reason, Claude when it ran.
+
+    function pickAnalytics(p) {
+      const ph = p.physics_output || p;
+      const gs = p.governor_snapshot || ph.governor_snapshot || {};
+      const r = gs.ranking || {};
+      const c = gs.components || {};
+      // Points one step adds on the chance, given where it started.
+      const sgm = x => 1 / (1 + Math.exp(-x));
+      const lgt = p => Math.log(p / (1 - p));
+      const stepPts = (m, before, add) => {
+        if (m == null || !isFinite(m)) return '—';
+        const b = add === undefined ? 0 : (before || 0);
+        const a = add === undefined ? (before || 0) : (add || 0);
+        const p0 = sgm(lgt(m) + b), p1 = sgm(lgt(m) + b + a);
+        const d = (p1 - p0) * 100;
+        return (d >= 0 ? '+' : '') + d.toFixed(1) + ' pts';
+      };
+      const fmtSp = v => (v == null || !isFinite(v)) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1);
+      const pct = v => (v == null || !isFinite(v)) ? '—' : (v * 100).toFixed(1) + '%';
+      const home = p.home_team || 'Home';
+      const rows = [
+        ['Decision', `${p.decision || '—'} · ${p.units || 0}u · ${p.side_team || p.direction || '—'}`],
+        ['Market spread (home)', fmtSp(p.market_spread ?? r.market_spread)],
+        ['Ranking spread (home)', fmtSp(r.model_spread)],
+        ['Offense/defense projection', fmtSp(r.projection_spread)],
+        ['Composite rating spread', fmtSp(r.composite_spread)],
+        ['Projection weight', r.projection_weight != null ? Math.round(r.projection_weight * 100) + '%' : '—'],
+        ['Coaching adjustment', r.coaching_delta != null ? Number(r.coaching_delta).toFixed(2) + ' pts' : '—'],
+        [`Ranking alone: ${home} ${gs.bet_type === 'ML' ? 'wins' : 'covers'}`, pct(c.strength_home ?? r.home_cover ?? gs.ranking_home_cover)],
+        // The one probability, built step by step (home view).
+        [`1. Market: ${home}`, pct(c.market_home ?? gs.market_home_prob)],
+        ['2. + Strength', c.strength_term != null ? stepPts(c.market_home, c.strength_term) + ` (weight ${c.w_strength ?? '—'}${c.blend_source === 'fitted' ? ', learned' : ', default'})` : '—'],
+        ['3. + Spots', c.spots_term != null ? stepPts(c.market_home, c.strength_term, c.spots_term) + ` (${(c.spots || []).length} fired)` : '—'],
+        ['4. + Rest/injuries', c.context_term != null ? stepPts(c.market_home, (c.strength_term || 0) + (c.spots_term || 0), c.context_term) : '—'],
+        [`= Model: ${home}`, pct(gs.posterior_home_prob)],
+        ['Chance the pick covers', (p.confidence || 0).toFixed(1) + '%'],
+        ['Bet', gs.bet_type === 'ML' ? `Moneyline ${gs.price > 0 ? '+' : ''}${gs.price}` : `Spread${gs.price ? ' at ' + (gs.price > 0 ? '+' : '') + gs.price : ''}`],
+        ['Break-even at that price', gs.break_even != null ? (gs.break_even * 100).toFixed(1) + '%' : '—'],
+        ['Edge over break-even', ((p.edge || 0) * 100).toFixed(1) + ' pts'],
+        ['Expected value per $1', gs.ev != null ? (gs.ev >= 0 ? '+' : '') + '$' + Number(gs.ev).toFixed(3) : '—'],
+        ['Decided by', gs.decision_source || p.decision_path || '—'],
+      ];
+      if (gs.data_caps && gs.data_caps.length) rows.push(['Caps', gs.data_caps.join(', ')]);
+      rows.push(['Ranking model', r.model_source === 'fitted'
+        ? `fitted on ${r.fit?.n ?? '?'} games (miss ±${r.fit?.rmse != null ? Number(r.fit.rmse).toFixed(1) : '?'})`
+        : (r.model_source === 'blend' ? 'hand-set blend (no fit saved yet)' : '—')]);
+      if (r.qb && (r.qb.home_out || r.qb.away_out)) {
+        rows.push(['QB out', `${r.qb.home_out ? (p.home_team || 'home') : ''}${r.qb.home_out && r.qb.away_out ? ' and ' : ''}${r.qb.away_out ? (p.away_team || 'away') : ''} (${r.qb.points > 0 ? '+' : ''}${r.qb.points} pts to home)`]);
+      }
+      if (r.key_numbers) rows.push(['Push chance (key numbers)', r.push != null ? (r.push * 100).toFixed(1) + '%' : '—']);
+      if (gs.best) rows.push(['Best number', `${gs.best.point > 0 ? '+' : ''}${gs.best.point} at ${gs.best.book || '?'}${gs.best.price ? ' (' + gs.best.price + ')' : ''}` +
+        (gs.best.cover != null ? ` · ${(gs.best.cover * 100).toFixed(1)}% to cover there` : '')]);
+      // Inputs: which of the things the decision uses were there.
+      // Only these change the pick; the "not used" families below do not.
+      const inp = gs.inputs || p.inputs || null;
+      if (inp) {
+        const yn = v => v ? 'yes' : 'MISSING';
+        rows.push(['Games in ratings (fewer team)', inp.ratings_games]);
+        rows.push(['Offense/defense projection', yn(inp.projection)]);
+        rows.push(['Composite rating', yn(inp.composite)]);
+        rows.push(['Chance to cover computed', yn(inp.cover)]);
+        rows.push(['Rest days (adjusts)', yn(inp.rest)]);
+        rows.push(['Injury report (adjusts)', yn(inp.injuries)]);
+        rows.push(['Calibration applied', inp.calibrated ? 'yes' : 'no table yet']);
+      } else {
+        rows.push(['Inputs', 'not recorded — rerun the pipeline']);
+      }
+      const fams = (gs.breakdown || []).map(b => ({
+        family: (b.family || '').replace(/_/g, ' '),
+        vote: b.vote === 'yes' ? 'home' : b.vote === 'no' ? 'away' : 'neutral',
+        weight: b.role ? (b.role === 'context' ? 'adjusts' : b.role === 'in strength' ? 'in strength' : 'shown only') : b.weight,
+        reason: b.reason || '',
+      }));
+      // Each spot that fired, with its record and pull.
+      (c.spots || []).forEach(s => fams.push({
+        family: 'spot: ' + (s.label || s.id),
+        vote: s.side,
+        weight: `record ${s.record}`,
+        reason: `counts as ${s.edge >= 0 ? '+' : ''}${(s.edge * 25).toFixed(1)} pts toward home`,
+      }));
+      const claude = p.claude_verdict || p.claude_output || null;
+      return { rows, fams, claude };
+    }
+
+    // Best number across books for the side picked, shown on the card.
+    function bestLineHtml(p) {
+      const b = (p.governor_snapshot || {}).best;
+      if (!b || b.point == null) return '';
+      const same = b.consensus != null && Number(b.consensus) === Number(b.point);
+      const pts = (b.point > 0 ? '+' : '') + b.point;
+      return `<div class="best-line">Best: <b>${pts}</b> at ${String(b.book || '?').replace(/[<>&]/g, '')}` +
+        `${b.price ? ' (' + b.price + ')' : ''}${b.cover != null ? ' · ' + (b.cover * 100).toFixed(1) + '% to cover' : ''}` +
+        `${same ? ' · same as consensus' : ''}</div>`;
+    }
+
+    function buildAnalytics(p) {
+      const a = pickAnalytics(p);
+      const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const rows = a.rows.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
+      const fams = a.fams.map(f =>
+        `<div class="fam ${f.weight === 'shown only' || f.weight === 0 ? 'off' : ''}"><b>${esc(f.family)}</b> · ${esc(f.vote)} · ${esc(f.weight)}<br>${esc(f.reason)}</div>`
+      ).join('');
+      const claude = a.claude
+        ? `<div class="fam"><b>Claude</b> · ${esc(a.claude.side || a.claude.decision || '')} ${a.claude.confidence != null ? esc(a.claude.confidence) + '%' : ''}<br>${esc(a.claude.reason || '')}</div>`
+        : '';
+      return `<details class="analytics"><summary>Analytics</summary><div class="analytics-body">${rows}${fams}${claude}</div></details>`;
+    }
+
+    function pickText(p) {
+      const a = pickAnalytics(p);
+      const when = p.commence_time ? new Date(p.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      const lines = [
+        `${p.sport || ''} · ${p.away_team || 'Away'} @ ${p.home_team || 'Home'} · ${when}`,
+        `PICK: ${p.side_team || p.direction || '—'} ${p.market_spread != null ? '(home spread ' + (p.market_spread > 0 ? '+' : '') + p.market_spread + ')' : ''}`,
+        ...a.rows.map(([k, v]) => `${k}: ${v}`),
+        'Families:',
+        ...a.fams.map(f => `  ${f.family} — ${f.vote}, ${f.weight}: ${f.reason}`),
+      ];
+      if (a.claude) lines.push(`Claude: ${a.claude.side || a.claude.decision || ''} ${a.claude.confidence ?? ''}% — ${a.claude.reason || ''}`);
+      return lines.join('\n');
+    }
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch {}
+        document.body.removeChild(ta);
+        return ok;
+      }
+    }
+
+    async function copyPick(pickKey) {
+      const p = allPicks.find(x => (x.pick_id || x.game_id || x.id) === pickKey);
+      if (!p) return;
+      showToast(await copyText(pickText(p)) ? 'Pick copied' : 'Copy failed', '');
+    }
+
+    async function copyAllPicks() {
+      const list = applyFilter(allPicks);
+      if (!list.length) { showToast('No picks to copy', 'red'); return; }
+      const text = list.map(pickText).join('\n\n────────\n\n');
+      showToast(await copyText(text) ? `${list.length} picks copied` : 'Copy failed', '');
+    }
+
+    // Places every shown pick that is a bet and not placed yet, in
+    // the current portfolio, through the same placeBet each card uses.
+    async function betAllPicks() {
+      const list = applyFilter(allPicks).filter(p =>
+        p.decision && !['PASS', 'CAPPED', 'VETOED'].includes(p.decision) &&
+        localStorage.getItem(`edge_bet_${portfolio}_${p.pick_id || p.game_id || p.id}`) !== 'true');
+      if (!list.length) { showToast('Every shown pick is already placed', ''); return; }
+      const units = list.reduce((s, p) => s + (p.units || 1), 0);
+      const label = portfolio === 'real' ? 'real' : 'sim';
+      if (!confirm(`Place ${list.length} ${label} bets, ${units} units total?`)) return;
+      const btn = document.getElementById('betAllBtn');
+      if (btn) btn.disabled = true;
+      try {
+        for (const p of list) await placeBet(portfolio, p.pick_id || p.game_id || p.id);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function buildContextPanel(p) {
+      const ctx = getPickContext(p);
+      const ph = p.physics_output || p;
+      const gs = p.governor_snapshot || ph.governor_snapshot || {};
+      const bd = gs.breakdown || [];
+
+      const rows = [];
+
+      const homeAts = ctx.homeAts;
+      const awayAts = ctx.awayAts;
+
+      if (homeAts || awayAts) {
+        rows.push(`<div class="ctx-row"><span class="ctx-label">ATS Form</span><span class="ctx-value">${formatAtsCompare(p, homeAts, awayAts)}</span></div>`);
+      }
+
+      if (ctx.h2h && ctx.h2h.meetings >= 3) {
+        const homeIsA = ctx.h2h.team_a === p.home_team;
+        const homeCover = homeIsA ? ctx.h2h.team_a_cover_pct : ctx.h2h.team_b_cover_pct;
+        const awayCover = homeIsA ? ctx.h2h.team_b_cover_pct : ctx.h2h.team_a_cover_pct;
+        if (homeCover != null && awayCover != null) {
+          rows.push(`<div class="ctx-row"><span class="ctx-label">H2H (${ctx.h2h.meetings})</span><span class="ctx-value">Home <span class="gold">${(homeCover*100).toFixed(0)}%</span> · Away ${(awayCover*100).toFixed(0)}%</span></div>`);
+        }
+      }
+
+      const inj = bd.find(b => b.family === 'injury');
+      if (inj && inj.vote !== 'neu') {
+        const data = inj.data || {};
+        const homeImp = data.home_impact != null ? data.home_impact.toFixed(1) : '—';
+        const awayImp = data.away_impact != null ? data.away_impact.toFixed(1) : '—';
+        const netImp = data.net_impact != null ? data.net_impact.toFixed(1) : '—';
+        const netCls = netImp > 0 ? 'pos' : netImp < 0 ? 'neg' : '';
+        const src = data.source === 'roster' ? ' · roster' : '';
+        rows.push(`<div class="ctx-row"><span class="ctx-label">Injuries${src}</span><span class="ctx-value">Home -${homeImp} · Away -${awayImp} · Net <span class="${netCls}">${netImp > 0 ? '+' : ''}${netImp}</span></span></div>`);
+      }
+
+      if (!rows.length) return '';
+
+      return `<div class="context-panel">${rows.join('')}</div>`;
+    }
+
+    function formatAtsCompare(p, homeAts, awayAts) {
+      const homeSide = `${p.home_team?.split(' ').slice(-1)[0] || 'Home'} `;
+      const awaySide = `${p.away_team?.split(' ').slice(-1)[0] || 'Away'} `;
+      const homeStr = homeAts && homeAts.last10_cover_pct != null
+        ? `<span class="${homeAts.last10_cover_pct >= 0.6 ? 'pos' : homeAts.last10_cover_pct <= 0.4 ? 'neg' : ''}">${(homeAts.last10_cover_pct*100).toFixed(0)}%</span>`
+        : '—';
+      const awayStr = awayAts && awayAts.last10_cover_pct != null
+        ? `<span class="${awayAts.last10_cover_pct >= 0.6 ? 'pos' : awayAts.last10_cover_pct <= 0.4 ? 'neg' : ''}">${(awayAts.last10_cover_pct*100).toFixed(0)}%</span>`
+        : '—';
+      return `${homeSide} ${homeStr} · ${awaySide} ${awayStr}`;
+    }
+
+    // ── PLACE BET ──
+    async function placeBet(mode, pickId) {
+      const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
+      if (!pick) return;
+
+      const units = pick.units || 1;
+
+      if (mode === 'real') {
+        const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+        if (bankroll <= 0) { showToast('Set bankroll in Settings first', 'red'); return; }
+        const unitType = localStorage.getItem('edge_unit_type') || 'flat';
+        const unitSize = unitType === 'pct'
+          ? (bankroll * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
+          : parseFloat(localStorage.getItem('edge_unit_size') || '50');
+        const stakeDollars = units * unitSize;
+        const dailyCap = parseFloat(localStorage.getItem('edge_daily_cap') || '0');
+        const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
+
+        if (dailyCap > 0 && dailyUsed + stakeDollars > dailyCap) {
+          showToast('Daily cap exceeded', 'red');
+          return;
+        }
+
+        localStorage.setItem('edge_bankroll', String(bankroll - stakeDollars));
+        localStorage.setItem('edge_daily_used', String(dailyUsed + stakeDollars));
+        localStorage.setItem(`edge_bet_real_${pickId}`, 'true');
+        await logBet('real', pick, units, stakeDollars);
+        showToast(`Real bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, '');
+      } else {
+        const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+        const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
+        const stakeDollars = units * simUnitSize;
+        if (stakeDollars > simBankroll * 0.05) { showToast('Bet exceeds 5% of sim bankroll', 'red'); return; }
+        localStorage.setItem('edge_sim_bankroll', String(simBankroll - stakeDollars));
+        localStorage.setItem(`edge_bet_sim_${pickId}`, 'true');
+        await logBet('sim', pick, units, stakeDollars);
+        showToast(`Sim bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, 'blue');
+      }
+
+      updateBankrolls();
+      renderPicks();
+    }
+
+    async function undoBet(mode, pickId) {
+      const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
+      if (!pick) return;
+      const units = pick.units || 1;
+
+      // Before kickoff only. The logged bet is deleted too — before,
+      // only this device forgot it, and the pipeline kept treating
+      // the pick as locked by a bet.
+      if (pick.commence_time && new Date(pick.commence_time) <= new Date()) {
+        showToast('Game has started — bet is locked', 'red'); return;
+      }
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const res = await fetch(
+          `${url}/rest/v1/bet_log?game_id=eq.${encodeURIComponent(pick.game_id)}&mode=eq.${mode}&status=eq.pending`,
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+      } catch (e) {
+        showToast('Undo failed: ' + e.message, 'red'); return;
+      }
+
+      if (mode === 'real') {
+        const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+        const unitType = localStorage.getItem('edge_unit_type') || 'flat';
+        const unitSize = unitType === 'pct'
+          ? (bankroll * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
+          : parseFloat(localStorage.getItem('edge_unit_size') || '50');
+        const stakeDollars = units * unitSize;
+        const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
+        localStorage.setItem('edge_bankroll', String(bankroll + stakeDollars));
+        localStorage.setItem('edge_daily_used', String(Math.max(0, dailyUsed - stakeDollars)));
+        localStorage.removeItem(`edge_bet_real_${pickId}`);
+      } else {
+        const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+        const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
+        const stakeDollars = units * simUnitSize;
+        localStorage.setItem('edge_sim_bankroll', String(simBankroll + stakeDollars));
+        localStorage.removeItem(`edge_bet_sim_${pickId}`);
+      }
+
+      updateBankrolls();
+      renderPicks();
+      showToast('Bet undone', '');
+    }
+
+    // Remove a pick before it is locked. It is marked REMOVED in the
+    // database, so the next pipeline run neither refreshes nor
+    // re-adds it. A pick with a bet on it must have the bet undone
+    // first; a game that has started can't be changed.
+    async function skipPick(pickId) {
+      const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
+      if (!pick) return;
+      if (localStorage.getItem(`edge_bet_sim_${pickId}`) === 'true' || localStorage.getItem(`edge_bet_real_${pickId}`) === 'true') {
+        showToast('Undo the bet on this pick first', 'red'); return;
+      }
+      if (pick.commence_time && new Date(pick.commence_time) <= new Date()) {
+        showToast('Game has started — pick is locked', 'red'); return;
+      }
+      if (!confirm(`Remove ${pick.side_team || 'this pick'}? The pipeline won't add it again.`)) return;
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${pick.id}`, {
+          method: 'PATCH',
+          headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify({ decision: 'REMOVED', units: 0 }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        allPicks = allPicks.filter(p => p !== pick);
+        renderPicks();
+        showToast('Pick removed', '');
+      } catch (e) {
+        showToast('Remove failed: ' + e.message, 'red');
+      }
+    }
+
+    // logBet writes the same shape the orchestrator's
+    // autoPlaceSimBets writes, so a bet placed from this page
+    // and a bet placed by the pipeline both grade identically.
+    //
+    //   pick_type: 'ATS'            (was 'HOME' or 'AWAY')
+    //   line: the actual spread     (was the same field but formatted loosely)
+    //   odds: -110 for spread       (was the home moneyline)
+    //
+    // sim-grader.js skips rows that carry pick_type 'HOME' or
+    // 'AWAY' as legacy format. Before this fix, every pick
+    // placed from this page was written in that legacy shape
+    // and never graded. Using the ATS shape means a manual
+    // placement and a pipeline auto-placement are
+    // indistinguishable to the grader.
+    async function logBet(mode, pick, units, stakeDollars) {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) return;
 
-      const payload = {
-        id: 1,
-        bankroll:       localStorage.getItem('edge_bankroll'),
-        unit_type:      localStorage.getItem('edge_unit_type'),
-        unit_size:      localStorage.getItem('edge_unit_size'),
-        daily_cap:      localStorage.getItem('edge_daily_cap'),
-        weekly_cap:     localStorage.getItem('edge_weekly_cap'),
-        max_bets:       localStorage.getItem('edge_max_bets'),
-        max_unit_size:  localStorage.getItem('edge_max_unit_size'),
-        min_conf:       localStorage.getItem('edge_min_conf'),
-        min_cons:       localStorage.getItem('edge_min_cons'),
-        auto_threshold: localStorage.getItem('edge_auto_threshold'),
-        theme:          localStorage.getItem('edge_theme'),
-        updated_at:     new Date().toISOString(),
+      const spread = pick.market_spread;
+
+      const row = {
+        mode,
+        date: (window.EDGE_TIME ? EDGE_TIME.localDay() : (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        sport: pick.sport,
+        matchup: `${pick.away_team} vs ${pick.home_team}`,
+        pick_label: pick.side_team,
+        pick_type: (pick.governor_snapshot || {}).bet_type === 'ML' ? 'ML' : 'ATS',
+        // At the best number found across books when there is one
+        // (home spread, the sim grader's convention), else consensus.
+        line: (pick.governor_snapshot || {}).bet_type === 'ML' ? ''
+          : ((pick.governor_snapshot?.best?.home_line ?? spread) != null
+              ? String(pick.governor_snapshot?.best?.home_line ?? spread) : ''),
+        odds: (pick.governor_snapshot || {}).bet_type === 'ML'
+          ? (pick.governor_snapshot.price ?? null)
+          : (pick.governor_snapshot?.best?.price ?? pick.governor_snapshot?.price ?? -110),
+        confidence: pick.confidence,
+        edge: pick.edge,
+        units,
+        amount: stakeDollars,
+        status: 'pending',
+        game_id: pick.game_id,
+        reason: (pick.reasons || [])[0] || '',
       };
 
       try {
-        await fetch(`${url}/rest/v1/settings`, {
+        await fetch(`${url}/rest/v1/bet_log`, {
           method: 'POST',
           headers: {
-            apikey: key,
-            Authorization: `Bearer ${key}`,
+            apikey: key, Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates,return=minimal',
+            Prefer: 'return=minimal',
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(row),
         });
-      } catch (e) { logEdgeError('settings.sync', e); }
-    }
-
-    function loadEdgeSettings() {
-      const on = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === 'true'; };
-      const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
-      set('edgeSportGate', on('edge_sport_gate', true));
-      set('edgeLockFirst', on('edge_lock_on_first', false));
-      set('edgeMlSports', on('edge_ml_sports', true));
-      set('edgeUsePinnacle', on('edge_use_pinnacle', false));
-      set('edgeLowVig', on('edge_lowvig_benchmark', true));
-      let mine = [];
-      try { mine = JSON.parse(localStorage.getItem('edge_my_books') || '[]'); } catch {}
-      document.querySelectorAll('.my-book').forEach(b => { b.checked = mine.includes(b.value); });
-    }
-
-    function loadAll() {
-      setTimeout(loadEdgeSettings, 0);
-      const get = (k, d) => localStorage.getItem(k) || d;
-
-      document.getElementById('bankroll').value    = get('edge_bankroll', '');
-      document.getElementById('unitSize').value    = get('edge_unit_size', '');
-      document.getElementById('dailyCap').value    = get('edge_daily_cap', '');
-      document.getElementById('weeklyCap').value   = get('edge_weekly_cap', '');
-      document.getElementById('maxBets').value     = get('edge_max_bets', '');
-      document.getElementById('maxUnitSize').value = get('edge_max_unit_size', '');
-
-      const minConf = get('edge_min_conf', '50');
-      document.getElementById('minConf').value = minConf;
-      document.getElementById('confDisplay').textContent = minConf + '%';
-
-      const autoT = get('edge_auto_threshold', '70');
-      document.getElementById('autoThreshold').value = autoT;
-      document.getElementById('autoDisplay').textContent = autoT + '%';
-
-      setUnitType(get('edge_unit_type', 'flat'));
-
-      const simBankroll = document.getElementById('simBankroll');
-      const simUnitSize = document.getElementById('simUnitSize');
-      const simDailyCap = document.getElementById('simDailyCap');
-      const simAutoGrade = document.getElementById('simAutoGrade');
-      if (simBankroll)   simBankroll.value = get('edge_sim_bankroll', '10000');
-      if (simUnitSize)   simUnitSize.value = get('edge_sim_unit_size', '100');
-      if (simDailyCap)   simDailyCap.value = get('edge_sim_daily_cap', '500');
-      if (simAutoGrade)  simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') === 'true';
-
-      ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.checked = localStorage.getItem('edge_' + id) === 'true';
-      });
-
-      const theme = get('edge_theme', 'dark-gold');
-      document.querySelectorAll('.theme-card').forEach(c => {
-        c.classList.toggle('active', c.dataset.theme === theme);
-      });
-
-      const dm = get('edge_decision_mode', 'math_only');
-      document.getElementById('dcMath').classList.toggle('active', dm === 'math_only');
-      document.getElementById('dcAi').classList.toggle('active', dm === 'ai_assisted');
-
-      const pf = get('edge_active_portfolio', 'real');
-      document.getElementById('pfReal').classList.toggle('active', pf === 'real');
-      document.getElementById('pfSim').classList.toggle('active', pf === 'sim');
+      } catch (e) { logEdgeError('picks.logBet', e); }
     }
 
     function showToast(msg, color) {
       const t = document.getElementById('toast');
       t.textContent = msg;
       t.className = 'toast show' + (color ? ' ' + color : '');
-      setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2200);
+      setTimeout(() => t.className = 'toast' + (color ? ' ' + color : ''), 2400);
     }
 
-    function resetCaps() {
-      localStorage.setItem('edge_daily_used', '0');
-      localStorage.setItem('edge_weekly_used', '0');
-      localStorage.setItem('edge_bets_used', '0');
-      localStorage.setItem('edge_sim_bets_used', '0');
-      showToast('Cap usage reset');
-    }
-
-    function resetSimBankroll() {
-      const initial = localStorage.getItem('edge_sim_bankroll') || '10000';
-      localStorage.setItem('edge_sim_bankroll', initial);
-      localStorage.removeItem('edge_sim_state');
-      localStorage.removeItem('edge_sim_daily_used');
-      showToast('Simulation bankroll reset', 'blue');
-    }
-
-    function resetLearning() {
-      localStorage.removeItem('edge_learning_last_run');
-      showToast('Learning timestamp cleared');
-    }
-
-    function resetAll() {
-      const keys = [
-        'edge_bankroll','edge_unit_type','edge_unit_size','edge_daily_cap','edge_weekly_cap',
-        'edge_max_bets','edge_max_unit_size','edge_min_conf','edge_auto_threshold',
-        'edge_theme','edge_daily_used','edge_weekly_used','edge_bets_used','edge_sim_bets_used',
-        'edge_sim_bankroll','edge_sim_unit_size','edge_sim_daily_cap','edge_sim_auto_grade',
-        'edge_decision_mode','edge_active_portfolio','edge_betting_mode',
-      ];
-      keys.forEach(k => localStorage.removeItem(k));
-      loadAll();
-      showToast('Settings reset');
-    }
-
-    buildSportToggles();
-    loadAll();
-    loadConnections();
-    markSaved();
+    setPortfolio(portfolio);
+    updateBankrolls();
+    updateModeIndicator();
+    loadPicks();
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
