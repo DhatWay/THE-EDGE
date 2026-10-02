@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261001-02';
+  const BUILD = 'orch-20261002-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -57,7 +57,9 @@ const EDGE_ORCHESTRATOR = (() => {
   // Situations (historical ATS spots) are not part of the decision:
   // the ranking decides. The engine is not run and its weights are
   // not loaded, which also saves the three table reads per run.
-  const SITUATIONS_IN_DECISION = false;
+  // Situations are evaluated every run and handed to the governor as
+  // spots — each with its tested record — not as a voting family.
+  const SITUATIONS_IN_DECISION = true;
 
   const ML_SPORTS = new Set(['MLB', 'NHL']);
 
@@ -88,7 +90,7 @@ const EDGE_ORCHESTRATOR = (() => {
       context = {},
       onProgress = null,
       persist = true,
-      maxPicks = 10,
+      maxPicks = 25,
       minConfidence = 0,
       grade = false,
     } = options;
@@ -144,7 +146,7 @@ const EDGE_ORCHESTRATOR = (() => {
 
       // ── Stage 1b · Situation weights ──
       const situationWeightsBySport = {};
-      if (SITUATIONS_IN_DECISION && window.EDGE_SITUATION_RESULTS) {
+      if (false && window.EDGE_SITUATION_RESULTS) {
         for (const sp of activeSports) {
           try {
             situationWeightsBySport[sp] = await EDGE_SITUATION_RESULTS.loadWeights(sp);
@@ -287,7 +289,8 @@ const EDGE_ORCHESTRATOR = (() => {
         .filter(p => p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED')
         // A moneyline underdog can be a bet below 50%: its value, not its
         // chance, decided it, so the confidence floor applies to spreads.
-        .filter(p => p.governor_snapshot?.bet_type === 'ML' || p.confidence >= minConfidence)
+        // Expected value decided these; no confidence floor on top.
+        .filter(p => minConfidence <= 0 || p.governor_snapshot?.bet_type === 'ML' || p.confidence >= minConfidence)
         .sort((a, b) => {
           if (b.confidence !== a.confidence) return b.confidence - a.confidence;
           return Math.abs(b.edge) - Math.abs(a.edge);
@@ -347,25 +350,18 @@ const EDGE_ORCHESTRATOR = (() => {
       // Sport gate: a sport whose Slate Test scored worse than a coin
       // flip makes no picks (its line still shows). Untested sports
       // pass through, marked untested.
-      if (localStorage.getItem('edge_sport_gate') !== 'false') {
+      {
+        // The sport's backtest standing is recorded with each game for
+        // reading. It sizes bets (physics) but never blocks one.
         let metrics = {};
         try { metrics = JSON.parse(localStorage.getItem('edge_governor_calibration') || '{}').sport_metrics || {}; } catch {}
-        let gated = 0;
         finalResults.forEach(p => {
           const prior = priors.find(x => x.game_id === p.game_id) || {};
           const kind = prior.bet_type === 'ML' ? `${prior.sport}_ML` : prior.sport;
           const m = metrics[kind] || metrics[prior.sport];
           p.gate = m ? { tested: true, skill: m.skill, games: m.games } : { tested: false };
           if (p.governor_snapshot) p.governor_snapshot.gate = p.gate;
-          if (m && isFinite(m.skill) && m.skill <= 0 && p.decision && p.decision !== 'PASS') {
-            p.decision = 'PASS';
-            p.units = 0;
-            p.gated = true;
-            gated++;
-          }
         });
-        if (gated) log(`  ${gated} picks held back: their sport's Slate Test scored worse than a coin flip`);
-        for (let i = picks.length - 1; i >= 0; i--) if (picks[i].gated) picks.splice(i, 1);
       }
 
       // Why each passed game passed — so a run with no picks still says
@@ -373,7 +369,6 @@ const EDGE_ORCHESTRATOR = (() => {
       const reasonFor = (p) => {
         if (p.decision && p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED') return null;
         const gs = p.governor_snapshot || {};
-        if (p.gated) return `held back — ${p.sport || ''} backtest did worse than a coin flip`;
         if ((gs.data_caps || []).some(c => /no spread|no moneyline/.test(c))) return 'no line to bet';
         if (p.decision === 'VETOED') return 'vetoed by Claude';
         if (p.decision === 'CAPPED') return 'over a daily or bankroll cap';
@@ -893,20 +888,32 @@ const EDGE_ORCHESTRATOR = (() => {
   // ── GOVERNOR ──
   // ============================================================
 
+  // The situations that fired for a game, each with the record the
+  // Slate Test measured for it in this sport (none yet: an empty
+  // record, which the governor reads as the default belief).
+  function spotsFor(prior, sitResult) {
+    const fired = (sitResult?.situations || []).filter(s => s.side === 'home' || s.side === 'away');
+    if (!fired.length) return [];
+    let records = {};
+    try {
+      const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || '{}');
+      const key = prior.bet_type === 'ML' ? `${prior.sport}_ML` : prior.sport;
+      records = t?.spot_records?.[key] || {};
+    } catch {}
+    return fired.map(s => {
+      const r = records[s.id] || {};
+      return { id: s.id, label: s.label, side: s.side, wins: r.wins || 0, losses: r.losses || 0 };
+    });
+  }
+
   function runGovernor(algoResults, situationsByGame) {
     return algoResults
       .filter(r => r.families && r.families.length)
       .map(r => {
-        const allFamilies = SITUATIONS_IN_DECISION
-          ? [situationsAsFamily(situationsByGame[r.prior.game_id]), ...r.families]
-          : r.families;
-
+        const allFamilies = r.families;
+        r.prior.spots = spotsFor(r.prior, situationsByGame[r.prior.game_id]);
         const dynamic = EDGE_GOVERNOR.getDynamicWeights(r.prior.sport);
-        const merged = SITUATIONS_IN_DECISION
-          ? { ...dynamic, situations: SITUATIONS_FAMILY_WEIGHT }
-          : dynamic;
-
-        const gov = EDGE_GOVERNOR.run(allFamilies, r.prior, { dynamicWeights: merged });
+        const gov = EDGE_GOVERNOR.run(allFamilies, r.prior, { dynamicWeights: dynamic });
         return {
           prior: r.prior,
           families: allFamilies,
