@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261001-01';
+  const BUILD = 'pe-20261002-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -1157,9 +1157,14 @@ const EDGE_POWER = (() => {
         ? core.coverProbability(-totalModelSpread, marketSpread,
             (modelSource === 'fitted' ? fit.rmse : null) ?? calib?.sigma_settled ?? calib?.projection_sigma ?? null,
             {
-              lambda: modelSource === 'fitted' ? null : (calib?.market_lambda ?? null),
+              // Not pulled toward the market here: the governor blends
+              // market and strength once, by the weight the Slate Test
+              // measured. Anchoring here too would count the market twice.
+              lambda: null,
               sport,
-              blendSigma: calib?.blend_sigma ?? null,
+              // The model's own spread of outcomes, not the narrower
+              // market-blend one (that belongs with anchoring).
+              blendSigma: null,
             })
         : null,
       calibrated: !!calib,
