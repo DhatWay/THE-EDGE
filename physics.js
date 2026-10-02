@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20261001-01';
+  const BUILD = 'phys-20261002-01';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -134,18 +134,22 @@ const EDGE_PHYSICS = (() => {
     // down in proportion — a quarter-size bet at the start of a season,
     // full size once both teams have a solid sample.
     const certainty = ratingCertainty(prior, sport);
-    const kellyDollars = fractionalKelly * bankroll * certainty;
+    // A sport that hasn't shown an edge in its Slate Test is bet
+    // smaller, never blocked: full size once it beats the market,
+    // 60% while untested or close, 35% when clearly behind.
+    const proof = proofFactor(sport, governorOutput?.bet_type);
+    const kellyDollars = fractionalKelly * bankroll * certainty * proof.factor;
     const kellyUnits = unitSize > 0 ? (kellyDollars / unitSize) : 0;
 
     // ── 3. Three ceilings ──
     //   a. What the governor already said (its own units)
     //   b. What tier the confidence permits
     //   c. What the bankroll permits at max exposure per bet
-    // Moneylines are capped by value, not by chance to win — an
-    // underdog worth betting is below 50% by nature.
-    const tierCap = governorOutput?.bet_type === 'ML'
-      ? (governorOutput.ev >= 0.088 ? MAX_UNITS.solid : governorOutput.ev >= 0.05 ? MAX_UNITS.lean : MAX_UNITS.small)
-      : tierCeiling(confidence);
+    // Unit ceiling by value at the price, the same for spreads and
+    // moneylines (a moneyline underdog worth betting is below 50%).
+    const ev = Number(governorOutput?.ev);
+    const tierCap = !isFinite(ev) ? tierCeiling(confidence)
+      : ev >= 0.12 ? MAX_UNITS.high : ev >= 0.088 ? MAX_UNITS.solid : ev >= 0.05 ? MAX_UNITS.lean : MAX_UNITS.small;
     const bankrollCap = unitSize > 0
       ? (bankroll * MAX_BANKROLL_PCT_PER_BET) / unitSize
       : Infinity;
@@ -153,6 +157,12 @@ const EDGE_PHYSICS = (() => {
 
     const ceiling = Math.min(governorCeiling, tierCap, bankrollCap);
     let finalUnits = roundToQuarter(Math.min(ceiling, kellyUnits));
+    // A positive edge is always a bet: at least a quarter unit, so a
+    // small or early-season edge is sized small instead of rounding
+    // away to nothing. Still within the bankroll cap.
+    if (kellyUnits > 0 && governorCeiling > 0 && finalUnits < 0.25) {
+      finalUnits = Math.min(0.25, Math.max(bankrollCap, 0));
+    }
 
     // If Kelly says zero or negative, that is the answer. No fallback.
     if (kellyUnits <= 0 && governorCeiling > 0) {
@@ -252,6 +262,7 @@ const EDGE_PHYSICS = (() => {
     const reasons = [];
     reasons.push(`Governor: ${baseDecision} @ ${baseUnits}u`);
     reasons.push(`Kelly: ${round(kellyRaw * 100, 2)}% raw → ${round(fractionalKelly * 100, 2)}% at ${(kellyFraction * 100).toFixed(0)}% fraction → ${round(kellyUnits, 3)}u`);
+    if (proof.factor < 1 || certainty < 1) reasons.push(`Sized ×${round(proof.factor * certainty, 2)} (sport ${proof.label}${certainty < 1 ? ', early-season ratings' : ''})`);
     if (tierCap < governorCeiling) reasons.push(`Tier cap: ${tierCap}u`);
     if (bankrollCap < tierCap) reasons.push(`Bankroll cap: ${round(bankrollCap, 2)}u`);
     if (capStatus === 'partial') reasons.push(`Settings partial: ${capCheck.reason}`);
@@ -399,6 +410,7 @@ const EDGE_PHYSICS = (() => {
         ev: governor.ev ?? null,
         break_even: governor.break_even ?? null,
         capped_confidence: governor.capped_confidence ?? null,
+        components: governor.components || null,
         calibration: governor.calibration_detail ? { applied: true, ...governor.calibration_detail } : null,
         ranking_home_cover: governor.ranking_home_cover ?? null,
         adjustment: governor.adjustment ?? null,
@@ -482,6 +494,19 @@ const EDGE_PHYSICS = (() => {
   }
 
   const FULL_SAMPLE_GAMES = { NFL: 8, NCAAF: 6, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 };
+
+  function proofFactor(sport, betType) {
+    if (localStorage.getItem('edge_sport_gate') === 'false') return { factor: 1, label: 'off' };
+    try {
+      const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null');
+      const key = betType === 'ML' ? `${sport}_ML` : sport;
+      const m = t?.sport_metrics?.[key];
+      if (!m || !isFinite(m.skill)) return { factor: 0.6, label: 'untested' };
+      if (m.skill > 0) return { factor: 1, label: 'proven', skill: m.skill };
+      if (m.skill > -0.03) return { factor: 0.6, label: 'close', skill: m.skill };
+      return { factor: 0.35, label: 'behind', skill: m.skill };
+    } catch { return { factor: 0.6, label: 'untested' }; }
+  }
 
   function ratingCertainty(prior, sport) {
     const gh = Number(prior?.home_power?.games_played), ga = Number(prior?.away_power?.games_played);
