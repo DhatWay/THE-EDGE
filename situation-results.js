@@ -46,7 +46,7 @@
 
 const EDGE_SITUATION_RESULTS = (() => {
 
-  const BUILD = 'sr-20260925-01';
+  const BUILD = 'sr-20261002-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -160,6 +160,16 @@ create policy owner_only on public.situation_performance
   using ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text)
   with check ((auth.jwt() ->> 'email'::text) = '__OWNER_EMAIL__'::text);`;
 
+  // Declared above the return: a const after it is never initialised
+  // (the module returns first), and writing results threw.
+  const ALLOWED_COLUMNS = new Set([
+    'run_id', 'game_id', 'sport', 'game_date', 'season',
+    'home', 'away', 'spread', 'open_spread', 'total',
+    'home_score', 'away_score', 'margin', 'combined_score',
+    'situation_id', 'situation_side', 'side_source',
+    'won', 'push', 'weight',
+  ]);
+
   return {
     BUILD,
     probe,
@@ -269,13 +279,6 @@ create policy owner_only on public.situation_performance
   // ── WRITE ──
   // ============================================================
 
-  const ALLOWED_COLUMNS = new Set([
-    'run_id', 'game_id', 'sport', 'game_date', 'season',
-    'home', 'away', 'spread', 'open_spread', 'total',
-    'home_score', 'away_score', 'margin', 'combined_score',
-    'situation_id', 'situation_side', 'side_source',
-    'won', 'push', 'weight',
-  ]);
 
   async function writeResults(rows) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
