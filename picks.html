@@ -963,7 +963,8 @@
       const pct = v => (v == null || !isFinite(v)) ? '—' : (v * 100).toFixed(1) + '%';
       const home = p.home_team || 'Home';
       const rows = [
-        ['Decision', `${p.decision || '—'} · ${p.units || 0}u · ${p.side_team || p.direction || '—'}`],
+        ['Value tier', `${({ BET_2U: '2-unit value', BET_1U: '1-unit value', LEAN: 'lean' })[p.decision] || p.decision || '—'} · ${p.side_team || p.direction || '—'}`],
+        ['Bet size', `${p.units || 0}u (sized by edge, how settled the ratings are, and how proven the sport is)`],
         ['Market spread (home)', fmtSp(p.market_spread ?? r.market_spread)],
         ['Ranking spread (home)', fmtSp(r.model_spread)],
         ['Offense/defense projection', fmtSp(r.projection_spread)],
