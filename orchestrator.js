@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261003-04';
+  const BUILD = 'orch-20261004-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -413,6 +413,17 @@ const EDGE_ORCHESTRATOR = (() => {
         const prior = priors.find(x => x.game_id === p.game_id) || {};
         return {
           reason: reasonFor(p),
+          sport: prior.sport || p.sport || null,
+          home_team: prior.home_team || null,
+          away_team: prior.away_team || null,
+          commence_time: prior.commence_time || null,
+          bet_type: prior.bet_type || 'SPREAD',
+          posterior_home: p.governor_snapshot?.posterior_home_prob ?? null,
+          market_home: p.governor_snapshot?.components?.market_home ?? null,
+          sigma: prior.cover?.sigma ?? null,
+          total_spread: prior.model_spread ?? null,
+          home_ml: prior.market?.home_ml ?? null,
+          away_ml: prior.market?.away_ml ?? null,
           game_id: p.game_id,
           decision: p.decision,
           direction: p.direction,
@@ -447,7 +458,11 @@ const EDGE_ORCHESTRATOR = (() => {
       if (persist && (picks.length || finalResults.length)) {
         log('Persisting picks');
         const evaluatedIds = finalResults.map(p => p.game_id).filter(Boolean);
-        const persistResult = await persistShadowPicks(picks, priors, mode, runId, evaluatedIds);
+        // Every rated game is kept — passes included — so the Full Slate
+        // view and the all-games record have them. Picks are the rows
+        // whose decision is a bet tier.
+        const rated = finalResults.filter(p => p.game_id && (p.direction === 'home' || p.direction === 'away'));
+        const persistResult = await persistShadowPicks(rated, priors, mode, runId, evaluatedIds);
         if (persistResult.ok) {
           log(`  ${persistResult.count || 0} new · ${persistResult.updated || 0} refreshed · ` +
               `${persistResult.withdrawn || 0} withdrawn · ${persistResult.locked || 0} locked (bet placed or started)`);
@@ -480,8 +495,11 @@ const EDGE_ORCHESTRATOR = (() => {
           }
           // Placed bets too, unless switched off in Settings.
           if (window.EDGE_SIM_GRADER && localStorage.getItem('edge_sim_auto_grade') !== 'false') {
-            const b = await window.EDGE_SIM_GRADER.run({ onProgress: log });
-            if (b && b.ok) summary.bets_graded = b.graded || 0;
+            summary.bets_graded = 0;
+            for (const m of ['sim', 'real']) {
+              const b = await window.EDGE_SIM_GRADER.run({ mode: m, onProgress: log });
+              if (b && b.ok) summary.bets_graded += b.graded || 0;
+            }
           }
         } catch (e) {
           log('  grader threw: ' + e.message);
@@ -1101,6 +1119,7 @@ const EDGE_ORCHESTRATOR = (() => {
           `${url}/rest/v1/shadow_picks?select=id,game_id,decision&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
           { headers });
         if (res.ok) (await res.json()).forEach(r => {
+          if (String(r.decision || '').startsWith('LINE_')) return;
           if (!existing.has(r.game_id)) existing.set(r.game_id, r.id);
           if (r.decision === 'REMOVED') removedGames.add(r.game_id);
         });
@@ -1186,18 +1205,20 @@ const EDGE_ORCHESTRATOR = (() => {
       } catch (e) { errors.push(e.message); }
     }
 
-    for (const row of updateRows) {
-      const id = existing.get(row.game_id);
-      const { created_at, ...patch } = row;
-      try {
-        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${id}`, {
-          method: 'PATCH',
-          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-          body: JSON.stringify(patch),
-        });
-        if (res.ok) updated++;
-        else errors.push(`update HTTP ${res.status}`);
-      } catch (e) { errors.push(e.message); }
+    if (updateRows.length) {
+      const batch = updateRows.map(row => { const { created_at, ...patch } = row; return { id: existing.get(row.game_id), ...patch }; });
+      for (let i = 0; i < batch.length; i += 200) {
+        const chunk = batch.slice(i, i + 200);
+        try {
+          const res = await fetch(`${url}/rest/v1/shadow_picks?on_conflict=id`, {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+            body: JSON.stringify(chunk),
+          });
+          if (res.ok) updated += chunk.length;
+          else errors.push(`update HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`);
+        } catch (e) { errors.push(e.message); }
+      }
     }
 
     if (withdrawIds.length) {
