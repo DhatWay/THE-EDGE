@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261002-01';
+  const BUILD = 'orch-20261003-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -902,7 +902,9 @@ const EDGE_ORCHESTRATOR = (() => {
     } catch {}
     return fired.map(s => {
       const r = records[s.id] || {};
-      return { id: s.id, label: s.label, side: s.side, wins: r.wins || 0, losses: r.losses || 0 };
+      const n = (r.wins || 0) + (r.losses || 0);
+      return { id: s.id, label: s.label, side: s.side, wins: r.wins || 0, losses: r.losses || 0,
+               base: (n && r.mkt_sum) ? r.mkt_sum / n : undefined };
     });
   }
 
