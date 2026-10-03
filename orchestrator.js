@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261004-01';
+  const BUILD = 'orch-20261004-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -467,6 +467,9 @@ const EDGE_ORCHESTRATOR = (() => {
           log(`  ${persistResult.count || 0} new · ${persistResult.updated || 0} refreshed · ` +
               `${persistResult.withdrawn || 0} withdrawn · ${persistResult.locked || 0} locked (bet placed or started)`);
           summary.persisted = persistResult.count || 0;
+          summary.persist = { saved: persistResult.count || 0, refreshed: persistResult.updated || 0,
+                              locked: persistResult.locked || 0, failed: persistResult.failed || 0,
+                              error: (persistResult.errors || [])[0] || null };
         } else {
           log(`  persist failed: ${persistResult.status || ''} ${persistResult.reason || ''}`);
           summary.errors.push('Persist: ' + (persistResult.reason || 'unknown'));
@@ -1193,32 +1196,41 @@ const EDGE_ORCHESTRATOR = (() => {
     let inserted = 0, updated = 0, withdrawn = 0;
     const errors = [];
 
-    if (insertRows.length) {
-      try {
-        const res = await fetch(`${url}/rest/v1/shadow_picks`, {
-          method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-          body: JSON.stringify(insertRows),
-        });
-        if (res.ok) inserted = insertRows.length;
-        else errors.push(`insert HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`);
-      } catch (e) { errors.push(e.message); }
-    }
+    // One bad row used to sink the whole batch, silently: nothing was
+    // saved and the Picks page stayed empty. A failed batch is now
+    // retried row by row, so the good rows save and the first reason a
+    // row was refused is reported on the Matchups status line.
+    let failed = 0;
+    const postRows = async (list, preferExtra = '', query = '') => {
+      const send = async (chunk) => fetch(`${url}/rest/v1/shadow_picks${query}`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', Prefer: `${preferExtra}return=minimal` },
+        body: JSON.stringify(chunk),
+      });
+      let ok = 0;
+      for (let i = 0; i < list.length; i += 200) {
+        const chunk = list.slice(i, i + 200);
+        try {
+          const res = await send(chunk);
+          if (res.ok) { ok += chunk.length; continue; }
+          errors.push(`HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+        } catch (e) { errors.push(e.message); }
+        for (const row of chunk) {
+          try {
+            const r1 = await send([row]);
+            if (r1.ok) ok++;
+            else { failed++; if (errors.length < 3) errors.push(`row ${row.game_id}: HTTP ${r1.status} ${(await r1.text().catch(() => '')).slice(0, 200)}`); }
+          } catch (e) { failed++; }
+        }
+      }
+      return ok;
+    };
+
+    if (insertRows.length) inserted = await postRows(insertRows);
 
     if (updateRows.length) {
       const batch = updateRows.map(row => { const { created_at, ...patch } = row; return { id: existing.get(row.game_id), ...patch }; });
-      for (let i = 0; i < batch.length; i += 200) {
-        const chunk = batch.slice(i, i + 200);
-        try {
-          const res = await fetch(`${url}/rest/v1/shadow_picks?on_conflict=id`, {
-            method: 'POST',
-            headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
-            body: JSON.stringify(chunk),
-          });
-          if (res.ok) updated += chunk.length;
-          else errors.push(`update HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`);
-        } catch (e) { errors.push(e.message); }
-      }
+      updated = await postRows(batch, 'resolution=merge-duplicates,', '?on_conflict=id');
     }
 
     if (withdrawIds.length) {
@@ -1233,7 +1245,7 @@ const EDGE_ORCHESTRATOR = (() => {
     if (errors.length && !inserted && !updated && !withdrawn) {
       return { ok: false, reason: errors[0] };
     }
-    return { ok: true, count: inserted, updated, withdrawn, locked: lockedCount, errors };
+    return { ok: true, count: inserted, updated, withdrawn, locked: lockedCount, failed, errors };
   }
 
   // ============================================================
