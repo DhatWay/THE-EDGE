@@ -34,6 +34,7 @@
   <script src="situation-results.js"></script>
   <script src="trends-engine.js"></script>
   <script src="game-id-map.js"></script>
+  <script src="external-data.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
   <script src="backfill.js"></script>
@@ -1074,13 +1075,20 @@
         ['cover', 'Chance to cover', 'needs ratings and a spread'],
         ['rest', 'Rest days', 'schedule fetch (ESPN)'],
         ['injuries', 'Injury report', 'Build Rosters, then rerun'],
+        ['pitchers', 'Starting pitchers (MLB)', 'MLB Stats API — check Admin › Check Sources'],
+        ['goalies', 'Starting goalies (NHL)', 'needs the edge-relay function'],
+        ['college_sp', 'College SP+ ratings', 'needs the CollegeFootballData key in Admin'],
+        ['nfl_efficiency', 'NFL efficiency', 'needs the edge-relay function'],
       ];
       const byId = Object.fromEntries(allGames.map(g => [g.id, g]));
       const name = e => { const g = byId[e.game_id]; return g ? `${g.away_team} @ ${g.home_team}` : e.game_id; };
       let html = `<details class="audit"><summary>Data check · ${items.length} games · ${new Date(d.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</summary>`;
       checks.forEach(([k, label, fix]) => {
-        const missing = items.filter(e => !e.inputs[k]);
-        html += `<div class="audit-row"><b>${label}</b>: ${items.length - missing.length}/${items.length}` +
+        // Outside sources apply to one sport each; others show null.
+        const scope = items.filter(e => e.inputs[k] !== null && e.inputs[k] !== undefined);
+        if (!scope.length) return;
+        const missing = scope.filter(e => !e.inputs[k]);
+        html += `<div class="audit-row"><b>${label}</b>: ${scope.length - missing.length}/${scope.length}` +
           (missing.length ? ` · missing on ${missing.length} (${fix})<div class="audit-miss">${missing.slice(0, 12).map(e => escHtml(name(e))).join('<br>')}${missing.length > 12 ? '<br>…' : ''}</div>` : ' ✓') + `</div>`;
       });
       const thin = items.filter(e => (e.inputs.ratings_games || 0) < 4);
