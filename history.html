@@ -152,6 +152,13 @@
     .res.p { color: var(--text-dim); }
     .res.pending { color: var(--text-dim); font-size: 12px; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1px; }
     .pnl { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; }
+    .view-tabs { display: flex; gap: 6px; margin: 12px 0 8px; }
+    .view-tab { flex: 1; padding: 9px 4px; background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .view-tab.active { color: var(--gold); border-color: var(--gold); }
+    .grade-row { display: flex; gap: 10px; align-items: center; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); }
+    .grade-btn { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
     .pnl.pos { color: var(--green); }
     .pnl.neg { color: var(--red); }
     .pnl.neu { color: var(--text-dim); }
@@ -265,7 +272,7 @@
     </div>
 
     <div class="mode-split">
-      <div class="mode-cell math active" id="modeMath" onclick="setModeFilter('math_only')">
+      <div class="mode-cell math" id="modeMath" onclick="setModeFilter('math_only')">
         <div class="mode-lbl">Deterministic</div>
         <div class="mode-rec" id="mathRec">—</div>
         <div class="mode-sub" id="mathRoi">—</div>
@@ -307,6 +314,17 @@
           No data yet — pick history loads from Supabase
         </div>
       </div>
+    </div>
+
+    <div class="view-tabs">
+      <button class="view-tab active" data-view="picks" onclick="setHistView('picks')">Picks</button>
+      <button class="view-tab" data-view="slate" onclick="setHistView('slate')">Full Slate</button>
+      <button class="view-tab" data-view="lines" onclick="setHistView('lines')">My Lines</button>
+      <button class="view-tab" data-view="bets" onclick="setHistView('bets')">My Bets</button>
+    </div>
+    <div class="grade-row">
+      <button class="grade-btn" onclick="gradeNow()">↻ Grade finished games</button>
+      <span id="gradeStatus"></span>
     </div>
 
     <div class="filter-bar">
@@ -390,7 +408,13 @@
     }
 
     let currentFilter = 'all';
-    let currentMode = 'math_only';
+    // All modes by default: picks made in AI modes (assisted or lead)
+    // were hidden behind the math-only default, and AI-lead picks had
+    // no toggle at all. Tap Math or AI to narrow; tap again for all.
+    let currentMode = 'all';
+    let currentView = 'picks';
+    let allBets = [];
+    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED']);
     let sortKey = 'created_at';
     let sortDir = -1;
     let allPicks = [];
@@ -405,7 +429,8 @@
     });
 
     function setModeFilter(mode) {
-      currentMode = mode;
+      currentMode = currentMode === mode ? 'all' : mode;
+      mode = currentMode;
       document.getElementById('modeMath').classList.toggle('active', mode === 'math_only');
       document.getElementById('modeAi').classList.toggle('active', mode === 'ai_assisted');
       renderSummary();
@@ -453,6 +478,10 @@
         // Picks removed on the Picks page are gone from the record too.
         allPicks = (await fetchAllPicks(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc`, key))
           .filter(p => p.decision !== 'REMOVED');
+        try {
+          const bets = await fetchAllPicks(`${url}/rest/v1/bet_log?select=*&order=created_at.desc`, key);
+          allBets = betRows(bets, allPicks);
+        } catch (e) { allBets = []; }
       } catch (e) {
         logEdgeError('history.loadPicks', e);
         allPicks = [];
@@ -463,8 +492,70 @@
       renderTable();
     }
 
+    function modeOk(p) {
+      if (currentMode === 'all') return true;
+      if (currentMode === 'ai_assisted') return p.decision_mode === 'ai_assisted' || p.decision_mode === 'ai_lead';
+      return p.decision_mode === currentMode;
+    }
+
+    // The rows each view shows:
+    //   Picks      — the governor's bets (a value tier)
+    //   Full Slate — every game the pipeline rated, passes included
+    //   My Lines   — lines entered from other books
+    //   My Bets    — what you actually bet (both portfolios)
     function picksForMode() {
-      return allPicks.filter(p => p.decision_mode === currentMode);
+      if (currentView === 'bets') return allBets;
+      if (currentView === 'lines') return allPicks.filter(p => String(p.decision || '').startsWith('LINE_'));
+      const pipeline = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && modeOk(p));
+      if (currentView === 'slate') return pipeline;
+      return pipeline.filter(p => BET_TIERS.has(p.decision));
+    }
+
+    function setHistView(v) {
+      currentView = v;
+      document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+      renderSummary();
+      renderMonths();
+      renderTable();
+    }
+
+    async function gradeNow() {
+      const st = document.getElementById('gradeStatus');
+      if (!window.EDGE_SHADOW_GRADER || !EDGE_SHADOW_GRADER.autoGrade) { st.textContent = 'Grader not loaded — purge cache and reopen.'; return; }
+      st.textContent = 'Grading…';
+      try {
+        const r = await EDGE_SHADOW_GRADER.autoGrade({ force: true });
+        st.textContent = `Graded ${r.picks || 0} picks · ${r.bets || 0} bets`;
+        await loadPicks();
+      } catch (e) { st.textContent = 'Grading failed: ' + e.message; }
+    }
+
+    // Placed bets, both portfolios, shaped like picks for the table.
+    function betRows(bets, picks) {
+      const byGame = new Map(picks.map(p => [p.game_id, p]));
+      return bets.map(b => {
+        const p = byGame.get(b.game_id) || {};
+        const stake = Number(b.amount) || 0;
+        return {
+          id: 'bet-' + b.id,
+          game_id: b.game_id,
+          created_at: b.created_at,
+          commence_time: p.commence_time || b.created_at,
+          sport: b.sport || p.sport,
+          home_team: p.home_team || '', away_team: p.away_team || '',
+          side_team: b.pick_label || p.side_team || '',
+          direction: p.direction,
+          decision: (b.mode || 'sim') === 'real' ? 'REAL BET' : 'SIM BET',
+          decision_mode: p.decision_mode || 'bet',
+          confidence: b.confidence ?? p.confidence,
+          units: Number(b.units) || (stake && p.units) || 0,
+          market_spread: b.line !== '' && b.line != null ? Number(b.line) : p.market_spread,
+          result: b.result || null,
+          // P&L in units at your unit size, so the record reads the same.
+          pnl: b.pnl != null && stake ? Math.round((Number(b.pnl) / (stake / ((Number(b.units) || 1)))) * 100) / 100 : null,
+          _bet: b,
+        };
+      });
     }
 
     function renderSummary() {
