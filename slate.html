@@ -1215,7 +1215,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     .map(s => {
       const r = learnedSpots[s.id];
       const n = r ? (r.wins + r.losses) : 0;
-      return { id: s.id, label: s.label, side: s.side, wins: r ? r.wins : 0, losses: r ? r.losses : 0,
+      return { id: s.id, label: s.label, side: s.side, group: s.group, wins: r ? r.wins : 0, losses: r ? r.losses : 0,
                base: (r && n && r.mkt_sum) ? r.mkt_sum / n : undefined };
     });
 
@@ -1308,7 +1308,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
       ? lg(gov.components.market_home) + (gov.components.spots_term || 0) + (gov.components.context_term || 0) : null,
     home_result: Math.abs(coverHomeAll) < 0.01 ? 'P' : coverHomeAll > 0 ? 'W' : 'L',
     market_home: gov.components ? gov.components.market_home : 0.5,
-    spots: (prior.spots || []).map(s => ({ id: s.id, label: s.label, side: s.side })),
+    spots: (prior.spots || []).map(s => ({ id: s.id, label: s.label, side: s.side, group: s.group })),
+    game_id: g.game_id,
     // Did the line move toward the model's side between open and close?
     line_move: (g.open_spread != null && g.spread != null && g.open_spread !== g.spread)
       ? ((govSide === 'home') === (g.spread < g.open_spread) ? 'toward' : 'away')
@@ -1776,17 +1777,7 @@ function learnedFromOtherWindows(sport, windowKey) {
   const overlaps = (w) => { const [a, b] = String(w).split('|'); return !(b < from || a > to); };
   try {
     const t = EDGE_GOVERNOR.readCalibrationTable();
-    const pool = (runs) => {
-      const pooled = {};
-      Object.entries(runs || {}).forEach(([w, run]) => {
-        if (overlaps(w)) { out.skipped++; return; }
-        Object.entries(run).forEach(([id, v]) => {
-          const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, mkt_sum: 0, label: v.label };
-          p.wins += v.wins || 0; p.losses += v.losses || 0; p.mkt_sum += v.mkt_sum || 0;
-        });
-      });
-      return pooled;
-    };
+    const pool = (runs) => poolSpotRuns(runs, w => { if (overlaps(w)) { out.skipped++; return true; } return false; });
     out.spots = pool(t.spot_runs?.[sport]);
     out.spotsML = pool(t.spot_runs?.[`${sport}_ML`]);
     const br = Object.entries(t.blend_runs?.[sport] || t.blend_runs?.[`${sport}_ML`] || {}).filter(([w]) => !overlaps(w));
@@ -1871,6 +1862,28 @@ function buildWalkForwardAts(sport, games, cutoff) {
 
 // Each situation's record in this run, from the side it pointed to.
 // Saved per window and pooled, so rerunning a window replaces it.
+// Pool spot runs counting each game once, however many saved date
+// ranges contain it: { id: { wins, losses, mkt_sum, label, group } }.
+function poolSpotRuns(runs, skip) {
+  const merged = {};
+  Object.entries(runs || {}).forEach(([w, run]) => {
+    if (skip && skip(w)) return;
+    Object.entries(run || {}).forEach(([id, v]) => {
+      if (!v || !v.games) return;
+      const m = merged[id] = merged[id] || { label: v.label, group: v.group || null, games: {} };
+      Object.assign(m.games, v.games);
+    });
+  });
+  const out = {};
+  Object.entries(merged).forEach(([id, m]) => {
+    const g = Object.values(m.games);
+    const wins = g.reduce((s, x) => s + (x.w || 0), 0);
+    out[id] = { wins, losses: g.length - wins, mkt_sum: g.reduce((s, x) => s + (isFinite(x.m) ? x.m : 0.5), 0),
+                label: m.label, group: m.group, deduped: true };
+  });
+  return out;
+}
+
 function saveSpotRecords(sport, fromDate, toDate, rows) {
   const byKind = {};
   rows.forEach(r => {
@@ -1878,11 +1891,10 @@ function saveSpotRecords(sport, fromDate, toDate, rows) {
     const kind = r.bet_type === 'ML' ? `${sport}_ML` : sport;
     const rec = byKind[kind] = byKind[kind] || {};
     r.spots.forEach(s => {
-      const e = rec[s.id] = rec[s.id] || { wins: 0, losses: 0, mkt_sum: 0, label: s.label };
+      const e = rec[s.id] = rec[s.id] || { label: s.label, group: s.group || null, games: {} };
       const won = s.side === 'home' ? r.home_result === 'W' : r.home_result === 'L';
-      if (won) e.wins++; else e.losses++;
       const mh = isFinite(r.market_home) ? r.market_home : 0.5;
-      e.mkt_sum += s.side === 'home' ? mh : 1 - mh;
+      e.games[r.game_id] = { w: won ? 1 : 0, m: Math.round((s.side === 'home' ? mh : 1 - mh) * 1000) / 1000 };
     });
   });
   let count = 0;
@@ -1891,19 +1903,20 @@ function saveSpotRecords(sport, fromDate, toDate, rows) {
     t.spot_runs = t.spot_runs || {};
     t.spot_records = t.spot_records || {};
     Object.entries(byKind).forEach(([kind, rec]) => {
-      t.spot_runs[kind] = t.spot_runs[kind] || {};
-      t.spot_runs[kind][`${fromDate}|${toDate}`] = rec;
-      const pooled = {};
-      Object.values(t.spot_runs[kind]).forEach(run => Object.entries(run).forEach(([id, v]) => {
-        const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, mkt_sum: 0, label: v.label };
-        p.wins += v.wins || 0; p.losses += v.losses || 0; p.mkt_sum += v.mkt_sum || 0;
-      }));
-      t.spot_records[kind] = pooled;
+      // Runs saved before records were kept per game can't be
+      // de-duplicated, so they are dropped and rebuilt by new tests.
+      const runs = t.spot_runs[kind] = Object.fromEntries(
+        Object.entries(t.spot_runs[kind] || {}).filter(([, run]) => Object.values(run).every(v => v && v.games)));
+      runs[`${fromDate}|${toDate}`] = rec;
+      t.spot_records[kind] = poolSpotRuns(runs);
       count += Object.keys(rec).length;
     });
     EDGE_GOVERNOR.saveCalibrationTable(t);
   }
-  return { count, byKind };
+  // For the report: this run's records, each game once.
+  const shown = {};
+  Object.entries(byKind).forEach(([kind, rec]) => { shown[kind] = poolSpotRuns({ run: rec }); });
+  return { count, byKind: shown };
 }
 
 // How much of the ranking's disagreement with the market turned out
@@ -1977,18 +1990,26 @@ function renderSpotsAndBlend() {
       Object.entries(rec).sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses)).forEach(([id, v]) => {
         const n = v.wins + v.losses, rate = n ? v.wins / n : 0;
         const base = (n && v.mkt_sum) ? v.mkt_sum / n : 0.5;          // the market's chance for that side
-        const shrunk = (v.wins + (base + prior - 0.5) * k) / (n + k);
-        const pts = (shrunk - base) * 100;
+        // Same rule as live picks: a spot counts beyond its small starting
+        // belief only when its record clears luck (30+ games, and a 95%
+        // range that excludes the market's own chance for that side).
+        const priorRate = base + (prior - 0.5);
+        const proven = n >= 30 && (wilsonLow(v.wins, n, 2.576) > base || wilsonHigh(v.wins, n, 2.576) < base);
+        const shrunk = proven ? (v.wins + priorRate * k) / (n + k) : priorRate;
+        // Same per-spot limit as live picks (about 3.7 points).
+        const pts = Math.max(-3.7, Math.min(3.7, (shrunk - base) * 100));
+        const ctx = ['rest', 'travel', 'injury', 'weather'].includes(v.group);
         html += `<div class="row"><span class="name">${v.label || id}</span><span class="num neu">${n}</span>`
               + `<span class="num neu">${v.wins}-${v.losses}</span>`
               + `<span class="num ${rate >= 0.55 ? 'pos' : rate < 0.5 ? 'neg' : 'neu'}">${(rate * 100).toFixed(1)}%</span>`
-              + `<span class="num ${pts >= 0 ? 'pos' : 'neg'}">${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts</span></div>`;
+              + `<span class="num ${ctx ? 'neu' : pts >= 0 ? 'pos' : 'neg'}">${ctx ? 'in rest/injury step'
+                  : (pts >= 0 ? '+' : '') + pts.toFixed(1) + ' pts' + (proven ? ' · proven' : ' · not proven')}</span></div>`;
       });
     });
-    html += `<div class="note">Each spot's record from the side it pointed to, in games before each step only. `
-          + `"Counts as" is its pull on the chance in live picks: its record blended with ${k} games at ${((prior - 0.5) * 100).toFixed(0)} points over what the market gave that side `
-          + `(50% for spreads; the moneyline's own chance for moneylines, so backing favourites that win at their price earns nothing), `
-          + `so a new spot counts a little and its own results take over as they add up.</div></div>`;
+    html += `<div class="note">Each spot's record from the side it pointed to, every game counted once, using only games before each step. `
+          + `"Counts as" is its pull on the chance in live picks (at most about 3.7 points each). Until its record clears luck at 99% it counts only its small starting belief `
+          + `(${((prior - 0.5) * 100).toFixed(0)} point over what the market gave that side); once proven, its record takes over — and a proven losing record counts against its side. `
+          + `Related spots count once, and rest, travel and injury spots are left to the rest/injury step.</div></div>`;
   }
   return html;
 }
