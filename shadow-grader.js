@@ -71,6 +71,9 @@ const EDGE_SHADOW_GRADER = (() => {
   return {
     BUILD,
     run,
+    findFinal,
+    finalById,
+    autoGrade,
     gradeOne,
     probe,
   };
@@ -370,6 +373,58 @@ const EDGE_SHADOW_GRADER = (() => {
       } catch {}
     }
     return Array.from(seen.values());
+  }
+
+  // A finished game on ESPN for a pick-like { sport, home_team,
+  // away_team, commence_time }: { espn_id, home_score, away_score,
+  // completed } or null. Used by the bet grader too.
+  async function findFinal(p) {
+    if (!p || !p.sport || !p.commence_time) return null;
+    const events = await scoreboard(p.sport, espnDate(p.commence_time));
+    const ev = events.find(e => {
+      const c = e?.competitions?.[0]?.competitors || [];
+      const h = c.find(x => x.homeAway === 'home'), a = c.find(x => x.homeAway === 'away');
+      return h && a && sameTeam(p.home_team, h.team, p.sport) && sameTeam(p.away_team, a.team, p.sport);
+    });
+    if (!ev) return null;
+    const comp = ev.competitions[0];
+    const h = comp.competitors.find(x => x.homeAway === 'home'), a = comp.competitors.find(x => x.homeAway === 'away');
+    return {
+      espn_id: String(ev.id),
+      completed: !!(comp?.status?.type?.completed ?? ev?.status?.type?.completed),
+      home_score: Number(h.score), away_score: Number(a.score),
+    };
+  }
+
+  // The same, when ESPN's event id is already known.
+  async function finalById(sport, espnId) {
+    const path = ESPN_PATHS[sport];
+    if (!path || !espnId) return null;
+    try {
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/summary?event=${encodeURIComponent(espnId)}`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const comp = (await res.json())?.header?.competitions?.[0];
+      if (!comp) return null;
+      const h = comp.competitors?.find(x => x.homeAway === 'home'), a = comp.competitors?.find(x => x.homeAway === 'away');
+      if (!h || !a) return null;
+      return { espn_id: String(espnId), completed: !!comp?.status?.type?.completed,
+               home_score: Number(h.score), away_score: Number(a.score) };
+    } catch { return null; }
+  }
+
+  // Grade picks and placed bets without anyone pressing a button:
+  // pages call this on open, at most once per interval.
+  async function autoGrade(options = {}) {
+    const minutes = options.minIntervalMin ?? 30;
+    const last = Number(localStorage.getItem('edge_last_autograde') || 0);
+    if (!options.force && Date.now() - last < minutes * 60000) return { skipped: true, graded: 0 };
+    localStorage.setItem('edge_last_autograde', String(Date.now()));
+    let graded = 0;
+    try { const r = await run({}); graded += r?.graded || 0; } catch {}
+    if (window.EDGE_SIM_GRADER && localStorage.getItem('edge_sim_auto_grade') !== 'false') {
+      try { const r = await window.EDGE_SIM_GRADER.run({}); graded += r?.graded || 0; } catch {}
+    }
+    return { skipped: false, graded };
   }
 
   async function gradeFromEspn(picks, log) {
