@@ -637,6 +637,11 @@
     }
 
     loadPicks();
+    // Finished picks are graded when the page opens (at most every 30
+    // minutes), then the record refreshes.
+    if (window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.autoGrade) {
+      EDGE_SHADOW_GRADER.autoGrade().then(r => { if (r && r.graded) loadPicks(); }).catch(() => {});
+    }
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
