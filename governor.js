@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261002-01';
+  const BUILD = 'gov-20261003-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -233,10 +233,16 @@ const EDGE_GOVERNOR = (() => {
     if (!list.length) return { logit: 0, detail: [] };
     const detail = list.map(x => {
       const w = Number(x.wins) || 0, l = Number(x.losses) || 0;
-      const rate = (w + SPOT_PRIOR_RATE * SPOT_PRIOR_GAMES) / (w + l + SPOT_PRIOR_GAMES);
-      const edge = logit(rate);
+      // A spot's edge is measured against what the market already gave
+      // its side in the games it fired (base): a spot that fires on
+      // moneyline favourites wins often because favourites do, which the
+      // price already says. Spreads sit near 50%, so little changes there.
+      const base = isFinite(x.base) ? clamp(x.base, 0.05, 0.95) : 0.5;
+      const priorRate = sigmoid(logit(base) + logit(SPOT_PRIOR_RATE));
+      const rate = (w + priorRate * SPOT_PRIOR_GAMES) / (w + l + SPOT_PRIOR_GAMES);
+      const edge = logit(rate) - logit(base);
       return { id: x.id, label: x.label || x.id, side: x.side, record: `${w}-${l}`,
-               rate: round(rate, 4), edge: round(x.side === 'home' ? edge : -edge, 4) };
+               rate: round(rate, 4), base: round(base, 4), edge: round(x.side === 'home' ? edge : -edge, 4) };
     });
     const sum = detail.reduce((s, d) => s + d.edge, 0) / Math.sqrt(detail.length);
     return { logit: clamp(sum, -SPOT_CAP, SPOT_CAP), detail };
