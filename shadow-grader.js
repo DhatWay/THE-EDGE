@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20261001-01';
+  const BUILD = 'shadowgrade-20261003-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -51,6 +51,17 @@ const EDGE_SHADOW_GRADER = (() => {
   // Older than this and the pick is stale — either the game
   // was never played, or the score was never backfilled.
   const LOOKBACK_DAYS = 30;
+
+  // Declared above the module's return (a const after it is never
+  // initialised).
+  // A game is treated as finished this long after its start.
+  const FINISHED_AFTER_MS = 4 * 3600 * 1000;
+
+  const ESPN_PATHS = {
+    NFL: 'football/nfl', NCAAF: 'football/college-football',
+    NBA: 'basketball/nba', WNBA: 'basketball/wnba', NCAAB: 'basketball/mens-college-basketball',
+    MLB: 'baseball/mlb', NHL: 'hockey/nhl', MLS: 'soccer/usa.1',
+  };
 
   // P&L is settled at standard juice. shadow_picks does not
   // store the price each pick was taken at — when it does, this
@@ -176,7 +187,7 @@ const EDGE_SHADOW_GRADER = (() => {
 
     for (const pick of pending) {
       const espnId = idMap[pick.game_id];
-      if (!espnId) { unresolved++; continue; }
+      if (!espnId) { unresolved++; pick._noId = true; continue; }
 
       const score = scores[espnId];
       if (!score) { pendingNoScore++; continue; }
@@ -193,6 +204,29 @@ const EDGE_SHADOW_GRADER = (() => {
 
       updates.push(row);
       graded++;
+    }
+
+    // ── 4b. Straight from ESPN for anything left over ──
+    // A pick needed two things filled by other jobs: an id link
+    // (game_id_map) and a final score in historical_odds (Build ATS).
+    // When either was missing, a finished game sat ungraded. Finished
+    // games are now looked up on ESPN's scoreboard by date and team
+    // names, graded, and linked so the next lookup is direct.
+    const gradedIds = new Set(updates.map(u => u.id));
+    const leftover = pending.filter(p => !gradedIds.has(p.id)
+      && p.decision !== 'WITHDRAWN' && p.decision !== 'REMOVED'
+      && p.commence_time && (Date.now() - new Date(p.commence_time).getTime()) > FINISHED_AFTER_MS);
+    if (leftover.length) {
+      const direct = await gradeFromEspn(leftover, log);
+      direct.updates.forEach(u => {
+        if (!schema.actual_margin) delete u.actual_margin;
+        updates.push(u);
+      });
+      graded += direct.updates.length;
+      unresolved = Math.max(0, unresolved - direct.fromUnresolved);
+      pendingNoScore = Math.max(0, pendingNoScore - direct.fromAwaiting);
+      direct.notFound.forEach(p => log(`  still ungraded: ${p.sport} ${p.away_team} @ ${p.home_team} ` +
+        `(${new Date(p.commence_time).toLocaleDateString()}) — ${p.why}`));
     }
 
     log(`  ${graded} graded · ${unresolved} unresolved · ${pendingNoScore} awaiting score`);
@@ -296,6 +330,92 @@ const EDGE_SHADOW_GRADER = (() => {
   // ── LOAD PENDING ──
   // ============================================================
 
+
+  // Eastern calendar date (ESPN's scoreboard day) as YYYYMMDD.
+  function espnDate(iso) {
+    if (window.EDGE_TIME && EDGE_TIME.espnDate) return EDGE_TIME.espnDate(iso);
+    const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function norm(name, sport) {
+    if (window.EDGE_TEAMS && EDGE_TEAMS.normalize) return EDGE_TEAMS.normalize(name, sport);
+    return String(name || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  // Every way ESPN names a competitor, normalised.
+  function espnNames(team, sport) {
+    const t = team || {};
+    return [t.displayName, t.shortDisplayName, t.name, t.location, `${t.location || ''} ${t.name || ''}`, t.abbreviation]
+      .filter(Boolean).map(n => norm(n, sport));
+  }
+
+  function sameTeam(pickName, espnTeam, sport) {
+    const p = norm(pickName, sport);
+    if (!p) return false;
+    return espnNames(espnTeam, sport).some(n => n && (n === p || (n.length > 3 && (p.includes(n) || n.includes(p)))));
+  }
+
+  async function scoreboard(sport, compact) {
+    const path = ESPN_PATHS[sport];
+    if (!path) return [];
+    const group = sport === 'NCAAF' ? '&groups=80' : sport === 'NCAAB' ? '&groups=50' : '';
+    const seen = new Map();
+    for (const shape of [`${group}&limit=500`, group, '']) {
+      try {
+        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${compact}${shape}`, { cache: 'no-store' });
+        if (!res.ok) continue;
+        ((await res.json()).events || []).forEach(e => { if (e && e.id && !seen.has(e.id)) seen.set(e.id, e); });
+        if (seen.size) break;
+      } catch {}
+    }
+    return Array.from(seen.values());
+  }
+
+  async function gradeFromEspn(picks, log) {
+    const updates = [], notFound = [];
+    let fromUnresolved = 0, fromAwaiting = 0;
+    const byDay = {};
+    picks.forEach(p => {
+      const k = `${p.sport}|${espnDate(p.commence_time)}`;
+      (byDay[k] = byDay[k] || []).push(p);
+    });
+    for (const [k, list] of Object.entries(byDay)) {
+      const [sport, compact] = k.split('|');
+      // The day before too: a late start can sit on the previous ESPN date.
+      const events = [...await scoreboard(sport, compact)];
+      for (const p of list) {
+        let ev = events.find(e => {
+          const c = e?.competitions?.[0]?.competitors || [];
+          const h = c.find(x => x.homeAway === 'home'), a = c.find(x => x.homeAway === 'away');
+          return h && a && sameTeam(p.home_team, h.team, sport) && sameTeam(p.away_team, a.team, sport);
+        });
+        if (!ev) { notFound.push({ ...p, why: 'no matching game on ESPN that day' }); continue; }
+        const comp = ev.competitions[0];
+        const done = comp?.status?.type?.completed ?? ev?.status?.type?.completed;
+        if (!done) { notFound.push({ ...p, why: 'ESPN does not show it as final yet' }); continue; }
+        const h = comp.competitors.find(x => x.homeAway === 'home'), a = comp.competitors.find(x => x.homeAway === 'away');
+        const score = { home_score: Number(h.score), away_score: Number(a.score) };
+        if (!isFinite(score.home_score) || !isFinite(score.away_score)) { notFound.push({ ...p, why: 'no final score' }); continue; }
+        const outcome = gradeOne(p, score);
+        if (!outcome) { notFound.push({ ...p, why: 'pick has no line to grade against' }); continue; }
+        updates.push({ id: p.id, result: outcome.result, pnl: outcome.pnl, actual_margin: outcome.actual_margin });
+        if (p._noId) fromUnresolved++; else fromAwaiting++;
+        // Link the ids so later lookups go direct.
+        try {
+          if (window.EDGE_GAME_ID_MAP && EDGE_GAME_ID_MAP.link) {
+            await EDGE_GAME_ID_MAP.link(p.game_id, ev.id, {
+              sport, home_team: p.home_team, away_team: p.away_team,
+              commence_time: p.commence_time, confidence: 'grader',
+            });
+          }
+        } catch {}
+      }
+    }
+    if (updates.length) log(`  ${updates.length} graded straight from ESPN's final scores`);
+    return { updates, notFound, fromUnresolved, fromAwaiting };
+  }
+
   async function loadPending(since, maxRows, url, key) {
     const out = [];
     const pageSize = 1000;
@@ -305,7 +425,7 @@ const EDGE_SHADOW_GRADER = (() => {
         const res = await fetch(
           `${url}/rest/v1/shadow_picks?result=is.null` +
           `&created_at=gte.${since}` +
-          `&select=id,game_id,sport,direction,market_spread,units,decision,created_at,governor_snapshot` +
+          `&select=id,game_id,sport,direction,market_spread,units,decision,created_at,governor_snapshot,home_team,away_team,commence_time` +
           `&order=created_at.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
