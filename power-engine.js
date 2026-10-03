@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261002-01';
+  const BUILD = 'pe-20261003-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -141,7 +141,16 @@ const EDGE_POWER = (() => {
   // mostly noise: in Week 3 the projection alone made the Chargers
   // 4.7-point favorites at Buffalo against a market of Bills -7.
   const PROJECTION_FULL_GAMES = {
-    NFL: 8, NCAAF: 6, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10,
+    NFL: 10, NCAAF: 10, NBA: 20, WNBA: 12, NCAAB: 14, MLB: 40, NHL: 20, MLS: 10,
+  };
+
+  // How far the offense/defense projection may sit from the composite
+  // spread (in points, runs or goals). After a few games the projection
+  // overreacts to blowouts over weak teams — it put Toledo 52.8 points
+  // over Ball State — while the composite's schedule-adjusted ratings
+  // stay sane. Past this gap the projection is held at the edge.
+  const PROJECTION_GAP_CAP = {
+    NFL: 7, NCAAF: 10, NBA: 6, WNBA: 6, NCAAB: 8, MLB: 1, NHL: 0.8, MLS: 0.7,
   };
 
   const COMPOSITE_TO_SCALE = {
@@ -1023,12 +1032,18 @@ const EDGE_POWER = (() => {
       if (projection) modelSpread = projection.model_spread;
     }
 
-    const projectionSpread = modelSpread;
+    const rawProjectionSpread = modelSpread;
     const homePts = homeStats.composite_points;
     const awayPts = awayStats.composite_points;
     const compositeSpread = (homePts != null && awayPts != null)
       ? round(-((homePts - awayPts) + (core?.HOME_POINTS?.[sport] ?? 2)), 2)
       : null;
+    let projectionSpread = rawProjectionSpread;
+    if (projectionSpread != null && compositeSpread != null) {
+      const cap = PROJECTION_GAP_CAP[sport] ?? 7;
+      projectionSpread = round(clamp(projectionSpread, compositeSpread - cap, compositeSpread + cap), 2);
+      modelSpread = projectionSpread;
+    }
 
     // Early in a season the projection rests on a handful of games.
     // It is blended with the composite spread in proportion to the
@@ -1133,6 +1148,7 @@ const EDGE_POWER = (() => {
       projection,
 
       projection_spread: projectionSpread,
+      projection_spread_raw: rawProjectionSpread,
       composite_spread: compositeSpread,
       model_source: modelSource,
       fit: modelSource === 'fitted' ? { n: fit.n, rmse: fit.rmse, window: fit.window || null } : null,
