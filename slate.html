@@ -228,6 +228,16 @@
 
   <div class="log" id="log">Ready.</div>
 
+  <div class="controls">
+    <div class="ctrl">
+      <label>Season</label>
+      <select id="season" onchange="applySeason()"><option value="">Custom dates</option></select>
+    </div>
+    <div class="ctrl" style="flex:1 1 220px;">
+      <label><input type="checkbox" id="useLearned" /> Use what earlier tests learned</label>
+      <div class="note" style="padding:2px 0 0;">Applies the strength weight and spot records saved by tests of <b>other</b> date ranges — e.g. learn on the 2025 season, then test 2026 with this on. Never uses what this range itself produced.</div>
+    </div>
+  </div>
   <div class="note" id="dataHint"></div>
   <div id="output"></div>
 </main>
@@ -260,12 +270,58 @@ const out = h => { document.getElementById('output').innerHTML = h; };
   document.getElementById('to').value = to.toISOString().slice(0, 10);
   const sel = document.getElementById('sport');
   if (sel) { sel.addEventListener('change', fitDatesToData); fitDatesToData(); }
+  // Dates you type stay yours: a sport change no longer replaces them.
+  ['from', 'to'].forEach(id => document.getElementById(id)?.addEventListener('change', () => {
+    datesTouched = true;
+    const s = document.getElementById('season'); if (s) s.value = '';
+  }));
 })();
 
 // The window follows what's on file for the chosen sport: it ends
 // at the sport's last scored game and covers its length of season.
 // A sport out of season (or not caught up by Build ATS) used to land
 // on dates with no games, and looked broken.
+let datesTouched = false;
+
+// A sport's seasons, by the date its season starts (as seasonOf
+// labels them), for the Season picker.
+const SEASON_BOUNDS = {
+  NFL:   y => [`${y}-08-01`, `${y + 1}-02-20`],
+  NCAAF: y => [`${y}-08-15`, `${y + 1}-01-31`],
+  NBA:   y => [`${y}-10-01`, `${y + 1}-06-30`],
+  NCAAB: y => [`${y}-11-01`, `${y + 1}-04-15`],
+  NHL:   y => [`${y}-10-01`, `${y + 1}-06-30`],
+  MLB:   y => [`${y}-03-15`, `${y}-11-10`],
+  WNBA:  y => [`${y}-05-01`, `${y}-10-31`],
+  MLS:   y => [`${y}-02-15`, `${y}-12-15`],
+};
+
+function seasonLabel(sport, y) {
+  return ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL'].includes(sport) ? `${y}-${String(y + 1).slice(2)} season` : `${y} season`;
+}
+
+function fillSeasons(sport, firstDate, lastDate) {
+  const sel = document.getElementById('season');
+  if (!sel || !SEASON_BOUNDS[sport]) return;
+  const y0 = new Date(firstDate).getFullYear() - 1, y1 = new Date(lastDate).getFullYear();
+  let opts = '<option value="">Custom dates</option>';
+  for (let y = y1; y >= y0; y--) {
+    const [a, b] = SEASON_BOUNDS[sport](y);
+    if (new Date(b) < new Date(firstDate) || new Date(a) > new Date(lastDate)) continue;
+    opts += `<option value="${a}|${b}">${seasonLabel(sport, y)}</option>`;
+  }
+  sel.innerHTML = opts;
+}
+
+function applySeason() {
+  const v = document.getElementById('season')?.value;
+  if (!v) return;
+  const [a, b] = v.split('|');
+  document.getElementById('from').value = a;
+  document.getElementById('to').value = b;
+  datesTouched = true;
+}
+
 async function fitDatesToData() {
   const sport = document.getElementById('sport')?.value;
   const url = SB_URL(), key = SB_KEY();
@@ -280,9 +336,13 @@ async function fitDatesToData() {
     const spanDays = { NFL: 130, NCAAF: 110, NBA: 120, NCAAB: 120, NHL: 120, MLB: 90, WNBA: 90, MLS: 120 }[sport] || 90;
     const start = new Date(Math.max(new Date(first[0].game_date).getTime(), end.getTime() - spanDays * 86400000));
     const day = d => (window.EDGE_TIME ? EDGE_TIME.localDay(d) : d.toISOString().slice(0, 10));
-    document.getElementById('from').value = day(start);
-    document.getElementById('to').value = day(end);
-    if (hint) hint.textContent = `${sport} data on file: ${day(new Date(first[0].game_date))} to ${day(end)}.`;
+    fillSeasons(sport, first[0].game_date, last[0].game_date);
+    if (!datesTouched) {
+      document.getElementById('from').value = day(start);
+      document.getElementById('to').value = day(end);
+    }
+    if (hint) hint.textContent = `${sport} data on file: ${day(new Date(first[0].game_date))} to ${day(end)}. `
+      + `Pick a Season to test one season, or type your own dates.`;
   } catch {}
 }
 
@@ -343,6 +403,7 @@ let weeklyBoard = [];
 let fitReport = null;
 // Spot records and the strength-weight fit from this run.
 let spotReport = null, blendReport = null;
+let runInfo = {};
 // Situations are not part of the decision, so the backtest skips
 // them too — faster, and the same path as live picks.
 // Situations are scored every game, against ATS and head-to-head
@@ -436,6 +497,14 @@ async function run() {
   try {
     // ── 1. Load scored games ──
     log('Loading games with scores…');
+    const useLearned = !!document.getElementById('useLearned')?.checked;
+    runInfo = { sport, from: fromDate, to: toDate, useLearned };
+    learnedForRun = useLearned ? learnedFromOtherWindows(sport, `${fromDate}|${toDate}`) : null;
+    if (useLearned) {
+      log(learnedForRun.blend
+        ? `  using learned strength weight ${learnedForRun.blend.w_strength} and ${Object.keys(learnedForRun.spots).length + Object.keys(learnedForRun.spotsML).length} spot records from other date ranges`
+        : '  nothing learned from other date ranges yet — run a test on a different range first; defaults used');
+    }
     const games = await loadScoredGames(sport, fromDate, toDate, cap, url, key);
     games.forEach(x => { x.sport = sport; });
     log(`  ${games.length} games with final scores`);
@@ -1140,15 +1209,21 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
 
   // Spots reach the governor with no record — the default belief —
   // so the backtest never scores a game with records learned from it.
+  const learnedSpots = learnedForRun ? (isMl ? learnedForRun.spotsML : learnedForRun.spots) : {};
   prior.spots = (sitResult?.situations || [])
     .filter(s => s.side === 'home' || s.side === 'away')
-    .map(s => ({ id: s.id, label: s.label, side: s.side, wins: 0, losses: 0 }));
+    .map(s => {
+      const r = learnedSpots[s.id];
+      const n = r ? (r.wins + r.losses) : 0;
+      return { id: s.id, label: s.label, side: s.side, wins: r ? r.wins : 0, losses: r ? r.losses : 0,
+               base: (r && n && r.mkt_sum) ? r.mkt_sum / n : undefined };
+    });
 
   const allFamilies = families;
 
   // ── Governor: the default blend, never weights learned from these games ──
   let gov;
-  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { blend: EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 } }); }
+  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { blend: (learnedForRun && learnedForRun.blend) || EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 } }); }
   catch { return null; }
 
   // ── Physics ──
@@ -1232,6 +1307,7 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     blend_off: gov.components
       ? lg(gov.components.market_home) + (gov.components.spots_term || 0) + (gov.components.context_term || 0) : null,
     home_result: Math.abs(coverHomeAll) < 0.01 ? 'P' : coverHomeAll > 0 ? 'W' : 'L',
+    market_home: gov.components ? gov.components.market_home : 0.5,
     spots: (prior.spots || []).map(s => ({ id: s.id, label: s.label, side: s.side })),
     // Did the line move toward the model's side between open and close?
     line_move: (g.open_spread != null && g.spread != null && g.open_spread !== g.spread)
@@ -1518,6 +1594,9 @@ async function renderReport(sport) {
     are not wired into the backtest yet, so those rules are reported untestable.
   </div>`;
 
+  html = `<div class="note" style="font-size:12px;color:var(--text);">Tested ${runInfo.sport || ''} games from <b>${runInfo.from || '?'}</b> to <b>${runInfo.to || '?'}</b>`
+       + `${runInfo.useLearned ? ' · using what tests of other date ranges learned' : ' · default weights (nothing learned applied)'}. `
+       + `Picks below are listed newest first.</div>` + html;
   html += renderAccuracyAndCalibration();
   html += renderWeeklyBoard();
   out(html);
@@ -1688,6 +1767,38 @@ function fitRatingModel(sport, fromDate, toDate, rows) {
   return { ...report, saved: false, reason: 'governor.js is older than this page' };
 }
 
+let learnedForRun = null;
+
+// The strength weight and spot records saved by tests of other date
+// ranges for this sport — never this range's own — for a train-then-
+// test run. Returns { blend, spots, spotsML }.
+function learnedFromOtherWindows(sport, windowKey) {
+  const out = { blend: null, spots: {}, spotsML: {} };
+  try {
+    const t = EDGE_GOVERNOR.readCalibrationTable();
+    const pool = (runs) => {
+      const pooled = {};
+      Object.entries(runs || {}).forEach(([w, run]) => {
+        if (w === windowKey) return;
+        Object.entries(run).forEach(([id, v]) => {
+          const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, mkt_sum: 0, label: v.label };
+          p.wins += v.wins || 0; p.losses += v.losses || 0; p.mkt_sum += v.mkt_sum || 0;
+        });
+      });
+      return pooled;
+    };
+    out.spots = pool(t.spot_runs?.[sport]);
+    out.spotsML = pool(t.spot_runs?.[`${sport}_ML`]);
+    const br = Object.entries(t.blend_runs?.[sport] || t.blend_runs?.[`${sport}_ML`] || {}).filter(([w]) => w !== windowKey);
+    if (br.length) {
+      const games = br.reduce((s, [, v]) => s + (v.games || 0), 0);
+      const w = br.reduce((s, [, v]) => s + (v.w_strength || 0) * (v.games || 0), 0) / Math.max(1, games);
+      out.blend = { w_strength: Math.round(w * 1000) / 1000, w_spots: 1, source: 'learned elsewhere' };
+    }
+  } catch {}
+  return out;
+}
+
 function lg(p) { const q = Math.min(0.999, Math.max(0.001, p)); return Math.log(q / (1 - q)); }
 function sg(x) { return 1 / (1 + Math.exp(-x)); }
 
@@ -1767,9 +1878,11 @@ function saveSpotRecords(sport, fromDate, toDate, rows) {
     const kind = r.bet_type === 'ML' ? `${sport}_ML` : sport;
     const rec = byKind[kind] = byKind[kind] || {};
     r.spots.forEach(s => {
-      const e = rec[s.id] = rec[s.id] || { wins: 0, losses: 0, label: s.label };
+      const e = rec[s.id] = rec[s.id] || { wins: 0, losses: 0, mkt_sum: 0, label: s.label };
       const won = s.side === 'home' ? r.home_result === 'W' : r.home_result === 'L';
       if (won) e.wins++; else e.losses++;
+      const mh = isFinite(r.market_home) ? r.market_home : 0.5;
+      e.mkt_sum += s.side === 'home' ? mh : 1 - mh;
     });
   });
   let count = 0;
@@ -1782,8 +1895,8 @@ function saveSpotRecords(sport, fromDate, toDate, rows) {
       t.spot_runs[kind][`${fromDate}|${toDate}`] = rec;
       const pooled = {};
       Object.values(t.spot_runs[kind]).forEach(run => Object.entries(run).forEach(([id, v]) => {
-        const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, label: v.label };
-        p.wins += v.wins || 0; p.losses += v.losses || 0;
+        const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, mkt_sum: 0, label: v.label };
+        p.wins += v.wins || 0; p.losses += v.losses || 0; p.mkt_sum += v.mkt_sum || 0;
       }));
       t.spot_records[kind] = pooled;
       count += Object.keys(rec).length;
@@ -1832,7 +1945,14 @@ function fitAndSaveBlend(sport, rows) {
     const t = EDGE_GOVERNOR.readCalibrationTable();
     t.blend = t.blend || {};
     const kind = kindOf(usable[0]);
-    t.blend[kind] = { w_strength: wAll, w_spots: 1, games: usable.length, test: { fit: testFit, default: testDef }, at: new Date().toISOString() };
+    t.blend_runs = t.blend_runs || {};
+    t.blend_runs[kind] = t.blend_runs[kind] || {};
+    t.blend_runs[kind][`${runInfo.from}|${runInfo.to}`] = { w_strength: wAll, games: usable.length, at: new Date().toISOString() };
+    // Live picks use every saved range, weighted by games.
+    const runs = Object.values(t.blend_runs[kind]);
+    const g = runs.reduce((s, v) => s + (v.games || 0), 0);
+    const wPooled = runs.reduce((s, v) => s + (v.w_strength || 0) * (v.games || 0), 0) / Math.max(1, g);
+    t.blend[kind] = { w_strength: Math.round(wPooled * 1000) / 1000, w_spots: 1, games: g, test: { fit: testFit, default: testDef }, at: new Date().toISOString() };
     EDGE_GOVERNOR.saveCalibrationTable(t);
   }
   return { ...report, saved: true };
@@ -1856,8 +1976,9 @@ function renderSpotsAndBlend() {
     Object.values(spotReport.byKind).forEach(rec => {
       Object.entries(rec).sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses)).forEach(([id, v]) => {
         const n = v.wins + v.losses, rate = n ? v.wins / n : 0;
-        const shrunk = (v.wins + prior * k) / (n + k);
-        const pts = (shrunk - 0.5) * 100;
+        const base = (n && v.mkt_sum) ? v.mkt_sum / n : 0.5;          // the market's chance for that side
+        const shrunk = (v.wins + (base + prior - 0.5) * k) / (n + k);
+        const pts = (shrunk - base) * 100;
         html += `<div class="row"><span class="name">${v.label || id}</span><span class="num neu">${n}</span>`
               + `<span class="num neu">${v.wins}-${v.losses}</span>`
               + `<span class="num ${rate >= 0.55 ? 'pos' : rate < 0.5 ? 'neg' : 'neu'}">${(rate * 100).toFixed(1)}%</span>`
@@ -1865,7 +1986,8 @@ function renderSpotsAndBlend() {
       });
     });
     html += `<div class="note">Each spot's record from the side it pointed to, in games before each step only. `
-          + `"Counts as" is its pull on the chance to cover in live picks: its record blended with ${k} games at ${(prior * 100).toFixed(0)}%, `
+          + `"Counts as" is its pull on the chance in live picks: its record blended with ${k} games at ${((prior - 0.5) * 100).toFixed(0)} points over what the market gave that side `
+          + `(50% for spreads; the moneyline's own chance for moneylines, so backing favourites that win at their price earns nothing), `
           + `so a new spot counts a little and its own results take over as they add up.</div></div>`;
   }
   return html;
@@ -2004,6 +2126,11 @@ function renderProfit() {
 
 function renderAccuracyAndCalibration() {
   let html = renderProfit() + renderSpotsAndBlend() + renderFitReport();
+  if (evalRows.length && evalRows.every(x => x.bet_type === 'ML')) {
+    const sc = probabilityScores(evalRows);
+    if (sc) html += `<div class="section"><div class="sec-title">SKILL <em>VS THE MONEYLINE</em></div><div class="note">`
+      + `Brier ${sc.brier.toFixed(4)} vs the market's ${sc.brier_market.toFixed(4)} · skill ${(sc.skill * 100).toFixed(2)}% over ${sc.games} games — above 0 means its chances beat the moneyline's own.</div></div>`;
+  }
   const mlOnly = evalRows.length && evalRows.every(x => x.bet_type === 'ML');
   const acc = spreadAccuracy(evalRows);
   if (acc) {
