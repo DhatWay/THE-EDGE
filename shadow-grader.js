@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20261003-01';
+  const BUILD = 'shadowgrade-20261004-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -418,13 +418,19 @@ const EDGE_SHADOW_GRADER = (() => {
     const minutes = options.minIntervalMin ?? 30;
     const last = Number(localStorage.getItem('edge_last_autograde') || 0);
     if (!options.force && Date.now() - last < minutes * 60000) return { skipped: true, graded: 0 };
-    localStorage.setItem('edge_last_autograde', String(Date.now()));
-    let graded = 0;
-    try { const r = await run({}); graded += r?.graded || 0; } catch {}
+    let graded = 0, ran = false;
+    try { const r = await run({}); graded += r?.graded || 0; ran = !!(r && r.ok); } catch {}
+    // Only a run that worked starts the 30-minute wait.
+    if (ran) localStorage.setItem('edge_last_autograde', String(Date.now()));
+    // Placed bets in both portfolios (sim and real). Only sim was
+    // graded before, so real-money bets stayed pending.
+    let bets = 0;
     if (window.EDGE_SIM_GRADER && localStorage.getItem('edge_sim_auto_grade') !== 'false') {
-      try { const r = await window.EDGE_SIM_GRADER.run({}); graded += r?.graded || 0; } catch {}
+      for (const m of ['sim', 'real']) {
+        try { const r = await window.EDGE_SIM_GRADER.run({ mode: m }); bets += r?.graded || 0; } catch {}
+      }
     }
-    return { skipped: false, graded };
+    return { skipped: false, graded: graded + bets, picks: graded, bets };
   }
 
   async function gradeFromEspn(picks, log) {
