@@ -550,7 +550,10 @@
           { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
         );
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const picks = await res.json();
+        // Bets only: rated games without a bet tier (passes) and lines
+        // entered from other books are kept out of the dashboard record.
+        const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED']);
+        const picks = (await res.json()).filter(p => BET_TIERS.has(p.decision));
         renderDashboard(picks);
       } catch (e) {
         logEdgeError('index.loadDashboard', e);
