@@ -31,7 +31,7 @@
 
 const EDGE_SITUATIONS = (() => {
 
-  const BUILD = 'se-20260925-01';
+  const BUILD = 'se-20261003-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -39,6 +39,53 @@ const EDGE_SITUATIONS = (() => {
   // ============================================================
   // ── SITUATIONS LIBRARY ──
   // ============================================================
+
+  // Which sports each rule was written for, and which group of related
+  // rules it belongs to. Touchdown-sized lines, byes and Thursday games
+  // are football; ATS form, head-to-head and line moves need a points
+  // spread (not a ±1.5 run or puck line). Rules in one group describe
+  // the same thing and count once; rest, travel and injury groups are
+  // already priced in the rest/injury step.
+  const FOOTBALL = ['NFL', 'NCAAF'];
+  const POINT_SPREAD = ['NFL', 'NCAAF', 'NBA', 'WNBA', 'NCAAB'];
+  const RULE_META = {
+    elite_home_small_fav:             { group: 'power_line', sports: FOOTBALL },
+    elite_away_small_fav:             { group: 'power_line', sports: FOOTBALL },
+    weak_home_big_fav:                { group: 'power_line', sports: FOOTBALL },
+    weak_away_big_fav:                { group: 'power_line', sports: FOOTBALL },
+    elite_home_dog:                   { group: 'power_line', sports: FOOTBALL },
+    elite_away_dog:                   { group: 'power_line', sports: FOOTBALL },
+    power_gap_high:                   { group: 'power_line', sports: FOOTBALL },
+    top_off_vs_bottom_def_small_line: { group: 'power_line', sports: FOOTBALL },
+    elite_defense_home_dog:           { group: 'power_line', sports: FOOTBALL },
+    public_road_fav:                  { group: 'power_line', sports: FOOTBALL },
+    divisional_home_dog_6plus:        { group: 'divisional', sports: FOOTBALL },
+    hot_ats_team:                     { group: 'ats_form',   sports: POINT_SPREAD },
+    cold_ats_team_fade:               { group: 'ats_form',   sports: POINT_SPREAD },
+    both_teams_hot_ats:               { group: 'ats_form',   sports: POINT_SPREAD },
+    home_strong_home_ats:             { group: 'ats_form',   sports: POINT_SPREAD },
+    away_strong_road_ats:             { group: 'ats_form',   sports: POINT_SPREAD },
+    h2h_home_owns_series:             { group: 'h2h',        sports: POINT_SPREAD },
+    h2h_away_owns_series:             { group: 'h2h',        sports: POINT_SPREAD },
+    h2h_series_close:                 { group: 'h2h',        sports: POINT_SPREAD },
+    home_off_bye:                     { group: 'rest',       sports: FOOTBALL },
+    away_off_bye:                     { group: 'rest',       sports: FOOTBALL },
+    away_short_week:                  { group: 'rest',       sports: FOOTBALL },
+    rest_disparity_4plus:             { group: 'rest',       sports: FOOTBALL },
+    cross_country_travel:             { group: 'travel' },
+    timezone_shift_3plus:             { group: 'travel' },
+    rlm_against_home:                 { group: 'line_move',  sports: POINT_SPREAD },
+    rlm_against_away:                 { group: 'line_move',  sports: POINT_SPREAD },
+    line_moved_2plus_toward_home:     { group: 'line_move',  sports: POINT_SPREAD },
+    line_moved_2plus_toward_away:     { group: 'line_move',  sports: POINT_SPREAD },
+    home_qb_out:                      { group: 'injury',     sports: FOOTBALL },
+    away_qb_out:                      { group: 'injury',     sports: FOOTBALL },
+    net_injury_edge_3plus:            { group: 'injury' },
+    cold_weather_under:               { group: 'weather',    sports: FOOTBALL },
+    high_wind_under:                  { group: 'weather',    sports: FOOTBALL },
+    lost_last_week_by_14plus:         { group: 'prev_game',  sports: FOOTBALL },
+    won_last_week_by_14plus_fade:     { group: 'prev_game',  sports: FOOTBALL },
+  };
 
   const SITUATIONS = [
 
@@ -757,7 +804,11 @@ const EDGE_SITUATIONS = (() => {
       const fired = [];
       const untestable = [];
 
+      const sportOf = String(g.sport || g._sport || '').toUpperCase();
       for (const sit of SITUATIONS) {
+        // A rule only runs in the sports it was written for.
+        const meta = RULE_META[sit.id] || {};
+        if (meta.sports && sportOf && !meta.sports.includes(sportOf)) continue;
         if (!isTestable(sit, g, c)) {
           untestable.push(sit.id);
           continue;
@@ -781,6 +832,7 @@ const EDGE_SITUATIONS = (() => {
           side,
           weight,
           side_source: sit.side,
+          group: meta.group || sit.id,
           note: sit.note || null,
         });
 
