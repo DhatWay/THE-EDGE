@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261003-01';
+  const BUILD = 'pe-20261003-02';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -1000,7 +1000,7 @@ const EDGE_POWER = (() => {
   }
 
   async function computeGamePrior(game, options = {}) {
-    const { homeStats, awayStats, market, adjustments = {}, rest = {} } = options;
+    const { homeStats, awayStats, market, adjustments = {}, rest = {}, external = null } = options;
     if (!homeStats || !awayStats) throw new Error('computeGamePrior requires homeStats and awayStats');
 
     const sport = game._sport || game.sport;
@@ -1096,12 +1096,43 @@ const EDGE_POWER = (() => {
       if (isFinite(fitted)) { modelSpread = round(-fitted, 2); modelSource = 'fitted'; }
     }
 
+    // ── Outside data (external-data.js) ──
+    // College: SP+ is adjusted for opponents and starts each season from
+    // preseason priors, so it carries the ranking while teams have few
+    // games (75% share early, 40% from about week 9).
+    let extInfo = null;
+    const gMin = Math.min(Number(homeStats.games_played) || 0, Number(awayStats.games_played) || 0);
+    if (sport === 'NCAAF' && external?.sp && isFinite(external.sp.home?.rating) && isFinite(external.sp.away?.rating) && modelSpread != null) {
+      const w = clamp(0.75 - 0.04 * gMin, 0.4, 0.75);
+      const spSpread = -((external.sp.home.rating - external.sp.away.rating) + (core?.HOME_POINTS?.NCAAF ?? 2.8));
+      modelSpread = round((1 - w) * modelSpread + w * spSpread, 2);
+      extInfo = { sp: { home: external.sp.home, away: external.sp.away, spread: round(spSpread, 2), weight: round(w, 2) } };
+    }
+    // NFL: efficiency (EPA per play, both sides of the ball) — 30% share.
+    if (sport === 'NFL' && external?.eff && isFinite(external.eff.margin) && modelSpread != null) {
+      const w = 0.3;
+      const effSpread = -(external.eff.margin + (core?.HOME_POINTS?.NFL ?? 2.0));
+      modelSpread = round((1 - w) * modelSpread + w * effSpread, 2);
+      extInfo = { ...(extInfo || {}), eff: { ...external.eff, spread: round(effSpread, 2), weight: w } };
+    }
+    // MLB / NHL: tonight's starting pitcher or goalie against league level
+    // (runs or goals, home view; positive helps home).
+    let starterDelta = 0;
+    if (sport === 'MLB' && external?.mlb && isFinite(external.mlb.runs_home)) {
+      starterDelta = external.mlb.runs_home;
+      extInfo = { ...(extInfo || {}), pitchers: external.mlb };
+    }
+    if (sport === 'NHL' && external?.nhl && isFinite(external.nhl.goals_home)) {
+      starterDelta = external.nhl.goals_home;
+      extInfo = { ...(extInfo || {}), goalies: external.nhl };
+    }
+
     // Starting quarterback out or doubtful (home view: positive helps home).
     const qbPts = QB_OUT_POINTS[sport] || 0;
     const qbDelta = qbPts ? ((adjustments.qb_away_out ? qbPts : 0) - (adjustments.qb_home_out ? qbPts : 0)) : 0;
 
     const totalModelSpread = round(
-      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1) - qbDelta,
+      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1) - qbDelta - starterDelta,
       2
     );
 
@@ -1153,6 +1184,7 @@ const EDGE_POWER = (() => {
       model_source: modelSource,
       fit: modelSource === 'fitted' ? { n: fit.n, rmse: fit.rmse, window: fit.window || null } : null,
       qb: { home_out: !!adjustments.qb_home_out, away_out: !!adjustments.qb_away_out, points: qbDelta },
+      external: extInfo,
       rest_days: { home: rest.home ?? null, away: rest.away ?? null },
       projection_weight: projectionWeight != null ? round(projectionWeight, 2) : null,
 
