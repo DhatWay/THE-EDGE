@@ -1116,7 +1116,7 @@
       if (simBankroll)   simBankroll.value = get('edge_sim_bankroll', '10000');
       if (simUnitSize)   simUnitSize.value = get('edge_sim_unit_size', '100');
       if (simDailyCap)   simDailyCap.value = get('edge_sim_daily_cap', '500');
-      if (simAutoGrade)  simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') === 'true';
+      if (simAutoGrade)  simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') !== 'false';
 
       ['notifSteam','notifPick','notifCap','notifResult','notifVeto'].forEach(id => {
         const el = document.getElementById(id);
