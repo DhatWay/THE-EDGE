@@ -34,6 +34,7 @@
   <script src="situation-results.js"></script>
   <script src="trends-engine.js"></script>
   <script src="game-id-map.js"></script>
+  <script src="external-data.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
   <script src="backfill.js"></script>
@@ -989,6 +990,18 @@
       rows.push(['Ranking model', r.model_source === 'fitted'
         ? `fitted on ${r.fit?.n ?? '?'} games (miss ±${r.fit?.rmse != null ? Number(r.fit.rmse).toFixed(1) : '?'})`
         : (r.model_source === 'blend' ? 'hand-set blend (no fit saved yet)' : '—')]);
+      // Outside data that shaped the ranking.
+      const ex = r.external || {};
+      if (ex.sp) rows.push(['College SP+', `${ex.sp.home?.school || 'home'} ${ex.sp.home?.rating} vs ${ex.sp.away?.school || 'away'} ${ex.sp.away?.rating} → home ${ex.sp.spread > 0 ? '+' : ''}${ex.sp.spread} (${Math.round((ex.sp.weight || 0) * 100)}% of ranking)`]);
+      if (ex.eff) rows.push(['NFL efficiency (EPA/play)', `home off ${ex.eff.home?.off_epa} / def ${ex.eff.home?.def_epa} · away off ${ex.eff.away?.off_epa} / def ${ex.eff.away?.def_epa} → home ${ex.eff.spread > 0 ? '+' : ''}${ex.eff.spread} (${Math.round((ex.eff.weight || 0) * 100)}% of ranking)`]);
+      if (ex.pitchers) {
+        const pp = x => x ? `${x.name || '?'}${x.fip != null ? ' (FIP ' + x.fip + ')' : ''}` : 'not announced';
+        rows.push(['Starting pitchers', `${pp(ex.pitchers.away)} @ ${pp(ex.pitchers.home)} → ${ex.pitchers.runs_home >= 0 ? '+' : ''}${ex.pitchers.runs_home} runs to home`]);
+      }
+      if (ex.goalies) {
+        const gg = x => x ? `${x.name || '?'} (sv ${x.sv})${x.backup ? ' backup, back-to-back' : ''}` : 'unknown';
+        rows.push(['Goalies', `${gg(ex.goalies.away)} @ ${gg(ex.goalies.home)} → ${ex.goalies.goals_home >= 0 ? '+' : ''}${ex.goalies.goals_home} goals to home`]);
+      }
       if (r.qb && (r.qb.home_out || r.qb.away_out)) {
         rows.push(['QB out', `${r.qb.home_out ? (p.home_team || 'home') : ''}${r.qb.home_out && r.qb.away_out ? ' and ' : ''}${r.qb.away_out ? (p.away_team || 'away') : ''} (${r.qb.points > 0 ? '+' : ''}${r.qb.points} pts to home)`]);
       }
@@ -1007,6 +1020,11 @@
         rows.push(['Rest days (adjusts)', yn(inp.rest)]);
         rows.push(['Injury report (adjusts)', yn(inp.injuries)]);
         rows.push(['Calibration applied', inp.calibrated ? 'yes' : 'no table yet']);
+        const yn2 = v => v === null || v === undefined ? null : (v ? 'yes' : 'MISSING');
+        if (yn2(inp.pitchers)) rows.push(['Starting pitchers', yn2(inp.pitchers)]);
+        if (yn2(inp.goalies)) rows.push(['Starting goalies', yn2(inp.goalies)]);
+        if (yn2(inp.college_sp)) rows.push(['College SP+ ratings', yn2(inp.college_sp)]);
+        if (yn2(inp.nfl_efficiency)) rows.push(['NFL efficiency', yn2(inp.nfl_efficiency)]);
       } else {
         rows.push(['Inputs', 'not recorded — rerun the pipeline']);
       }
