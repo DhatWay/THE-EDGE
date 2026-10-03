@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261003-02';
+  const BUILD = 'orch-20261003-03';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -332,9 +332,20 @@ const EDGE_ORCHESTRATOR = (() => {
         let cover = null;
         const core = window.EDGE_RATING;
         const total = prior.total_model_spread ?? prior.model_spread;
+        // The model's own chance, moved by what the half-points between
+        // the consensus line and this one are worth (from the ranking's
+        // spread of outcomes) — not the ranking's chance alone.
         if (core && isFinite(total)) {
-          const c = core.coverProbability(-total, homeLine, prior.cover?.sigma ?? null, { sport: prior.sport });
-          if (c) cover = isHome ? c.home_cover : c.away_cover;
+          const consensusHome = isHome ? (g.home_spread ?? g.spread) : (g.away_spread != null ? -g.away_spread : g.spread);
+          const at = line => {
+            const c = core.coverProbability(-total, line, prior.cover?.sigma ?? null, { sport: prior.sport });
+            return c ? (isHome ? c.home_cover : c.away_cover) : null;
+          };
+          const cBest = at(homeLine), cCons = consensusHome != null ? at(consensusHome) : null;
+          const modelSide = isFinite(p.confidence) ? p.confidence / 100 : null;
+          if (modelSide != null && cBest != null && cCons != null) {
+            cover = Math.max(0.01, Math.min(0.99, modelSide + (cBest - cCons)));
+          }
         }
         const best = {
           point, home_line: homeLine,
@@ -906,9 +917,12 @@ const EDGE_ORCHESTRATOR = (() => {
       records = t?.spot_records?.[key] || {};
     } catch {}
     return fired.map(s => {
-      const r = records[s.id] || {};
+      // Only records rebuilt one-game-once by the current Slate Test;
+      // older ones counted overlapping tests twice and are ignored
+      // until that sport is tested again.
+      const r = (records[s.id] && records[s.id].deduped) ? records[s.id] : {};
       const n = (r.wins || 0) + (r.losses || 0);
-      return { id: s.id, label: s.label, side: s.side, wins: r.wins || 0, losses: r.losses || 0,
+      return { id: s.id, label: s.label, side: s.side, group: s.group || r.group || null, wins: r.wins || 0, losses: r.losses || 0,
                base: (n && r.mkt_sum) ? r.mkt_sum / n : undefined };
     });
   }
