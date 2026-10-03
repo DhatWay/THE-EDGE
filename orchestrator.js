@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261003-03';
+  const BUILD = 'orch-20261003-04';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -204,6 +204,18 @@ const EDGE_ORCHESTRATOR = (() => {
       }
 
       // ── Stage 4 · Priors ──
+      // ── Stage 3b · Outside data: starting pitchers, goalies, college
+      // SP+ and NFL efficiency. Each source is optional.
+      if (window.EDGE_EXTERNAL) {
+        log('Stage 3b · Outside data');
+        try {
+          const ext = await EDGE_EXTERNAL.loadForSlate(gameList, builtContext, log);
+          builtContext = builtContext || {};
+          builtContext.externalByGame = ext.byGame;
+          summary.stages.external = ext.status;
+        } catch (e) { log('  outside data failed: ' + e.message); }
+      }
+
       log('Stage 4/7 · Computing game priors');
       const priors = await buildPriors(gameList, powerIndex, builtContext, log);
       summary.stages.priors_built = priors.length;
@@ -312,6 +324,11 @@ const EDGE_ORCHESTRATOR = (() => {
           rest: ctx.restByTeam?.[`${sp}:${prior.home_team}`] != null && ctx.restByTeam?.[`${sp}:${prior.away_team}`] != null,
           injuries: !!ctx.injuriesByGame?.[p.game_id],
           calibrated: !!(p.governor_snapshot?.calibration?.applied),
+          // Outside data, where the sport uses it (null = not this sport).
+          pitchers: sp === 'MLB' ? !!prior.external?.pitchers : null,
+          goalies: sp === 'NHL' ? !!prior.external?.goalies : null,
+          college_sp: sp === 'NCAAF' ? !!prior.external?.sp : null,
+          nfl_efficiency: sp === 'NFL' ? !!prior.external?.eff : null,
         };
         if (p.governor_snapshot) p.governor_snapshot.inputs = inputs;
         p.inputs = inputs;
@@ -661,6 +678,7 @@ const EDGE_ORCHESTRATOR = (() => {
           awayStats: awayPower,
           league: powerIndex.league?.[sport] || null,
           adjustments: { qb_home_out: !!inj?.home_qb_out, qb_away_out: !!inj?.away_qb_out },
+          external: context?.externalByGame?.[game.id] || null,
           rest: {
             home: context?.restByTeam?.[`${sport}:${game.home_team}`] ?? null,
             away: context?.restByTeam?.[`${sport}:${game.away_team}`] ?? null,
