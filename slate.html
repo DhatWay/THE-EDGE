@@ -503,7 +503,7 @@ async function run() {
     if (useLearned) {
       log(learnedForRun.blend
         ? `  using learned strength weight ${learnedForRun.blend.w_strength} and ${Object.keys(learnedForRun.spots).length + Object.keys(learnedForRun.spotsML).length} spot records from other date ranges`
-        : '  nothing learned from other date ranges yet — run a test on a different range first; defaults used');
+        : '  nothing learned from date ranges that don\'t overlap this one — test an earlier season first; defaults used');
     }
     const games = await loadScoredGames(sport, fromDate, toDate, cap, url, key);
     games.forEach(x => { x.sport = sport; });
@@ -1582,16 +1582,11 @@ async function renderReport(sport) {
   }
 
   html += `<div class="footer-note">
-    <b>Known caveats.</b> ATS, head-to-head and coaching situations read
-    <code>team_ats</code>, <code>matchup_ats</code> and <code>coaching_ratings</code>, which are
-    computed over the full season window regardless of where the walk-forward is standing.
-    That is mild look-ahead for those families and slightly inflates their samples.
-    Fixing it properly means rebuilding those tables at every step, which is a second
-    walk-forward pass — noted, not yet done. Power, situations, rest and travel rules read
-    only games before the step cutoff, so they are clean. The situations family vote,
-    overall rating, rating floor, coaching adjustment, league baseline and season carryover
-    come from the same functions the live engine uses, so weights learned here transfer. Weather, injuries and travel context
-    are not wired into the backtest yet, so those rules are reported untestable.
+    <b>How this test is kept honest.</b> Ratings, ATS and head-to-head records, and every situation
+    are rebuilt at each step from games already played, so nothing is scored with results from after it.
+    With "Use what earlier tests learned" ticked, only date ranges that don't overlap this one are used.
+    Coaching ratings still come from the full table. Weather, injuries and travel aren't in the
+    backtest yet, so rules that need them are reported untestable.
   </div>`;
 
   html = `<div class="note" style="font-size:12px;color:var(--text);">Tested ${runInfo.sport || ''} games from <b>${runInfo.from || '?'}</b> to <b>${runInfo.to || '?'}</b>`
@@ -1773,13 +1768,18 @@ let learnedForRun = null;
 // ranges for this sport — never this range's own — for a train-then-
 // test run. Returns { blend, spots, spotsML }.
 function learnedFromOtherWindows(sport, windowKey) {
-  const out = { blend: null, spots: {}, spotsML: {} };
+  const out = { blend: null, spots: {}, spotsML: {}, skipped: 0 };
+  // Any saved range that shares even one day with this one is left
+  // out — learning from games you're about to be tested on would make
+  // the result look better than it is.
+  const [from, to] = String(windowKey).split('|');
+  const overlaps = (w) => { const [a, b] = String(w).split('|'); return !(b < from || a > to); };
   try {
     const t = EDGE_GOVERNOR.readCalibrationTable();
     const pool = (runs) => {
       const pooled = {};
       Object.entries(runs || {}).forEach(([w, run]) => {
-        if (w === windowKey) return;
+        if (overlaps(w)) { out.skipped++; return; }
         Object.entries(run).forEach(([id, v]) => {
           const p = pooled[id] = pooled[id] || { wins: 0, losses: 0, mkt_sum: 0, label: v.label };
           p.wins += v.wins || 0; p.losses += v.losses || 0; p.mkt_sum += v.mkt_sum || 0;
@@ -1789,7 +1789,7 @@ function learnedFromOtherWindows(sport, windowKey) {
     };
     out.spots = pool(t.spot_runs?.[sport]);
     out.spotsML = pool(t.spot_runs?.[`${sport}_ML`]);
-    const br = Object.entries(t.blend_runs?.[sport] || t.blend_runs?.[`${sport}_ML`] || {}).filter(([w]) => w !== windowKey);
+    const br = Object.entries(t.blend_runs?.[sport] || t.blend_runs?.[`${sport}_ML`] || {}).filter(([w]) => !overlaps(w));
     if (br.length) {
       const games = br.reduce((s, [, v]) => s + (v.games || 0), 0);
       const w = br.reduce((s, [, v]) => s + (v.w_strength || 0) * (v.games || 0), 0) / Math.max(1, games);
