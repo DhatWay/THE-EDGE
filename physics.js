@@ -428,6 +428,7 @@ const EDGE_PHYSICS = (() => {
           model_source: prior?.model_source ?? null,
           fit: prior?.fit ?? null,
           qb: prior?.qb ?? null,
+          external: prior?.external ?? null,
           rest_days: prior?.rest_days ?? null,
         },
       },
