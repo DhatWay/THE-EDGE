@@ -1354,6 +1354,11 @@
     updateBankrolls();
     updateModeIndicator();
     loadPicks();
+    // Finished picks and bets are graded when the page opens (at most
+    // every 30 minutes), then the list refreshes with the results.
+    if (window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.autoGrade) {
+      EDGE_SHADOW_GRADER.autoGrade().then(r => { if (r && r.graded) { loadPicks(); updateBankrolls(); } }).catch(() => {});
+    }
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
