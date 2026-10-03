@@ -37,6 +37,7 @@
   <script src="situations-engine.js"></script>
   <script src="backfill.js"></script>
   <script src="game-id-map.js"></script>
+  <script src="external-data.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
   <style>
@@ -533,6 +534,18 @@
     </div>
 
     <div class="section">
+      <div class="sec-title">COLLEGE FOOTBALL <em>DATA</em></div>
+      <div class="key-block">
+        <div class="key-lbl">API Key (free at collegefootballdata.com) — college SP+ ratings</div>
+        <div class="key-row">
+          <input type="password" class="key-input" id="cfbdKey" placeholder="CollegeFootballData key" />
+          <button class="key-save-btn" onclick="saveKey('edge_cfbd_api_key','cfbdKey')">SAVE</button>
+        </div>
+        <div class="key-saved" id="savedCfbdKey"></div>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="sec-title">ESPN <em>API</em></div>
       <div class="key-block">
         <div class="key-lbl">API Key (optional) <button class="key-test-btn" onclick="testESPN()">Test</button></div>
@@ -868,6 +881,13 @@
         } catch (e) {
           logEl.textContent += `✗ ${name}: blocked from the browser (${e.message}) — would need a relay\n`;
         }
+      }
+      // Through the app's own loaders: the relay (NHL, nflverse) and
+      // the CollegeFootballData key.
+      if (window.EDGE_EXTERNAL && EDGE_EXTERNAL.checkSources) {
+        logEl.textContent += '\nUsing the relay and your keys:\n';
+        try { (await EDGE_EXTERNAL.checkSources()).forEach(l => { logEl.textContent += l + '\n'; }); }
+        catch (e) { logEl.textContent += '✗ ' + e.message + '\n'; }
       }
       logEl.textContent += '\nCopy this and send it back.';
     }
@@ -1869,6 +1889,7 @@
         { key: 'edge_odds_api_key',       elId: 'savedOddsKey',       label: 'Key saved', inputId: 'oddsKey' },
         { key: 'edge_espn_api_key',       elId: 'savedESPNKey',       label: 'Key saved', inputId: 'espnKey' },
         { key: 'edge_claude_api_key',     elId: 'savedClaudeKey',     label: 'Key saved', inputId: 'claudeKey' },
+        { key: 'edge_cfbd_api_key',       elId: 'savedCfbdKey',       label: 'Key saved', inputId: 'cfbdKey' },
         { key: 'edge_sportsbook_api_key', elId: 'savedSportsbookKey', label: 'Key saved', inputId: 'sportsbookKey' },
       ];
       indicators.forEach(({ key, elId, label, inputId }) => {
