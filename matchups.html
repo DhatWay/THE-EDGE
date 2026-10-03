@@ -1007,9 +1007,13 @@
 
             <div class="score-block">
               ${statusCls === 'live'
-                ? `<div class="score live-score">—</div>`
+                ? (liveScores[game.id]
+                    ? `<div class="score live-score">${liveScores[game.id].away} – ${liveScores[game.id].home}</div><div class="game-time">${escHtml(liveScores[game.id].clock || 'LIVE')}</div>`
+                    : `<div class="score live-score">—</div>`)
                 : statusCls === 'final'
-                ? `<div class="score">FINAL</div>`
+                ? (liveScores[game.id]
+                    ? `<div class="score">${liveScores[game.id].away} – ${liveScores[game.id].home}</div><div class="game-time">FINAL</div>`
+                    : `<div class="score">FINAL</div>`)
                 : `<div class="vs-text">VS</div><div class="game-time">${status.text.split('·')[1]?.trim() || ''}</div>`
               }
             </div>
@@ -1452,11 +1456,84 @@
         const why = result.pass_reasons && Object.keys(result.pass_reasons).length
           ? ' · passed: ' + Object.entries(result.pass_reasons).map(([k, n]) => `${n} ${k}`).join(', ')
           : '';
-        statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games${why}`;
+        // What was saved for the Picks page, so a run that didn't reach
+        // it says so (and why) instead of looking like it worked.
+        const ps = result.persist;
+        const saved = ps ? ` · saved ${ps.saved} new, ${ps.refreshed} refreshed${ps.locked ? `, ${ps.locked} locked` : ''}` +
+          (ps.failed ? ` · ${ps.failed} NOT SAVED: ${ps.error || 'unknown'}` : '') : '';
+        statusEl.textContent = `✓ ${pickCount} pick${pickCount === 1 ? '' : 's'} from ${gamesToRun.length} ${scope} games${why}${saved}`;
         renderInputAudit();
       } finally {
         btn.disabled = false;
       }
+    }
+
+    // ── LIVE SCORES ──
+    // From ESPN's scoreboard (free, no odds credits), matched to the
+    // board by team names, refreshed every 60 seconds while any game is
+    // live and the page is open. Away score first, like the card.
+    const liveScores = {};
+    const SCORE_PATHS = {
+      NFL: 'football/nfl', NCAAF: 'football/college-football', NBA: 'basketball/nba', WNBA: 'basketball/wnba',
+      NCAAB: 'basketball/mens-college-basketball', MLB: 'baseball/mlb', NHL: 'hockey/nhl', MLS: 'soccer/usa.1',
+    };
+    function teamKey(name, sport) {
+      const plain = String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (window.EDGE_TEAMS && EDGE_TEAMS.normalize) return EDGE_TEAMS.normalize(plain, sport);
+      return plain.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    }
+    function sameTeamName(boardName, team, sport) {
+      const p = teamKey(boardName, sport);
+      return [team?.displayName, team?.shortDisplayName, `${team?.location || ''} ${team?.name || ''}`]
+        .filter(Boolean).map(n => teamKey(n, sport))
+        .some(n => n && (n === p || (n.length > 3 && (p.includes(n) || n.includes(p)))));
+    }
+    // ESPN files games under the Eastern calendar day.
+    function easternYmd(iso) {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .formatToParts(new Date(iso)).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+      return `${parts.year}${parts.month}${parts.day}`;
+    }
+
+    async function refreshLiveScores() {
+      const shown = allGames.filter(g => ['live', 'final'].includes(gameStatusLabel(g).cls));
+      if (!shown.length) return false;
+      const sports = [...new Set(shown.map(g => g._sport || g.sport))].filter(s => SCORE_PATHS[s]);
+      let changed = false;
+      for (const sport of sports) {
+        const days = [...new Set(shown.filter(g => (g._sport || g.sport) === sport)
+          .map(g => (window.EDGE_TIME ? EDGE_TIME.espnDate(g.commence_time) : easternYmd(g.commence_time))))];
+        for (const day of days) {
+          const group = sport === 'NCAAF' ? '&groups=80' : sport === 'NCAAB' ? '&groups=50' : '';
+          try {
+            const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${SCORE_PATHS[sport]}/scoreboard?dates=${day}${group}&limit=500`, { cache: 'no-store' });
+            if (!res.ok) continue;
+            const events = (await res.json()).events || [];
+            shown.filter(g => (g._sport || g.sport) === sport).forEach(g => {
+              const ev = events.find(e => {
+                const c = e?.competitions?.[0]?.competitors || [];
+                const h = c.find(x => x.homeAway === 'home'), a = c.find(x => x.homeAway === 'away');
+                return h && a && sameTeamName(g.home_team, h.team, sport) && sameTeamName(g.away_team, a.team, sport);
+              });
+              if (!ev) return;
+              const comp = ev.competitions[0];
+              const h = comp.competitors.find(x => x.homeAway === 'home'), a = comp.competitors.find(x => x.homeAway === 'away');
+              const next = { home: h.score ?? '0', away: a.score ?? '0',
+                             clock: comp.status?.type?.shortDetail || ev.status?.type?.shortDetail || '',
+                             state: comp.status?.type?.state || ev.status?.type?.state || '' };
+              const prev = liveScores[g.id];
+              if (!prev || prev.home !== next.home || prev.away !== next.away || prev.clock !== next.clock) { liveScores[g.id] = next; changed = true; }
+            });
+          } catch {}
+        }
+      }
+      if (changed) renderGames();
+      return true;
+    }
+    function scheduleLiveScores() {
+      const hasLive = allGames.some(g => gameStatusLabel(g).cls === 'live');
+      if (hasLive && navigator.onLine && document.visibilityState === 'visible') refreshLiveScores();
+      setTimeout(scheduleLiveScores, 60000);
     }
 
     function scheduleRefresh() {
@@ -1466,7 +1543,9 @@
       }
     }
 
-    fetchMatchups().then(scheduleRefresh);
+    fetchMatchups().then(() => { refreshLiveScores(); scheduleRefresh(); });
+    setTimeout(scheduleLiveScores, 60000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshLiveScores(); });
 
     window.addEventListener('online', () => { fetchMatchups({ force: true }); });
   </script>
