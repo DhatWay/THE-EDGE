@@ -154,6 +154,10 @@
     .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
 
     .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .view-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+    .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .view-tab.active { color: var(--gold); border-color: var(--gold); }
     .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
     .best-line b { color: var(--gold); }
     .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
@@ -370,6 +374,12 @@
     <div class="bankroll-note" id="bankrollNote" hidden>
       Bankroll isn't set — units are sized on a $1,000 bankroll with $50 units.
       Set your bankroll and unit size in Settings.
+    </div>
+
+    <div class="view-tabs">
+      <button class="view-tab active" data-view="picks" onclick="setView('picks')">Picks</button>
+      <button class="view-tab" data-view="slate" onclick="setView('slate')">Full Slate</button>
+      <button class="view-tab" data-view="lines" onclick="setView('lines')">My Lines</button>
     </div>
 
     <div class="picks-tools">
@@ -703,7 +713,33 @@
         : '—';
     }
 
+    // Three views of the same saved games:
+    //   Picks     — the governor's bets (a value tier)
+    //   Full Slate — every game the pipeline rated, best value first,
+    //                passes included, so you can make your own call
+    //   My Lines  — lines you entered from other books (＋ Line)
+    let currentView = 'picks';
+    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN']);
+    function isLineRow(p) { return String(p.decision || '').startsWith('LINE_'); }
+    function isPickRow(p) { return BET_TIERS.has(p.decision); }
+    function evOf(p) { const v = (p.governor_snapshot || {}).ev; return isFinite(v) ? v : -1; }
+
+    function setView(v) {
+      currentView = v;
+      document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+      const betAll = document.getElementById('betAllBtn');
+      if (betAll) betAll.hidden = v !== 'picks';
+      renderPicks();
+    }
+
+    function inView(picks) {
+      if (currentView === 'lines') return picks.filter(isLineRow);
+      if (currentView === 'slate') return picks.filter(p => !isLineRow(p)).slice().sort((a, b) => evOf(b) - evOf(a));
+      return picks.filter(isPickRow);
+    }
+
     function applyFilter(picks) {
+      picks = inView(picks);
       if (currentFilter === 'all') return picks;
       if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 60);
       if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 57);
@@ -770,11 +806,11 @@
         list.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">✓</div>
-            <div class="empty-title">${allPicks.length ? 'NO MATCHES' : 'NO PICKS YET'}</div>
+            <div class="empty-title">${allPicks.length ? (currentView === 'lines' ? 'NO LINES YET' : currentView === 'picks' ? 'NO PICKS' : 'NO MATCHES') : 'NO PICKS YET'}</div>
             <div class="empty-sub">
-              ${allPicks.length
-                ? 'No picks match current filter'
-                : 'Tap RUN to generate picks'}
+              ${currentView === 'lines' ? 'Add a book\'s line with ＋ Line on Matchups'
+                : currentView === 'picks' && allPicks.length ? 'No game cleared the value bar — see Full Slate for every game\'s rating'
+                : allPicks.length ? 'No picks match current filter' : 'Tap RUN to generate picks'}
             </div>
             ${!allPicks.length ? '<a href="matchups.html" class="go-btn">Go to Matchups →</a>' : ''}
           </div>`;
@@ -793,13 +829,15 @@
       const dir = p.direction === 'home' ? 'home' : 'away';
       const sideTeam = p.side_team || (dir === 'home' ? p.home_team : p.away_team) || '—';
 
-      const decisionTag = isVetoed ? 'VETOED'
+      const lineTier = isLineRow(p) ? String(p.decision).slice(5) : null;
+      const decisionTag = lineTier ? `LINE · ${lineTier === 'PASS' ? 'NO EDGE' : lineTier.replace('_', ' ')}`
+                        : isVetoed ? 'VETOED'
                         : p.decision === 'BET_2U' ? 'BET 2U'
                         : p.decision === 'BET_1U' ? 'BET 1U'
                         : p.decision === 'BET' ? (p.units >= 2 ? 'BET 2U' : 'BET 1U')
                         : p.decision === 'LEAN' ? 'LEAN'
                         : p.decision === 'CAPPED' ? 'CAPPED'
-                        : 'PASS';
+                        : 'NO EDGE';
 
       const tagCls = isVetoed ? 'vetoed'
                    : p.decision === 'BET_2U' ? 'bet2u'
