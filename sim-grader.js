@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20260926-01';
+  const BUILD = 'simgrade-20261003-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -191,6 +191,31 @@ const EDGE_SIM_GRADER = (() => {
     const scores = await loadScores(espnIds, url, key);
     log(`  ${Object.keys(scores).length} games have a final score`);
 
+    // ── 5b. Straight from ESPN for games still without a score ──
+    // Bets waited on the id link and on Build ATS for their final
+    // score. Each still-missing game is now looked up on ESPN, using
+    // the pick's teams and start time.
+    const missing = uniqueGameIds.filter(gid => !(idMap[gid] && scores[idMap[gid]]));
+    if (missing.length && window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.findFinal) {
+      const info = await loadPickInfo(missing, url, key);
+      let direct = 0;
+      for (const gid of missing) {
+        const p = info[gid];
+        const sport = byGame[gid][0].sport || p?.sport;
+        if (!p || !p.commence_time || Date.now() - new Date(p.commence_time).getTime() < 4 * 3600000) continue;
+        let fin = idMap[gid] ? await EDGE_SHADOW_GRADER.finalById(sport, idMap[gid]) : null;
+        if (!fin) fin = await EDGE_SHADOW_GRADER.findFinal({ ...p, sport });
+        if (!fin || !fin.completed || !isFinite(fin.home_score) || !isFinite(fin.away_score)) continue;
+        const eid = idMap[gid] || fin.espn_id;
+        idMap[gid] = eid;
+        scores[eid] = { home: p.home_team, away: p.away_team, home_score: fin.home_score, away_score: fin.away_score,
+                        spread: null, total: null };
+        direct++;
+        try { if (!info[gid]._linked && window.EDGE_GAME_ID_MAP?.link) await EDGE_GAME_ID_MAP.link(gid, fin.espn_id, { sport, home_team: p.home_team, away_team: p.away_team, commence_time: p.commence_time, confidence: 'grader' }); } catch {}
+      }
+      if (direct) log(`  ${direct} game${direct === 1 ? '' : 's'} scored straight from ESPN`);
+    }
+
     // ── 6. Grade each bet ──
     let graded = 0;
     let unresolved = 0;
@@ -291,6 +316,21 @@ const EDGE_SIM_GRADER = (() => {
   // ============================================================
   // ── LOAD PENDING ──
   // ============================================================
+
+  // Teams and start time for each game, from the pick it came from.
+  async function loadPickInfo(gameIds, url, key) {
+    const out = {};
+    for (let i = 0; i < gameIds.length; i += 100) {
+      const chunk = gameIds.slice(i, i + 100).map(id => `"${id}"`).join(',');
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?game_id=in.(${chunk})&select=game_id,sport,home_team,away_team,commence_time`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) continue;
+        (await res.json()).forEach(r => { if (!out[r.game_id]) out[r.game_id] = r; });
+      } catch {}
+    }
+    return out;
+  }
 
   async function loadPending(mode, since, url, key) {
     const out = [];
