@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261003-01';
+  const BUILD = 'orch-20261003-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -92,7 +92,7 @@ const EDGE_ORCHESTRATOR = (() => {
       persist = true,
       maxPicks = 25,
       minConfidence = 0,
-      grade = false,
+      grade = true,
     } = options;
 
     const startedAt = Date.now();
@@ -449,6 +449,11 @@ const EDGE_ORCHESTRATOR = (() => {
             summary.graded = g.graded || 0;
           } else {
             log(`  grader: ${g.error || 'unknown'}`);
+          }
+          // Placed bets too, unless switched off in Settings.
+          if (window.EDGE_SIM_GRADER && localStorage.getItem('edge_sim_auto_grade') !== 'false') {
+            const b = await window.EDGE_SIM_GRADER.run({ onProgress: log });
+            if (b && b.ok) summary.bets_graded = b.graded || 0;
           }
         } catch (e) {
           log('  grader threw: ' + e.message);
