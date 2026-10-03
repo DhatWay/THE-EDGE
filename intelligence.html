@@ -675,7 +675,8 @@
           fetch(`${url}/rest/v1/matchup_ats?select=*&order=meetings.desc&limit=500`, { headers }),
         ]);
 
-        allPicks   = picksRes.ok   ? await picksRes.json()   : [];
+        // Bets only (rated passes and entered lines are left out).
+        allPicks   = picksRes.ok   ? (await picksRes.json()).filter(p => ['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED'].includes(p.decision)) : [];
         allPower   = powerRes.ok   ? await powerRes.json()   : [];
         allWeights = weightsRes.ok ? await weightsRes.json() : [];
         allPlayers = playersRes.ok ? await playersRes.json() : [];
