@@ -692,13 +692,20 @@ async function run() {
     }
 
     // ── Calibration from this run ──
-    if (evalRows.some(r => r.bet_type !== 'ML')) {
+    // Calibration measures the chances the live setup gives — learned
+    // strength weight and spot records — so it is only saved from a run
+    // scored with them. A run on defaults would calibrate a different model.
+    const calibrateOk = !!(learnedForRun && learnedForRun.blend);
+    if (!calibrateOk && evalRows.length) {
+      log('  calibration not saved — tick "Use what earlier tests learned" (after testing an earlier season) so it measures the live setup');
+    }
+    if (calibrateOk && evalRows.some(r => r.bet_type !== 'ML')) {
       const saved = await writeBacktestCalibration(sport, fromDate, toDate, evalRows.filter(r => r.bet_type !== 'ML'));
       log(saved.ok
         ? `  calibration saved · ${saved.buckets} buckets from ${saved.games} games${saved.remote ? '' : ' (this device only)'}`
         : `  calibration not saved: ${saved.reason}`);
     }
-    if (evalRows.some(r => r.bet_type === 'ML')) {
+    if (calibrateOk && evalRows.some(r => r.bet_type === 'ML')) {
       const savedMl = await writeBacktestCalibration(`${sport}_ML`, fromDate, toDate, evalRows.filter(r => r.bet_type === 'ML'));
       log(savedMl.ok
         ? `  moneyline calibration saved · ${savedMl.buckets} bands from ${savedMl.games} games`
@@ -942,6 +949,27 @@ function buildPowerFromHistory(sport, history, coaching, seed, minHistory = MIN_
 
   if (games.length < minHistory) return null;
 
+  // Coaching, built from these games only (they all came before the
+  // step): each team's record in close games, pulled toward .500 by four
+  // games, scored the way the live coaching ratings are. The coaching
+  // table covers the whole season and would see the future.
+  const closeBy = (P && P.CLOSE_MARGIN) ? (P.CLOSE_MARGIN[sport] ?? P.CLOSE_MARGIN.DEFAULT ?? 5) : 5;
+  const closeRec = {};
+  games.forEach(g => {
+    if (Math.abs(g.homeScore - g.awayScore) > closeBy) return;
+    [[g.home, g.homeScore > g.awayScore], [g.away, g.awayScore > g.homeScore]].forEach(([t, won]) => {
+      const c = closeRec[t] = closeRec[t] || { games: 0, wins: 0 };
+      c.games++; if (won) c.wins++;
+    });
+  });
+  const coachFromHistory = name => {
+    const c = closeRec[name] || { games: 0, wins: 0 };
+    const pct = c.games ? c.wins / c.games : 0.5;
+    const shrunk = 0.5 + (pct - 0.5) * (c.games / (c.games + 4));
+    return { overall: Math.max(0, Math.min(100, Math.round((shrunk * 100 * 0.6 + 50 * 0.4) * 10) / 10)),
+             close_game_record: Math.round(shrunk * 1000) / 1000 };
+  };
+
   const glicko = R.rateGlicko(sport, games, seed ? { seed } : {});
   const massey = R.massey(sport, games);
   const colley = R.colley(games);
@@ -1008,7 +1036,7 @@ function buildPowerFromHistory(sport, history, coaching, seed, minHistory = MIN_
       : Math.round(((pyth * 100 * 0.45) + (offense * 0.20) + (defense * 0.20) + (mov * 0.15)) * 10) / 10;
 
     const coachKey = `${sport}:${name}`;
-    const coach = coaching[coachKey] || null;
+    const coach = coachFromHistory(name);
     const coachAdj = (coach && P?.coachAdjustmentPoints) ? P.coachAdjustmentPoints(sport, coach) : 0;
     coachAdjByTeam[name] = coachAdj;
 
@@ -1620,7 +1648,7 @@ async function renderReport(sport) {
     <b>How this test is kept honest.</b> Ratings, ATS and head-to-head records, and every situation
     are rebuilt at each step from games already played, so nothing is scored with results from after it.
     With "Use what earlier tests learned" ticked, only date ranges that don't overlap this one are used.
-    Coaching ratings still come from the full table. Starting pitchers, goalies, college SP+ and NFL
+    Coaching is rebuilt from close games before each step too. Starting pitchers, goalies, college SP+ and NFL
     efficiency are live-only (their past values aren't stored as of each game). Weather, injuries and travel aren't in the
     backtest yet, so rules that need them are reported untestable.
   </div>`;
