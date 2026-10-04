@@ -158,6 +158,7 @@
     .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
       font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
     .view-tab.active { color: var(--gold); border-color: var(--gold); }
+    .leans-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-dim); margin: 0 0 10px; }
     .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
     .best-line b { color: var(--gold); }
     .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
@@ -379,8 +380,10 @@
     <div class="view-tabs">
       <button class="view-tab active" data-view="picks" onclick="setView('picks')">Picks</button>
       <button class="view-tab" data-view="slate" onclick="setView('slate')">Full Slate</button>
+      <button class="view-tab" data-view="totals" onclick="setView('totals')">Totals</button>
       <button class="view-tab" data-view="lines" onclick="setView('lines')">My Lines</button>
     </div>
+    <label class="leans-toggle" id="leansToggle"><input type="checkbox" id="showLeans" onchange="toggleLeans(this.checked)" /> Show leans with picks</label>
 
     <div class="picks-tools">
       <button class="tool-btn" onclick="copyAllPicks()">⧉ Copy All</button>
@@ -719,9 +722,19 @@
     //                passes included, so you can make your own call
     //   My Lines  — lines you entered from other books (＋ Line)
     let currentView = 'picks';
-    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN']);
+    // Leans live in Full Slate (and Totals) unless you choose to see them
+    // with picks — the Picks tab is 1U and 2U by default.
+    let showLeans = localStorage.getItem('edge_picks_show_leans') === 'true';
+    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'TOTAL_2U', 'TOTAL_1U']);
+    const LEAN_TIERS = new Set(['LEAN', 'TOTAL_LEAN']);
     function isLineRow(p) { return String(p.decision || '').startsWith('LINE_'); }
-    function isPickRow(p) { return BET_TIERS.has(p.decision); }
+    function isTotalRow(p) { return String(p.decision || '').startsWith('TOTAL_'); }
+    function isPickRow(p) { return BET_TIERS.has(p.decision) || (showLeans && LEAN_TIERS.has(p.decision)); }
+    function toggleLeans(on) {
+      showLeans = !!on;
+      localStorage.setItem('edge_picks_show_leans', showLeans ? 'true' : 'false');
+      renderPicks();
+    }
     function evOf(p) { const v = (p.governor_snapshot || {}).ev; return isFinite(v) ? v : -1; }
 
     function setView(v) {
@@ -729,12 +742,15 @@
       document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
       const betAll = document.getElementById('betAllBtn');
       if (betAll) betAll.hidden = v !== 'picks';
+      const lt = document.getElementById('leansToggle');
+      if (lt) lt.hidden = v !== 'picks';
       renderPicks();
     }
 
     function inView(picks) {
       if (currentView === 'lines') return picks.filter(isLineRow);
-      if (currentView === 'slate') return picks.filter(p => !isLineRow(p)).slice().sort((a, b) => evOf(b) - evOf(a));
+      if (currentView === 'totals') return picks.filter(isTotalRow).slice().sort((a, b) => evOf(b) - evOf(a));
+      if (currentView === 'slate') return picks.filter(p => !isLineRow(p) && !isTotalRow(p)).slice().sort((a, b) => evOf(b) - evOf(a));
       return picks.filter(isPickRow);
     }
 
@@ -830,7 +846,9 @@
       const sideTeam = p.side_team || (dir === 'home' ? p.home_team : p.away_team) || '—';
 
       const lineTier = isLineRow(p) ? String(p.decision).slice(5) : null;
-      const decisionTag = lineTier ? `LINE · ${lineTier === 'PASS' ? 'NO EDGE' : lineTier.replace('_', ' ')}`
+      const totalTier = isTotalRow(p) ? String(p.decision).slice(6) : null;
+      const decisionTag = totalTier ? `TOTAL · ${totalTier === 'PASS' ? 'NO EDGE' : totalTier}`
+                        : lineTier ? `LINE · ${lineTier === 'PASS' ? 'NO EDGE' : lineTier.replace('_', ' ')}`
                         : isVetoed ? 'VETOED'
                         : p.decision === 'BET_2U' ? 'BET 2U'
                         : p.decision === 'BET_1U' ? 'BET 1U'
@@ -944,10 +962,12 @@
                 <div class="metric-lbl">Units</div>
               </div>
               <div class="metric-cell">
-                <div class="metric-val">${(p.governor_snapshot || {}).bet_type === 'ML'
+                <div class="metric-val">${(p.governor_snapshot || {}).bet_type === 'TOTAL'
+                  ? ((p.governor_snapshot.line ?? p.market_total) ?? '—')
+                  : (p.governor_snapshot || {}).bet_type === 'ML'
                   ? ((p.governor_snapshot.price > 0 ? '+' : '') + (p.governor_snapshot.price ?? '—'))
                   : (p.market_spread !== null && p.market_spread !== undefined ? (p.market_spread > 0 ? '+' : '') + p.market_spread : '—')}</div>
-                <div class="metric-lbl">${(p.governor_snapshot || {}).bet_type === 'ML' ? 'Moneyline' : 'Spread'}</div>
+                <div class="metric-lbl">${(p.governor_snapshot || {}).bet_type === 'TOTAL' ? 'Total' : (p.governor_snapshot || {}).bet_type === 'ML' ? 'Moneyline' : 'Spread'}</div>
               </div>
             </div>
 
@@ -1094,7 +1114,28 @@
         `${same ? ' · same as consensus' : ''}</div>`;
     }
 
+    // Totals analytics: how the total was built.
+    function totalAnalytics(p) {
+      const g = p.governor_snapshot || {};
+      const pct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+      const rows = [
+        ['Market total', g.market_total ?? g.line ?? '—'],
+        ['Model projected total', g.model_total ?? '—'],
+        ['Weather (outdoor football)', g.weather_adj ? `${g.weather_adj} pts` : 'none'],
+        ['Weight on the model', `${g.weight ?? '—'} (${g.weight_source === 'fitted' ? 'learned' : 'default'}) × ${g.certainty ?? 1} for games played`],
+        ['Blended total', g.mu ?? '—'],
+        [`Chance it goes ${p.direction}`, p.confidence != null ? Number(p.confidence).toFixed(1) + '%' : '—'],
+        ['Price · break-even', `${g.price ?? '—'} · ${pct(g.break_even)}`],
+        ['Expected value per $1', g.ev != null ? (g.ev >= 0 ? '+' : '') + '$' + Number(g.ev).toFixed(3) : '—'],
+      ];
+      if (g.custom_line) rows.unshift(['Book', `${g.custom_line.book} · ${p.direction} ${g.custom_line.line} (${g.custom_line.price})`]);
+      const esc2 = v => String(v).replace(/[<>&]/g, '');
+      return `<details class="analytics"><summary>Analytics</summary><div class="analytics-body">` +
+        rows.map(([k, v]) => `<div class="row"><span>${esc2(k)}</span><span>${esc2(v)}</span></div>`).join('') + `</div></details>`;
+    }
+
     function buildAnalytics(p) {
+      if ((p.governor_snapshot || {}).bet_type === 'TOTAL') return totalAnalytics(p);
       const a = pickAnalytics(p);
       const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       const rows = a.rows.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
@@ -1108,6 +1149,16 @@
     }
 
     function pickText(p) {
+      const tg = p.governor_snapshot || {};
+      if (tg.bet_type === 'TOTAL') {
+        const when = p.commence_time ? new Date(p.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        return [
+          `${p.sport || ''} · ${p.away_team || 'Away'} @ ${p.home_team || 'Home'} · ${when}`,
+          `PICK: ${p.side_team || p.direction} (${p.decision})${tg.custom_line ? ' at ' + tg.custom_line.book : ''}`,
+          `Market total: ${tg.market_total ?? tg.line} · model: ${tg.model_total ?? '—'} · blended: ${tg.mu ?? '—'}`,
+          `Chance: ${p.confidence}% · price ${tg.price} · break-even ${tg.break_even != null ? (tg.break_even * 100).toFixed(1) + '%' : '—'} · EV ${tg.ev}`,
+        ].join('\n');
+      }
       const a = pickAnalytics(p);
       const when = p.commence_time ? new Date(p.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
       const lines = [
@@ -1410,6 +1461,7 @@
     setPortfolio(portfolio);
     updateBankrolls();
     updateModeIndicator();
+    { const sl = document.getElementById('showLeans'); if (sl) sl.checked = showLeans; }
     loadPicks();
     // Finished picks and bets are graded when the page opens (at most
     // every 30 minutes), then the list refreshes with the results.
