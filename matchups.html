@@ -1157,8 +1157,10 @@
         <div class="prop-row"><label>Book</label><input id="lb-${gameId}" placeholder="e.g. Bet365, local app" /></div>
         <div class="prop-row"><label>Side</label><select id="ls-${gameId}">
           <option value="home">${escHtml(g.home_team || 'Home')}</option>
-          <option value="away">${escHtml(g.away_team || 'Away')}</option></select></div>
-        <div class="prop-row"><label>Their line (that side)</label><input id="ll-${gameId}" type="number" step="0.5" inputmode="decimal" placeholder="+24.5" /></div>
+          <option value="away">${escHtml(g.away_team || 'Away')}</option>
+          <option value="over">Over (total)</option>
+          <option value="under">Under (total)</option></select></div>
+        <div class="prop-row"><label>Their line (spread for a side, total for over/under)</label><input id="ll-${gameId}" type="number" step="0.5" inputmode="decimal" placeholder="+24.5" /></div>
         <div class="prop-row"><label>Price</label><input id="lp-${gameId}" type="number" step="1" inputmode="numeric" value="-110" /></div>
         <button class="game-btn primary" onclick="analyzeLine('${gameId}')">Analyze</button>
         <div class="prop-result" id="lr-${gameId}"></div>`;
@@ -1213,6 +1215,22 @@
       return { sport, homeLine, pSide, mSide, be, ev, tier: tier ? tier[0] : 'PASS', units: tier ? tier[2] : 0 };
     }
 
+    // A total from any book: the pipeline's blended total for the game
+    // (market total moved toward the model), priced at their number.
+    function priceTotalLine(e, side, line, price) {
+      const core = window.EDGE_RATING;
+      const t = e && e.total;
+      if (!core || !core.totalProbability || !t || !isFinite(t.mu)) return { error: 'Run the pipeline first — this game has no total rating yet.' };
+      const m = core.totalProbability(t.mu, line, t.sd), k = core.totalProbability(t.market_total, line, t.sd);
+      if (!m || !k) return { error: 'Could not price that total.' };
+      const pSide = side === 'over' ? m.over : m.under, mSide = side === 'over' ? k.over : k.under;
+      const dec = price > 0 ? 1 + price / 100 : 1 + 100 / Math.abs(price);
+      const be = 1 / dec, ev = pSide * (dec - 1) - (1 - pSide);
+      const tier = LINE_TIERS.find(([, th]) => ev >= th) || null;
+      return { sport: e.sport, isTotal: true, homeLine: null, totalLine: line, pSide, mSide, be, ev,
+               tier: tier ? tier[0] : 'PASS', units: tier ? tier[2] : 0 };
+    }
+
     let lineCache = {};
     function analyzeLine(gameId) {
       const g = allGames.find(x => x.id === gameId) || {};
@@ -1223,14 +1241,14 @@
       const price = parseFloat(document.getElementById('lp-' + gameId).value);
       const out = document.getElementById('lr-' + gameId);
       if (!isFinite(line) || !isFinite(price) || price === 0 || Math.abs(price) < 100) { out.textContent = 'Enter the line and an American price (like -110 or +105).'; return; }
-      const r = priceLine(e, g, side, line, price);
+      const r = (side === 'over' || side === 'under') ? priceTotalLine(e, side, line, price) : priceLine(e, g, side, line, price);
       if (r.error) { out.textContent = r.error; return; }
-      const team = side === 'home' ? g.home_team : g.away_team;
+      const team = side === 'over' ? 'Over' : side === 'under' ? 'Under' : side === 'home' ? g.home_team : g.away_team;
       const pct = v => (v * 100).toFixed(1) + '%';
       lineCache[gameId] = { ...r, book, side, line, price, team };
       out.innerHTML = `
-        <div><b>${escHtml(team)} ${line > 0 ? '+' : ''}${line} (${price > 0 ? '+' : ''}${price}) at ${escHtml(book)}</b></div>
-        <div>Model's chance to cover there: <b>${pct(r.pSide)}</b> · market's: ${pct(r.mSide)}</div>
+        <div><b>${escHtml(team)} ${r.isTotal ? line : (line > 0 ? '+' : '') + line} (${price > 0 ? '+' : ''}${price}) at ${escHtml(book)}</b></div>
+        <div>Model's chance ${r.isTotal ? 'it goes ' + side : 'to cover'} there: <b>${pct(r.pSide)}</b> · market's: ${pct(r.mSide)}</div>
         <div>Break-even at that price: ${pct(r.be)} · value per $1: ${r.ev >= 0 ? '+' : ''}$${r.ev.toFixed(3)}</div>
         <div>Verdict: <b>${r.tier === 'PASS' ? 'no edge' : r.tier === 'LEAN' ? 'lean' : r.tier + ' value'}</b></div>
         <button class="game-btn" onclick="saveLine('${gameId}')">Save line</button>`;
@@ -1250,13 +1268,15 @@
         decision_mode: 'manual_line',
         decision: 'LINE_' + r.tier,
         direction: r.side,
-        side_team: r.team,
+        side_team: r.isTotal ? `${r.team} ${r.line}` : r.team,
         confidence: Math.round(r.pSide * 1000) / 10,
         edge: Math.round((r.pSide - r.be) * 10000) / 10000,
         units: r.units,
-        market_spread: r.homeLine,
+        market_spread: r.isTotal ? null : r.homeLine,
+        ...(r.isTotal ? { market_total: r.totalLine } : {}),
         governor_snapshot: {
-          bet_type: 'SPREAD', price: r.price, ev: Math.round(r.ev * 10000) / 10000, break_even: Math.round(r.be * 10000) / 10000,
+          bet_type: r.isTotal ? 'TOTAL' : 'SPREAD', ...(r.isTotal ? { line: r.totalLine, market_total: r.totalLine } : {}),
+          price: r.price, ev: Math.round(r.ev * 10000) / 10000, break_even: Math.round(r.be * 10000) / 10000,
           custom_line: { book: r.book, side: r.side, line: r.line, price: r.price },
           model_at_line: r.pSide, market_at_line: r.mSide,
         },
