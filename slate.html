@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="icon-192.png" />
  <script src="edge-time.js"></script>
  <script src="power-engine.js"></script>
+<script src="prop-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
   <script src="physics.js"></script>
@@ -222,6 +223,7 @@
     </div>
     <button class="btn" id="runBtn" onclick="run()">▶ Run Test</button>
     <button class="btn" id="copyBtn" onclick="copyReport()">⧉ Copy Report</button>
+    <button class="btn" id="propBtn" onclick="runPropCheck()">▶ Prop Check</button>
     <button class="btn secondary" onclick="clearResults()">Clear</button>
     <button class="btn secondary" onclick="clearSituationResults()">Purge situation_results</button>
   </div>
@@ -240,6 +242,7 @@
   </div>
   <div class="note" id="dataHint"></div>
   <div id="output"></div>
+  <div id="propOut"></div>
 </main>
 
 <script>
@@ -403,6 +406,8 @@ let weeklyBoard = [];
 let fitReport = null;
 // Spot records and the strength-weight fit from this run.
 let spotReport = null, blendReport = null;
+// Totals backtest from this run.
+let totalsReport = null;
 let runInfo = {};
 // Situations are not part of the decision, so the backtest skips
 // them too — faster, and the same path as live picks.
@@ -692,6 +697,21 @@ async function run() {
       log(saved.ok
         ? `  calibration saved · ${saved.buckets} buckets from ${saved.games} games${saved.remote ? '' : ' (this device only)'}`
         : `  calibration not saved: ${saved.reason}`);
+    }
+    if (evalRows.some(r => r.bet_type === 'ML')) {
+      const savedMl = await writeBacktestCalibration(`${sport}_ML`, fromDate, toDate, evalRows.filter(r => r.bet_type === 'ML'));
+      log(savedMl.ok
+        ? `  moneyline calibration saved · ${savedMl.buckets} bands from ${savedMl.games} games`
+        : `  moneyline calibration not saved: ${savedMl.reason}`);
+    }
+
+    // ── Totals: the model's projected total against the market's ──
+    totalsReport = null;
+    if (evalRows.some(r => isFinite(r.tot_model))) {
+      totalsReport = fitAndSaveTotalWeight(sport, evalRows.filter(r => isFinite(r.tot_model) && isFinite(r.tot_market) && isFinite(r.tot_actual)));
+      log(totalsReport.saved
+        ? `  totals weight ${totalsReport.w} saved`
+        : `  totals weight kept at default (${totalsReport.reason})`);
     }
     if (skippedThin) log(`  ${skippedThin} skipped — fewer than ${MIN_HISTORY} prior games`);
     log(`  ${gameResults.length} graded picks`);
@@ -1301,6 +1321,20 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     model_source: prior.model_source || null,
     bet_type: isMl ? 'ML' : 'SPREAD',
     price: gov.price ?? -110,
+    // Totals, at the default weight, for the totals backtest.
+    ...(() => {
+      const mt = Number(g.total), model = Number(prior.projection?.total);
+      if (!isFinite(mt) || !isFinite(model) || !EDGE_GOVERNOR.rateTotal) return {};
+      const gh = Number(homeStats.games_played), ga = Number(awayStats.games_played);
+      const full = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 }[sport] || 10;
+      const cert = (isFinite(gh) && isFinite(ga)) ? Math.max(0.25, Math.min(1, Math.min(gh, ga) / full)) : 1;
+      const t = EDGE_GOVERNOR.rateTotal({ sport, modelTotal: model, marketTotal: mt, certainty: cert, weight: 0.3 });
+      if (!t) return {};
+      const actual = g.home_score + g.away_score;
+      const d = t.side === 'over' ? actual - mt : mt - actual;
+      return { tot_model: model, tot_market: mt, tot_actual: actual, tot_cert: cert, tot_side: t.side, tot_p: t.p,
+               tot_ev: t.ev, tot_tier: t.tier, tot_result: Math.abs(d) < 0.01 ? 'P' : d > 0 ? 'W' : 'L' };
+    })(),
     // For the blend fit (home view, log-odds) and the spot records.
     blend_x: (gov.components && gov.components.strength_home != null)
       ? lg(gov.components.strength_home) - lg(gov.components.market_home) : null,
@@ -1622,11 +1656,11 @@ function spreadAccuracy(rows) {
            bias: bias / r.length, closer_rate: decided ? closer / decided : null };
 }
 
-function calibrationRows(rows) {
+function calibrationRows(rows, kind) {
   const buckets = {};
   rows.forEach(x => {
     if (x.result === 'P' || !isFinite(x.raw_confidence)) return;
-    const b = EDGE_GOVERNOR.calibrationBucket ? EDGE_GOVERNOR.calibrationBucket(x.raw_confidence)
+    const b = EDGE_GOVERNOR.calibrationBucket ? EDGE_GOVERNOR.calibrationBucket(x.raw_confidence, kind)
                                                : String(Math.max(50, Math.min(64, Math.floor(x.raw_confidence / 2) * 2)));
     buckets[b] = buckets[b] || { n: 0, wins: 0, sum: 0 };
     buckets[b].n++; buckets[b].sum += x.raw_confidence;
@@ -1639,7 +1673,7 @@ async function writeBacktestCalibration(sport, fromDate, toDate, rows) {
   if (!EDGE_GOVERNOR.readCalibrationTable || !EDGE_GOVERNOR.saveCalibrationTable) {
     return { ok: false, reason: 'governor.js is older than this page — upload the new one' };
   }
-  const b = calibrationRows(rows);
+  const b = calibrationRows(rows, sport);
   const buckets = {};
   Object.entries(b).forEach(([k, v]) => { buckets[k] = { n: v.n, wins: v.wins }; });
   const table = EDGE_GOVERNOR.readCalibrationTable();
@@ -1972,6 +2006,136 @@ function fitAndSaveBlend(sport, rows) {
   return { ...report, saved: true };
 }
 
+// How much of the gap between the model's projected total and the
+// market's turned out real: least squares of (actual - market) on
+// (model - market), scaled by how settled the ratings were, fit on the
+// first 70% of games and kept only if it misses less on the last 30%.
+function fitAndSaveTotalWeight(sport, rows) {
+  if (rows.length < 150) return { saved: false, reason: `needs 150 games with a total, has ${rows.length}`, games: rows.length, rows };
+  const cut = Math.floor(rows.length * 0.7);
+  const fitW = set => {
+    let sxy = 0, sxx = 0;
+    set.forEach(r => { const x = (r.tot_model - r.tot_market) * r.tot_cert, y = r.tot_actual - r.tot_market; sxy += x * y; sxx += x * x; });
+    return sxx > 0 ? Math.max(0, Math.min(1, sxy / (sxx + 50))) : 0;
+  };
+  const mae = (set, w) => set.reduce((s, r) => s + Math.abs(r.tot_actual - (r.tot_market + w * (r.tot_model - r.tot_market) * r.tot_cert)), 0) / set.length;
+  const train = rows.slice(0, cut), test = rows.slice(cut);
+  const wTrain = fitW(train);
+  const out = { games: rows.length, rows, test_fit: mae(test, wTrain), test_market: mae(test, 0), test_default: mae(test, 0.3),
+                model_mae: rows.reduce((s, r) => s + Math.abs(r.tot_actual - r.tot_model), 0) / rows.length,
+                market_mae: rows.reduce((s, r) => s + Math.abs(r.tot_actual - r.tot_market), 0) / rows.length };
+  const w = Math.round(fitW(rows) * 1000) / 1000;
+  out.w = w;
+  if (!(out.test_fit < out.test_default)) return { ...out, saved: false, reason: 'did not beat the default on held-out games' };
+  if (EDGE_GOVERNOR.readCalibrationTable && EDGE_GOVERNOR.saveCalibrationTable) {
+    const t = EDGE_GOVERNOR.readCalibrationTable();
+    t.total_weight = t.total_weight || {};
+    t.total_weight[sport] = { w, games: rows.length, test: { fit: out.test_fit, default: out.test_default, market: out.test_market }, at: new Date().toISOString() };
+    EDGE_GOVERNOR.saveCalibrationTable(t);
+  }
+  return { ...out, saved: true };
+}
+
+function renderTotals() {
+  if (!totalsReport || !totalsReport.rows || !totalsReport.rows.length) return '';
+  const r = totalsReport, rows = r.rows;
+  const picks = rows.filter(x => x.tot_tier && x.tot_tier !== 'PASS');
+  const w = picks.filter(x => x.tot_result === 'W').length, l = picks.filter(x => x.tot_result === 'L').length, p = picks.length - w - l;
+  const stake = stakeAmount(), pnl = w * stake * (100 / 110) - l * stake;
+  let html = `<div class="section"><div class="sec-title">TOTALS <em>· OVER / UNDER</em></div>`;
+  html += `<div class="row head"><span>Measure</span><span>N</span><span>Value</span><span></span><span></span></div>`;
+  html += `<div class="row"><span class="name">Projected total misses by</span><span class="num neu">${rows.length}</span><span class="num neu">${r.model_mae.toFixed(2)}</span><span></span><span></span></div>`;
+  html += `<div class="row"><span class="name">Market total misses by</span><span class="num neu">${rows.length}</span><span class="num neu">${r.market_mae.toFixed(2)}</span><span></span><span></span></div>`;
+  html += `<div class="row"><span class="name">Totals picks (default weight)</span><span class="num neu">${picks.length}</span>`
+        + `<span class="num ${w > l ? 'pos' : 'neg'}">${w}-${l}-${p}</span><span class="num ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '$' : '-$'}${Math.abs(pnl).toFixed(0)}</span><span></span></div>`;
+  html += `<div class="note">Weight on the model's total: ${r.w ?? '—'} (default 0.3) · held-out miss ${r.test_fit != null ? r.test_fit.toFixed(2) : '—'} learned vs ${r.test_default != null ? r.test_default.toFixed(2) : '—'} default vs ${r.test_market != null ? r.test_market.toFixed(2) : '—'} market alone. `
+        + `${r.saved ? 'Saved — live totals use it for this sport.' : 'Not saved: ' + r.reason + '.'} Weather isn't in the backtest.</div></div>`;
+  return html;
+}
+
+// ── PROP CHECK ──
+// How far the prop engine's projection misses, from box scores already
+// on file: every player-game in the window with 5+ earlier games, the
+// projection built only from those earlier games (last 5 / last 10 /
+// season, as the engine does — the opponent adjustment is left out),
+// and the chance it gave the over at a stand-in line (the player's
+// median of his previous 10, to the half point, about where books set
+// it). Skill above 0 means its chances beat a coin flip.
+async function runPropCheck() {
+  const out = document.getElementById('propOut');
+  const btn = document.getElementById('propBtn');
+  const sport = document.getElementById('sport').value;
+  const fromDate = document.getElementById('from').value, toDate = document.getElementById('to').value;
+  const url = SB_URL(), key = SB_KEY();
+  if (!window.EDGE_PROPS || !EDGE_PROPS.statsFor) { out.innerHTML = '<div class="note">prop-engine.js is missing — upload it.</div>'; return; }
+  if (!url || !key) { out.innerHTML = '<div class="note">Connect Supabase first.</div>'; return; }
+  const stats = (EDGE_PROPS.statsFor(sport) || []).filter(s => s.cols && s.cols.length).slice(0, 5);
+  if (!stats.length) { out.innerHTML = `<div class="note">No prop stats for ${sport}.</div>`; return; }
+  btn.disabled = true;
+  out.innerHTML = '<div class="note">Loading box scores…</div>';
+  try {
+    const cols = [...new Set(stats.flatMap(s => s.cols))];
+    const histFrom = new Date(new Date(fromDate).getTime() - 120 * 86400000).toISOString().slice(0, 10);
+    const rows = [];
+    for (let off = 0; off < 40000; off += 1000) {
+      const res = await fetch(`${url}/rest/v1/player_game_stats?sport=eq.${sport}&game_date=gte.${histFrom}&game_date=lte.${toDate}` +
+        `&select=player_id,game_id,game_date,${cols.join(',')}&order=game_date.asc,game_id.asc&limit=1000&offset=${off}`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (!res.ok) throw new Error('player_game_stats HTTP ' + res.status);
+      const page = await res.json();
+      rows.push(...page);
+      if (page.length < 1000) break;
+    }
+    const byPlayer = {};
+    rows.forEach(r => { (byPlayer[r.player_id] = byPlayer[r.player_id] || []).push(r); });
+    const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+    const sdv = a => { if (a.length < 2) return null; const m = mean(a); return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1)); };
+    const median = a => { const b = a.slice().sort((x, y) => x - y); const n = b.length; return n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2; };
+    const seasonStart = d => (window.EDGE_POWER && EDGE_POWER.seasonStart) ? EDGE_POWER.seasonStart(sport, d) : null;
+    const report = stats.map(stat => {
+      let n = 0, absErr = 0, brier = 0, leanN = 0, leanHit = 0;
+      Object.values(byPlayer).forEach(list => {
+        const vals = list.map(r => ({ date: r.game_date, v: stat.cols.some(c => r[c] != null) ? stat.cols.reduce((s, c) => s + (Number(r[c]) || 0), 0) : null }))
+          .filter(x => x.v != null);
+        for (let i = 5; i < vals.length; i++) {
+          if (vals[i].date < fromDate || vals[i].date > toDate) continue;
+          const prev = vals.slice(0, i).map(x => x.v).reverse();     // newest first, like the engine
+          const last5 = prev.slice(0, 5), last10 = prev.slice(0, 10);
+          const ss = seasonStart(new Date(vals[i].date));
+          const season = ss ? vals.slice(0, i).filter(x => new Date(x.date) >= ss).map(x => x.v) : [];
+          const parts = [[mean(last5), 0.45], [mean(last10), 0.30], [season.length >= 3 ? mean(season) : mean(last10), 0.25]].filter(([v]) => v != null);
+          const ws = parts.reduce((s, [, w]) => s + w, 0);
+          const mu = parts.reduce((s, [v, w]) => s + v * w, 0) / ws;
+          const sigma = Math.max(sdv(prev.slice(0, 15)) || 0, mu * 0.2, 1);
+          const line = Math.round(median(last10) * 2) / 2 + (Number.isInteger(Math.round(median(last10) * 2) / 2) ? 0.5 : 0);
+          const pr = EDGE_PROPS.probabilities(stat.dist, mu, sigma, line);
+          const pOver = pr && isFinite(pr.over) ? pr.over : null;
+          if (pOver == null) continue;
+          const actual = vals[i].v, over = actual > line ? 1 : 0;
+          n++; absErr += Math.abs(actual - mu); brier += (pOver - over) ** 2;
+          if (pOver >= 0.55 || pOver <= 0.45) { leanN++; if ((pOver >= 0.55) === (over === 1)) leanHit++; }
+        }
+      });
+      return { label: stat.label, n, mae: n ? absErr / n : null, brier: n ? brier / n : null,
+               skill: n ? 1 - (brier / n) / 0.25 : null, leanN, leanRate: leanN ? leanHit / leanN : null };
+    });
+    let html = `<div class="section"><div class="sec-title">PROP <em>CHECK · ${sport}</em></div>`;
+    html += `<div class="row head"><span>Stat</span><span>Games</span><span>Misses by</span><span>Skill</span><span>Leans hit</span></div>`;
+    report.forEach(r => {
+      html += `<div class="row"><span class="name">${r.label}</span><span class="num neu">${r.n}</span>`
+            + `<span class="num neu">${r.mae != null ? r.mae.toFixed(2) : '—'}</span>`
+            + `<span class="num ${r.skill > 0 ? 'pos' : 'neg'}">${r.skill != null ? (r.skill * 100).toFixed(1) + '%' : '—'}</span>`
+            + `<span class="num ${r.leanRate >= 0.524 ? 'pos' : 'neg'}">${r.leanRate != null ? (r.leanRate * 100).toFixed(1) + '% of ' + r.leanN : '—'}</span></div>`;
+    });
+    html += `<div class="note">"Misses by" is the average gap between projection and result. Skill compares its over/under chances with a coin flip `
+          + `at a stand-in line (the player's recent median), since past book lines aren't on file. "Leans hit" is how often a 55%+ lean was right — `
+          + `52.4% breaks even at -110. Opponent adjustment left out.</div></div>`;
+    out.innerHTML = html;
+  } catch (e) {
+    out.innerHTML = `<div class="note">Prop check failed: ${e.message}</div>`;
+  } finally { btn.disabled = false; }
+}
+
 function renderSpotsAndBlend() {
   let html = '';
   if (blendReport) {
@@ -2147,7 +2311,7 @@ function renderProfit() {
 }
 
 function renderAccuracyAndCalibration() {
-  let html = renderProfit() + renderSpotsAndBlend() + renderFitReport();
+  let html = renderProfit() + renderSpotsAndBlend() + renderTotals() + renderFitReport();
   if (evalRows.length && evalRows.every(x => x.bet_type === 'ML')) {
     const sc = probabilityScores(evalRows);
     if (sc) html += `<div class="section"><div class="sec-title">SKILL <em>VS THE MONEYLINE</em></div><div class="note">`
