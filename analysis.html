@@ -18,6 +18,7 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="team-aliases.js"></script>
+  <script src="my-picks.js"></script>
   <script src="context-builder.js"></script>
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
@@ -277,6 +278,7 @@
           <option value="">— Select a game —</option>
         </select>
         <button class="run-btn" id="runBtn" onclick="runAnalysis()" disabled>RUN ◎</button>
+        <button class="run-btn" id="myPickBtn" onclick="myPickFromAnalysis()" style="margin-left:6px">★ MY PICK</button>
       </div>
     </div>
 
@@ -335,6 +337,14 @@
       injury:          'Injury Impact',
       situations:      'Situational Handicapping',
     };
+
+    // The selected game goes to My Pick (side, line, price, units).
+    function myPickFromAnalysis() {
+      let g = null;
+      try { g = JSON.parse(document.getElementById('gameSelect').value || 'null'); } catch {}
+      if (!g || !g.id) { alert('Choose a game first.'); return; }
+      EDGE_MYPICK.open(g.id, { home_team: g.home_team || g.home, away_team: g.away_team || g.away, sport: g._sport || g.sport, commence_time: g.commence_time || g.time });
+    }
 
     function loadGames() {
       try { return JSON.parse(localStorage.getItem('edge_todays_games') || '[]'); }
