@@ -220,8 +220,6 @@
     <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
     <a href="test-espn.html"><span class="ico">◈</span> ESPN</a>
     <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
-    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
-    <a href="guide.html"><span class="ico">?</span> How to Use</a>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -863,37 +861,44 @@
     // asking for a key); one it can't read fails with a network error
     // — a blocked cross-site request — and would need a relay.
     async function checkDataSources() {
+      // What the app actually uses comes first: its own loaders, with the
+      // relay (NHL, nflverse) and your CollegeFootballData key. The direct
+      // browser test follows only as background — NHL and nflverse are
+      // expected to show "blocked" there; the relay is why they work.
       const logEl = document.getElementById('sourceLog');
-      logEl.textContent = 'Checking…\n';
+      logEl.textContent = 'Checking what the app uses…\n';
+      if (window.EDGE_EXTERNAL && EDGE_EXTERNAL.checkSources) {
+        try {
+          const lines = await EDGE_EXTERNAL.checkSources();
+          logEl.textContent += (Array.isArray(lines) ? lines : [String(lines)]).join('\n') + '\n';
+        } catch (e) { logEl.textContent += '✗ ' + e.message + '\n'; }
+      } else {
+        logEl.textContent += '✗ external-data.js is not loaded on this page\n';
+      }
+      logEl.textContent += '\nDirect from this browser, no relay (background only):\n';
       const today = new Date().toISOString().slice(0, 10);
       const sources = [
         ['MLB probable pitchers', `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&hydrate=probablePitcher`],
-        ['NHL schedule and goalies', 'https://api-web.nhle.com/v1/schedule/now'],
-        ['NFL efficiency (nflverse)', 'https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats.csv'],
-        ['College data (CollegeFootballData)', 'https://api.collegefootballdata.com/teams/fbs'],
+        ['NHL (goes through the relay)', 'https://api-web.nhle.com/v1/schedule/now'],
+        ['nflverse (goes through the relay)', 'https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats.csv'],
+        ['CollegeFootballData without a key', 'https://api.collegefootballdata.com/teams/fbs'],
       ];
       for (const [name, url] of sources) {
         const t0 = Date.now();
         try {
           const res = await fetch(url, { method: 'GET', cache: 'no-store' });
           const ms = Date.now() - t0;
-          if (res.ok) logEl.textContent += `✓ ${name}: reachable (${ms} ms)\n`;
-          else if (res.status === 401 || res.status === 403) logEl.textContent += `✓ ${name}: reachable, needs a free API key (HTTP ${res.status})\n`;
-          else logEl.textContent += `! ${name}: answered HTTP ${res.status}\n`;
+          if (res.ok) logEl.textContent += `  · ${name}: reachable (${ms} ms)\n`;
+          else if (res.status === 401 || res.status === 403) logEl.textContent += `  · ${name}: reachable, asks for a key (HTTP ${res.status}) — expected\n`;
+          else logEl.textContent += `  · ${name}: answered HTTP ${res.status}\n`;
           try { res.body && res.body.cancel && res.body.cancel(); } catch {}
         } catch (e) {
-          logEl.textContent += `✗ ${name}: blocked from the browser (${e.message}) — would need a relay\n`;
+          logEl.textContent += `  · ${name}: blocked here — expected; the relay handles it\n`;
         }
-      }
-      // Through the app's own loaders: the relay (NHL, nflverse) and
-      // the CollegeFootballData key.
-      if (window.EDGE_EXTERNAL && EDGE_EXTERNAL.checkSources) {
-        logEl.textContent += '\nUsing the relay and your keys:\n';
-        try { (await EDGE_EXTERNAL.checkSources()).forEach(l => { logEl.textContent += l + '\n'; }); }
-        catch (e) { logEl.textContent += '✗ ' + e.message + '\n'; }
       }
       logEl.textContent += '\nCopy this and send it back.';
     }
+
 
     // ============================================================
     // ── SPORT PICKER ──
