@@ -457,11 +457,28 @@
       });
     });
 
-    function updateBankrolls() {
-      const real = parseFloat(localStorage.getItem('edge_bankroll') || '0');
-      const sim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
-      document.getElementById('realBankroll').textContent = '$' + real.toLocaleString();
-      document.getElementById('simBankroll').textContent = '$' + sim.toLocaleString();
+    // Balances come from your logged bets: the starting bankroll in
+    // Settings, plus profit on settled bets, minus stakes still riding.
+    // (Placing a bet used to subtract from the Settings bankroll itself and
+    // wins were never added back, so the numbers only ever went down.)
+    async function updateBankrolls() {
+      const startReal = parseFloat(localStorage.getItem('edge_bankroll') || '0');
+      const startSim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
+      let real = startReal, sim = startSim;
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        if (url && key) {
+          const res = await fetch(`${url}/rest/v1/bet_log?select=mode,amount,pnl,status,result&limit=5000`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          if (res.ok) (await res.json()).forEach(b => {
+            const amt = Number(b.amount) || 0, settled = !!b.result || b.status === 'graded';
+            const delta = settled ? (Number(b.pnl) || 0) : -amt;
+            if ((b.mode || 'sim') === 'real') real += delta; else sim += delta;
+          });
+        }
+      } catch {}
+      document.getElementById('realBankroll').textContent = '$' + Math.round(real).toLocaleString();
+      document.getElementById('simBankroll').textContent = '$' + Math.round(sim).toLocaleString();
     }
 
     function updateModeIndicator() {
@@ -735,7 +752,8 @@
     const LEAN_TIERS = new Set(['LEAN', 'TOTAL_LEAN']);
     function isLineRow(p) { return String(p.decision || '').startsWith('LINE_'); }
     function isTotalRow(p) { return String(p.decision || '').startsWith('TOTAL_'); }
-    function isPickRow(p) { return BET_TIERS.has(p.decision) || (showLeans && LEAN_TIERS.has(p.decision)); }
+    function isMineRow(p) { return p.decision === 'MINE'; }
+    function isPickRow(p) { return BET_TIERS.has(p.decision) || isMineRow(p) || (showLeans && LEAN_TIERS.has(p.decision)); }
     function toggleLeans(on) {
       showLeans = !!on;
       localStorage.setItem('edge_picks_show_leans', showLeans ? 'true' : 'false');
@@ -756,7 +774,7 @@
     function inView(picks) {
       if (currentView === 'lines') return picks.filter(isLineRow);
       if (currentView === 'totals') return picks.filter(isTotalRow).slice().sort((a, b) => evOf(b) - evOf(a));
-      if (currentView === 'slate') return picks.filter(p => !isLineRow(p) && !isTotalRow(p)).slice().sort((a, b) => evOf(b) - evOf(a));
+      if (currentView === 'slate') return picks.filter(p => !isLineRow(p) && !isTotalRow(p) && !isMineRow(p)).slice().sort((a, b) => evOf(b) - evOf(a));
       return picks.filter(isPickRow);
     }
 
@@ -853,7 +871,8 @@
 
       const lineTier = isLineRow(p) ? String(p.decision).slice(5) : null;
       const totalTier = isTotalRow(p) ? String(p.decision).slice(6) : null;
-      const decisionTag = totalTier ? `TOTAL · ${totalTier === 'PASS' ? 'NO EDGE' : totalTier}`
+      const decisionTag = isMineRow(p) ? 'MY PICK'
+                        : totalTier ? `TOTAL · ${totalTier === 'PASS' ? 'NO EDGE' : totalTier}`
                         : lineTier ? `LINE · ${lineTier === 'PASS' ? 'NO EDGE' : lineTier.replace('_', ' ')}`
                         : isVetoed ? 'VETOED'
                         : p.decision === 'BET_2U' ? 'BET 2U'
@@ -1310,7 +1329,6 @@
           return;
         }
 
-        localStorage.setItem('edge_bankroll', String(bankroll - stakeDollars));
         localStorage.setItem('edge_daily_used', String(dailyUsed + stakeDollars));
         localStorage.setItem(`edge_bet_real_${pickId}`, 'true');
         await logBet('real', pick, units, stakeDollars);
@@ -1320,7 +1338,6 @@
         const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
         const stakeDollars = units * simUnitSize;
         if (stakeDollars > simBankroll * 0.05) { showToast('Bet exceeds 5% of sim bankroll', 'red'); return; }
-        localStorage.setItem('edge_sim_bankroll', String(simBankroll - stakeDollars));
         localStorage.setItem(`edge_bet_sim_${pickId}`, 'true');
         await logBet('sim', pick, units, stakeDollars);
         showToast(`Sim bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, 'blue');
@@ -1359,14 +1376,12 @@
           : parseFloat(localStorage.getItem('edge_unit_size') || '50');
         const stakeDollars = units * unitSize;
         const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
-        localStorage.setItem('edge_bankroll', String(bankroll + stakeDollars));
         localStorage.setItem('edge_daily_used', String(Math.max(0, dailyUsed - stakeDollars)));
         localStorage.removeItem(`edge_bet_real_${pickId}`);
       } else {
         const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
         const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
         const stakeDollars = units * simUnitSize;
-        localStorage.setItem('edge_sim_bankroll', String(simBankroll + stakeDollars));
         localStorage.removeItem(`edge_bet_sim_${pickId}`);
       }
 
@@ -1433,10 +1448,11 @@
         sport: pick.sport,
         matchup: `${pick.away_team} vs ${pick.home_team}`,
         pick_label: pick.side_team,
-        pick_type: (pick.governor_snapshot || {}).bet_type === 'ML' ? 'ML' : 'ATS',
+        pick_type: (pick.governor_snapshot || {}).bet_type === 'ML' ? 'ML' : (pick.governor_snapshot || {}).bet_type === 'TOTAL' ? 'TOTAL' : 'ATS',
         // At the best number found across books when there is one
         // (home spread, the sim grader's convention), else consensus.
-        line: (pick.governor_snapshot || {}).bet_type === 'ML' ? ''
+        line: (pick.governor_snapshot || {}).bet_type === 'TOTAL' ? String(pick.governor_snapshot.line ?? pick.market_total ?? '')
+          : (pick.governor_snapshot || {}).bet_type === 'ML' ? ''
           : ((pick.governor_snapshot?.best?.home_line ?? spread) != null
               ? String(pick.governor_snapshot?.best?.home_line ?? spread) : ''),
         odds: (pick.governor_snapshot || {}).bet_type === 'ML'
