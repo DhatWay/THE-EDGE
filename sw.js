@@ -29,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v22';
+const VERSION = 'edge-v23';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -82,6 +82,7 @@ const SHELL_FILES = [
   // Id bridge and graders. Added in v3.
   './edge-time.js',
   './prop-engine.js',
+  './qb-ratings.js',
   './guide.html',
   './builder.html',
   './external-data.js',
