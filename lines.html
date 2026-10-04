@@ -237,6 +237,8 @@
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
+    <a href="guide.html"><span class="ico">?</span> How to Use</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -381,7 +383,8 @@
       if (!force) {
         try {
           const cached = JSON.parse(localStorage.getItem('edge_lines_cache') || 'null');
-          if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+          // Kept until you tap Refresh — no automatic re-downloads.
+          if (cached && cached.data) {
             allLines = cached.data;
             updateAlertCounts();
             renderLines();
@@ -781,7 +784,8 @@
     }
 
     // ── INIT ──
-    fetchLines().then(scheduleRefresh);
+    // Saved lines on open; new ones only when you tap Refresh.
+    fetchLines();
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
