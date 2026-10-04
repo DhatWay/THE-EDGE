@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20261005-01';
+  const BUILD = 'simgrade-20261005-02';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -438,6 +438,21 @@ const EDGE_SIM_GRADER = (() => {
     const homeScore = Number(score.home_score);
     const awayScore = Number(score.away_score);
     if (!isFinite(homeScore) || !isFinite(awayScore)) return null;
+
+    // Totals first: an "Over 47.5" label names no team, so the side
+    // check below used to stop these before they could be graded.
+    if (type === 'TOTAL') {
+      const line = Number(bet.line);
+      const ou = /over/i.test(label) ? 'over' : /under/i.test(label) ? 'under' : null;
+      if (!isFinite(line) || !ou) return null;
+      const combined0 = homeScore + awayScore;
+      const odds0 = Number(bet.odds) || DEFAULT_SPREAD_PRICE;
+      const win0 = odds0 > 0 ? (odds0 / 100) : (100 / Math.abs(odds0));
+      const stake0 = Number(bet.amount) || 0;
+      if (Math.abs(combined0 - line) < 0.01) return { result: 'P', pnl: 0 };
+      const won0 = ou === 'over' ? combined0 > line : combined0 < line;
+      return won0 ? { result: 'W', pnl: round(stake0 * win0, 2) } : { result: 'L', pnl: round(-stake0, 2) };
+    }
 
     // Side. HOME / AWAY rows state it. Otherwise the label is
     // matched against the bet's own matchup string first — both
