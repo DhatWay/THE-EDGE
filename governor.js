@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261003-02';
+  const BUILD = 'gov-20261004-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -245,6 +245,50 @@ const EDGE_GOVERNOR = (() => {
   // A spot's edge is its record blended toward 50% by sample size,
   // in log-odds; overlapping spots are damped by the square root of
   // how many fired, then capped.
+  // ── TOTALS (over / under) ──
+  // The market's total, moved toward the model's projected total by a
+  // weight (0.3 until the Slate Test learns one for the sport), scaled
+  // by how many games the ratings rest on and capped. Weather (outdoor
+  // football) can only lower it. Then the same value tiers as sides.
+  const TOTAL_DEFAULT_WEIGHT = 0.3;
+  const TOTAL_SHIFT_CAP = { NFL: 4, NCAAF: 5, NBA: 5, WNBA: 4, NCAAB: 4.5, MLB: 0.8, NHL: 0.5, MLS: 0.4 };
+
+  function totalWeightFor(sport) {
+    try {
+      const t = readCalibrationTable();
+      const w = t?.total_weight?.[sport]?.w;
+      if (isFinite(w)) return { w, source: 'fitted' };
+    } catch {}
+    return { w: TOTAL_DEFAULT_WEIGHT, source: 'default' };
+  }
+
+  function rateTotal({ sport, modelTotal, marketTotal, overPrice, underPrice, weatherAdj = 0, certainty = 1, weight = null }) {
+    const core = window.EDGE_RATING;
+    if (!core || !core.totalProbability || !isFinite(modelTotal) || !isFinite(marketTotal)) return null;
+    const sd = core.TOTAL_SD?.[sport] || 14;
+    const wInfo = weight != null ? { w: weight, source: 'given' } : totalWeightFor(sport);
+    const cap = TOTAL_SHIFT_CAP[sport] ?? 4;
+    const shift = clamp(wInfo.w * clamp(certainty, 0.25, 1) * ((modelTotal + Math.min(0, weatherAdj)) - marketTotal), -cap, cap);
+    const mu = marketTotal + shift;
+    const prob = core.totalProbability(mu, marketTotal, sd);
+    if (!prob) return null;
+    const op = isFinite(overPrice) && overPrice !== 0 ? overPrice : -110;
+    const up = isFinite(underPrice) && underPrice !== 0 ? underPrice : -110;
+    const evOver = prob.over * (americanToDecimal(op) - 1) - prob.under;
+    const evUnder = prob.under * (americanToDecimal(up) - 1) - prob.over;
+    const side = evOver >= evUnder ? 'over' : 'under';
+    const p = side === 'over' ? prob.over : prob.under;
+    const price = side === 'over' ? op : up;
+    const ev = side === 'over' ? evOver : evUnder;
+    const tier = ev >= EV_TIERS.bet2u ? '2U' : ev >= EV_TIERS.bet1u ? '1U' : ev >= EV_TIERS.lean ? 'LEAN' : 'PASS';
+    return {
+      side, p: round(p, 4), price, ev: round(ev, 4), break_even: round(1 / americanToDecimal(price), 4), tier,
+      mu: round(mu, 2), sd, shift: round(shift, 2), weight: wInfo.w, weight_source: wInfo.source,
+      model_total: round(modelTotal, 2), market_total: marketTotal, weather_adj: round(Math.min(0, weatherAdj), 2),
+      push: prob.push,
+    };
+  }
+
   function wilson(w, n) {
     if (!n) return [0, 1];
     const z = SPOT_PROOF_Z, p = w / n, d = 1 + z * z / n;
@@ -349,8 +393,10 @@ const EDGE_GOVERNOR = (() => {
     // ── Calibration, once (spreads) ──
     const rawConfidence = sideProb * 100;
     const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
+    // Spreads calibrate on the chance to cover; moneylines on the chance
+    // to win, in their own 4-point bands (underdogs sit below 50%).
     const calibrated = betType === 'ML'
-      ? { value: round(cappedConfidence, 1), applied: false, detail: null }
+      ? applyCalibration(cappedConfidence, `${sport}_ML`)
       : applyCalibration(cappedConfidence, sport);
 
     // ── Nothing to bet against ──
@@ -625,7 +671,10 @@ const EDGE_GOVERNOR = (() => {
   // and pooled into sports[sport][bucket] = { rate, samples }.
   const CALIBRATION_MIN_SAMPLES = 20;
 
-  function calibrationBucket(confidence) {
+  function calibrationBucket(confidence, kind) {
+    if (String(kind || '').endsWith('_ML')) {
+      return String(Math.max(20, Math.min(76, Math.floor(confidence / 4) * 4)));
+    }
     return String(Math.max(50, Math.min(64, Math.floor(confidence / 2) * 2)));
   }
 
@@ -690,7 +739,7 @@ const EDGE_GOVERNOR = (() => {
   function applyCalibration(confidence, sport) {
     // This sport's bucket, 2 points wide (table version 3).
     if (CALIBRATION && CALIBRATION.version === 3) {
-      const bucket = calibrationBucket(confidence);
+      const bucket = calibrationBucket(confidence, sport);
       const entry = CALIBRATION.sports?.[sport]?.[bucket];
       if (!entry || !isFinite(entry.rate) || (entry.samples || 0) < CALIBRATION_MIN_SAMPLES) {
         return { value: round(confidence, 1), applied: false, detail: null };
@@ -812,6 +861,7 @@ const EDGE_GOVERNOR = (() => {
     BUILD,
     run,
     runProp,
+    rateTotal,
     DEFAULT_BLEND,
     SPOT_PRIOR_RATE,
     SPOT_PRIOR_GAMES,
