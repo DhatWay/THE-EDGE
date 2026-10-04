@@ -1066,9 +1066,16 @@
         const gg = x => x ? `${x.name || '?'} (sv ${x.sv})${x.backup ? ' backup, back-to-back' : ''}` : 'unknown';
         rows.push(['Goalies', `${gg(ex.goalies.away)} @ ${gg(ex.goalies.home)} → ${ex.goalies.goals_home >= 0 ? '+' : ''}${ex.goalies.goals_home} goals to home`]);
       }
-      if (r.qb && (r.qb.home_out || r.qb.away_out)) {
-        rows.push(['QB out', `${r.qb.home_out ? (p.home_team || 'home') : ''}${r.qb.home_out && r.qb.away_out ? ' and ' : ''}${r.qb.away_out ? (p.away_team || 'away') : ''} (${r.qb.points > 0 ? '+' : ''}${r.qb.points} pts to home)`]);
+      // Quarterbacks: who's expected to start against the one the team's
+      // ratings were built on, and what the gap is worth.
+      if (r.qb && (r.qb.home || r.qb.away)) {
+        const side = (v, team) => v ? `${team}: ${v.expected}${v.expected !== v.usual ? ` for ${v.usual} (${v.delta > 0 ? '+' : ''}${v.delta} pts)` : ' (usual starter)'}` : null;
+        rows.push(['Quarterbacks', [side(r.qb.home, p.home_team || 'home'), side(r.qb.away, p.away_team || 'away')].filter(Boolean).join(' · ')]);
+        if (r.qb.points) rows.push(['Quarterback effect', `${r.qb.points > 0 ? '+' : ''}${r.qb.points} pts to ${p.home_team || 'home'} (ratings)`]);
+      } else if (r.qb && (r.qb.home_out || r.qb.away_out)) {
+        rows.push(['QB out', `${r.qb.home_out ? (p.home_team || 'home') : ''}${r.qb.home_out && r.qb.away_out ? ' and ' : ''}${r.qb.away_out ? (p.away_team || 'away') : ''} (${r.qb.points > 0 ? '+' : ''}${r.qb.points} pts to home, flat)`]);
       }
+
       if (r.key_numbers) rows.push(['Push chance (key numbers)', r.push != null ? (r.push * 100).toFixed(1) + '%' : '—']);
       if (gs.best) rows.push(['Best number', `${gs.best.point > 0 ? '+' : ''}${gs.best.point} at ${gs.best.book || '?'}${gs.best.price ? ' (' + gs.best.price + ')' : ''}` +
         (gs.best.cover != null ? ` · ${(gs.best.cover * 100).toFixed(1)}% to cover there` : '')]);
