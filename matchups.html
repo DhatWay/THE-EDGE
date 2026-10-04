@@ -23,6 +23,7 @@
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="qb-ratings.js"></script>
+  <script src="my-picks.js"></script>
   <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="prop-engine.js"></script>
@@ -1066,6 +1067,7 @@
             <a href="lines.html?game=${enc}" class="game-btn">→ Lines</a>
             ${propsAvailable(game, statusCls) ? `<button class="game-btn" onclick="toggleProps('${game.id}')">＋ Prop</button>` : ''}
             ${statusCls !== 'final' ? `<button class="game-btn" onclick="toggleLine('${game.id}')">＋ Line</button>` : ''}
+            ${statusCls !== 'final' ? `<button class="game-btn" onclick="EDGE_MYPICK.open('${game.id}')">★ My Pick</button>` : ''}
           </div>
           ${propsAvailable(game, statusCls) ? `<div class="prop-panel" id="prop-${game.id}" hidden></div>` : ''}
           ${statusCls !== 'final' ? `<div class="prop-panel" id="line-${game.id}" hidden></div>` : ''}
