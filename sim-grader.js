@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20261003-01';
+  const BUILD = 'simgrade-20261005-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -196,16 +196,40 @@ const EDGE_SIM_GRADER = (() => {
     // score. Each still-missing game is now looked up on ESPN, using
     // the pick's teams and start time.
     const missing = uniqueGameIds.filter(gid => !(idMap[gid] && scores[idMap[gid]]));
+    if (missing.length && !(window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.findFinal)) {
+      log('  still ungraded: the ESPN lookup (shadow-grader.js) is not loaded on this page');
+    }
     if (missing.length && window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.findFinal) {
       const info = await loadPickInfo(missing, url, key);
       let direct = 0;
+      const why = {};
+      const note = (k, b) => { (why[k] = why[k] || []).push(b); };
       for (const gid of missing) {
-        const p = info[gid];
-        const sport = byGame[gid][0].sport || p?.sport;
-        if (!p || !p.commence_time || Date.now() - new Date(p.commence_time).getTime() < 4 * 3600000) continue;
+        const b0 = byGame[gid][0];
+        let p = info[gid];
+        const sport = b0.sport || p?.sport;
+        // No pick on file for this bet's game (a bet placed from another
+        // page): its teams come from the bet's matchup ("Away vs Home"),
+        // and ESPN is searched from the day it was placed to a week later.
+        if (!p) {
+          const m = String(b0.matchup || '').split(/\s+(?:vs\.?|@|at)\s+/i);
+          if (m.length === 2 && b0.created_at) {
+            p = { sport, away_team: m[0].trim(), home_team: m[1].trim(), _search_from: b0.created_at };
+          }
+        }
+        if (!p) { note('no game details on the bet', b0); continue; }
+        if (p.commence_time && Date.now() - new Date(p.commence_time).getTime() < 4 * 3600000) { note('not finished yet', b0); continue; }
         let fin = idMap[gid] ? await EDGE_SHADOW_GRADER.finalById(sport, idMap[gid]) : null;
-        if (!fin) fin = await EDGE_SHADOW_GRADER.findFinal({ ...p, sport });
-        if (!fin || !fin.completed || !isFinite(fin.home_score) || !isFinite(fin.away_score)) continue;
+        if (!fin && p.commence_time) fin = await EDGE_SHADOW_GRADER.findFinal({ ...p, sport });
+        if (!fin && p._search_from) {
+          for (let d = 0; d <= 8 && !fin; d++) {
+            const day = new Date(new Date(p._search_from).getTime() + d * 86400000);
+            if (day.getTime() > Date.now()) break;
+            fin = await EDGE_SHADOW_GRADER.findFinal({ ...p, sport, commence_time: day.toISOString() });
+          }
+        }
+        if (!fin) { note('no matching game on ESPN', b0); continue; }
+        if (!fin.completed || !isFinite(fin.home_score) || !isFinite(fin.away_score)) { note('ESPN does not show it as final yet', b0); continue; }
         const eid = idMap[gid] || fin.espn_id;
         idMap[gid] = eid;
         scores[eid] = { home: p.home_team, away: p.away_team, home_score: fin.home_score, away_score: fin.away_score,
@@ -214,6 +238,10 @@ const EDGE_SIM_GRADER = (() => {
         try { if (!info[gid]._linked && window.EDGE_GAME_ID_MAP?.link) await EDGE_GAME_ID_MAP.link(gid, fin.espn_id, { sport, home_team: p.home_team, away_team: p.away_team, commence_time: p.commence_time, confidence: 'grader' }); } catch {}
       }
       if (direct) log(`  ${direct} game${direct === 1 ? '' : 's'} scored straight from ESPN`);
+      Object.entries(why).forEach(([k, list]) => {
+        log(`  still ungraded: ${list.length} bet${list.length === 1 ? '' : 's'} — ${k}` +
+            ` (e.g. ${list.slice(0, 2).map(b => `${b.pick_label || ''} · ${b.matchup || b.game_id}`).join('; ')})`);
+      });
     }
 
     // ── 6. Grade each bet ──
