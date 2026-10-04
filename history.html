@@ -158,6 +158,9 @@
     .view-tab.active { color: var(--gold); border-color: var(--gold); }
     .grade-row { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); flex-wrap: wrap; }
     .grade-why { margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--text-dim); }
+    .reset-box { margin: 8px 0; font-size: 12px; color: var(--text-dim); }
+    .reset-box summary { cursor: pointer; color: var(--text-dim); letter-spacing: 1px; }
+    .reset-box p { margin: 6px 0 8px; line-height: 1.5; }
     .money-box { border: 1px solid var(--border); padding: 8px 10px; margin: 0 0 10px; }
     .money-row { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--text-dim); padding: 4px 0; }
     .money-row b { color: var(--text); }
@@ -325,6 +328,14 @@
       </div>
     </div>
 
+    <details class="reset-box">
+      <summary>Reset</summary>
+      <p>Sim money: deletes every sim bet and starts the sim bankroll over. Pick history: deletes picks for games already played.
+        Real-money bets are never touched. Both ask you to type RESET.</p>
+      <button class="grade-btn" onclick="resetSim()">Reset sim money</button>
+      <button class="grade-btn" onclick="resetHistory()">Reset pick history</button>
+    </details>
+
     <div class="view-tabs">
       <button class="view-tab active" data-view="picks" onclick="setHistView('picks')">Picks</button>
       <button class="view-tab" data-view="slate" onclick="setHistView('slate')">Full Slate</button>
@@ -334,6 +345,7 @@
     </div>
     <div class="grade-row">
       <button class="grade-btn" onclick="gradeNow()">↻ Grade finished games</button>
+      <button class="grade-btn" onclick="exportCsv()">⇩ Export CSV</button>
       <span id="gradeStatus"></span>
     </div>
 
@@ -424,7 +436,7 @@
     let currentMode = 'all';
     let currentView = 'picks';
     let allBets = [];
-    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED', 'TOTAL_2U', 'TOTAL_1U', 'TOTAL_LEAN']);
+    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED', 'TOTAL_2U', 'TOTAL_1U', 'TOTAL_LEAN', 'MINE']);
     let sortKey = 'created_at';
     let sortDir = -1;
     let allPicks = [];
@@ -516,9 +528,9 @@
     function picksForMode() {
       if (currentView === 'bets') return allBets;
       if (currentView === 'lines') return allPicks.filter(p => String(p.decision || '').startsWith('LINE_'));
-      const pipeline = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && modeOk(p));
+      const pipeline = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && (modeOk(p) || p.decision === 'MINE'));
       if (currentView === 'totals') return pipeline.filter(p => String(p.decision || '').startsWith('TOTAL_'));
-      if (currentView === 'slate') return pipeline.filter(p => !String(p.decision || '').startsWith('TOTAL_'));
+      if (currentView === 'slate') return pipeline.filter(p => !String(p.decision || '').startsWith('TOTAL_') && p.decision !== 'MINE');
       return pipeline.filter(p => BET_TIERS.has(p.decision));
     }
 
@@ -528,6 +540,69 @@
       renderSummary();
       renderMonths();
       renderTable();
+    }
+
+    // ── EXPORT ──
+    // The current view (Picks, Full Slate, Totals, My Lines or My Bets)
+    // as a spreadsheet file — opens in Google Sheets or Excel.
+    function exportCsv() {
+      const rows = picksForMode();
+      if (!rows.length) { document.getElementById('gradeStatus').textContent = 'Nothing to export in this view.'; return; }
+      const cols = [
+        ['game_date', p => p.commence_time ? new Date(p.commence_time).toLocaleString('en-US') : ''],
+        ['sport', p => p.sport], ['away', p => p.away_team], ['home', p => p.home_team],
+        ['pick', p => p.side_team || p.direction], ['decision', p => p.decision], ['mode', p => p.decision_mode],
+        ['bet_type', p => (p.governor_snapshot || {}).bet_type || ''],
+        ['line', p => (p.governor_snapshot || {}).bet_type === 'TOTAL' ? ((p.governor_snapshot || {}).line ?? p.market_total) : p.market_spread],
+        ['price', p => (p.governor_snapshot || {}).price ?? ''], ['chance_pct', p => p.confidence ?? ''],
+        ['value_per_dollar', p => (p.governor_snapshot || {}).ev ?? ''], ['units', p => p.units ?? ''],
+        ['result', p => p.result || 'pending'], ['pnl_units', p => p.pnl ?? ''], ['clv', p => p.clv ?? ''],
+        ['amount', p => p._bet ? p._bet.amount : ''], ['pnl_dollars', p => p._bet ? (p._bet.pnl ?? '') : ''],
+        ['portfolio', p => p._bet ? (p._bet.mode || 'sim') : ''],
+      ];
+      const q = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+      const csv = [cols.map(c => c[0]).join(',')].concat(rows.map(p => cols.map(c => q(c[1](p))).join(','))).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `edge-${currentView}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }
+
+    // ── RESET ──
+    // Two separate resets, each confirmed by typing RESET:
+    //   Sim money — deletes every sim bet and starts the sim bankroll over
+    //   Pick history — deletes picks for games already played (upcoming
+    //   picks stay). Real-money bets are never touched.
+    async function resetSim() {
+      const amt = parseFloat(prompt('Start the sim bankroll over at:', localStorage.getItem('edge_sim_bankroll') || '10000'));
+      if (!isFinite(amt) || amt <= 0) return;
+      if (prompt('This deletes every SIM bet. Type RESET to confirm.') !== 'RESET') return;
+      const st = document.getElementById('gradeStatus');
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const res = await fetch(`${url}/rest/v1/bet_log?mode=eq.sim`, { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
+        localStorage.setItem('edge_sim_bankroll', String(amt));
+        ['edge_sim_state', 'edge_sim_daily_used', 'edge_sim_bets_used', 'edge_session_bet_log'].forEach(k => localStorage.removeItem(k));
+        Object.keys(localStorage).filter(k => k.startsWith('edge_bet_sim_')).forEach(k => localStorage.removeItem(k));
+        st.textContent = `Sim reset — bankroll $${amt.toLocaleString()}, sim bets cleared.`;
+        await loadPicks();
+      } catch (e) { st.textContent = 'Sim reset failed: ' + e.message; }
+    }
+
+    async function resetHistory() {
+      if (prompt('This deletes picks for games ALREADY PLAYED (upcoming picks stay; bets are not touched). Type RESET to confirm.') !== 'RESET') return;
+      const st = document.getElementById('gradeStatus');
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const res = await fetch(`${url}/rest/v1/shadow_picks?commence_time=lt.${new Date().toISOString()}`,
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
+        st.textContent = 'Pick history cleared for games already played.';
+        await loadPicks();
+      } catch (e) { st.textContent = 'History reset failed: ' + e.message; }
     }
 
     async function gradeNow() {
