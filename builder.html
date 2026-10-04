@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>THE EDGE — Parlay & Teaser Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="auth.js"></script>
+  <script src="edge-time.js"></script>
+  <script src="rating-core.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+    main { padding-top: 60px; }
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
+
+    .portfolio-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 14px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
+    .pf-btn:last-child { border-right: none; }
+    .pf-btn.active.real { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .pf-btn.active.sim { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .pf-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+    .pf-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .pf-btn.active.real .pf-val { color: var(--gold); }
+    .pf-btn.active.sim .pf-val { color: var(--blue); }
+
+    .mode-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
+    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; }
+    .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
+    .mode-pill.det { border-color: var(--gold-dim); color: var(--gold); }
+    .mode-pill.ai  { border-color: var(--blue); color: var(--blue); }
+    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
+    .sum-cell { padding: 12px 8px; border-right: 1px solid var(--border); text-align: center; }
+    .sum-cell:last-child { border-right: none; }
+    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .sum-val.gold { color: var(--gold); }
+    .sum-val.green { color: var(--green); }
+    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+
+    .filter-strip { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .filter-strip::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+
+    .picks-list { padding: 16px 20px; }
+    .pick-card { background: var(--surface); border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+    .pick-card:hover { border-color: var(--border-bright); }
+    .pick-card.tier-elite  { border-left: 3px solid var(--gold); }
+    .pick-card.tier-high   { border-left: 3px solid var(--green); }
+    .pick-card.tier-solid  { border-left: 3px solid var(--text-mid); }
+    .pick-card.tier-lean   { border-left: 3px solid var(--text-dim); }
+    .pick-card.vetoed      { opacity: 0.5; }
+    .pick-card.passed      { opacity: 0.55; }
+
+    .pick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px; gap: 8px; }
+    .pick-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .pick-time { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); }
+    .decision-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid; }
+    .decision-tag.bet2u { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.1); }
+    .decision-tag.bet1u { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
+    .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
+    .decision-tag.pass  { border-color: var(--text-dim); color: var(--text-dim); }
+    .decision-tag.capped { border-color: var(--text-dim); color: var(--text-dim); }
+    .mode-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--border); color: var(--text-dim); }
+    .mode-badge.ai { border-color: var(--blue); color: var(--blue); }
+
+    .pick-body { padding: 6px 14px 12px; }
+    .pick-matchup { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; line-height: 1.1; margin-bottom: 4px; }
+    .pick-side { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
+    .pick-side.away { color: var(--blue); }
+
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); margin-bottom: 12px; }
+    .metric-cell { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .metric-cell:last-child { border-right: none; }
+    .metric-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .metric-val.gold  { color: var(--gold); }
+    .metric-val.green { color: var(--green); }
+    .metric-val.red   { color: var(--red); }
+    .metric-val.blue  { color: var(--blue); }
+    .metric-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+
+    .cons-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .cons-track { flex: 1; background: var(--bg4); height: 5px; overflow: hidden; }
+    .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
+    .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
+
+    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
+
+    .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .view-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+    .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .view-tab.active { color: var(--gold); border-color: var(--gold); }
+    .leans-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-dim); margin: 0 0 10px; }
+    .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
+    .best-line b { color: var(--gold); }
+    .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
+    .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
+    .pick-action-btn.copy { color: var(--text); }
+    .bankroll-note { border: 1px solid var(--gold); color: var(--gold); font-size: 12px; line-height: 1.5; padding: 8px 10px; margin: 0 0 10px; }
+    .bankroll-note[hidden] { display: none; }
+    .analytics { margin: 4px 0 10px; border: 1px solid var(--border); }
+    .analytics summary { cursor: pointer; padding: 8px 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+    .analytics-body { padding: 0 10px 10px; font-size: 12px; line-height: 1.6; color: var(--text); }
+    .analytics-body .row { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 3px 0; }
+    .analytics-body .row span:first-child { color: var(--text-dim); }
+    .analytics-body .fam { padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .analytics-body .fam b { font-weight: 600; }
+    .analytics-body .fam.off { opacity: 0.45; }
+    .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
+    .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
+    .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
+    .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
+
+    .context-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      border-radius: 2px;
+    }
+    .ctx-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(201,168,76,0.06);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.8px;
+    }
+    .ctx-row:last-child { border-bottom: none; }
+    .ctx-label {
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ctx-value { color: var(--text-mid); text-align: right; font-weight: 600; }
+    .ctx-value .pos { color: var(--green); }
+    .ctx-value .neg { color: var(--red); }
+    .ctx-value .gold { color: var(--gold); }
+    .ctx-value .blue { color: var(--blue); }
+
+    .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
+    .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
+    .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
+
+    .pick-actions { display: flex; gap: 0; border-top: 1px solid var(--border); }
+    .pick-action-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; }
+    .pick-action-btn:last-child { border-right: none; }
+    .pick-action-btn.approve { color: var(--green); }
+    .pick-action-btn.approve:hover { background: rgba(39,174,96,0.08); }
+    .pick-action-btn.skip { color: var(--red); }
+    .pick-action-btn.skip:hover { background: rgba(231,76,60,0.06); }
+    .pick-action-btn.simbet { color: var(--blue); }
+    .pick-action-btn.simbet:hover { background: rgba(74,144,217,0.08); }
+    .pick-action-btn.analysis { color: var(--gold); }
+    .pick-action-btn.analysis:hover { background: var(--gold-glow); }
+    .pick-action-btn.done { color: var(--text-dim); cursor: default; }
+    .pick-action-btn.bet-placed { color: var(--gold); background: var(--gold-glow); }
+    .pick-action-btn.sim-placed { color: var(--blue); background: rgba(74,144,217,0.08); }
+
+    .empty-state { padding: 48px 20px; text-align: center; }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
+    .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
+    .go-btn { display: inline-block; margin-top: 20px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; padding: 10px 24px; cursor: pointer; text-decoration: none; transition: all 0.2s; }
+    .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red { background: var(--red); color: #fff; }
+
+    :root {
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
+      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+    }
+    .pick-card, .stat-card, .game-card, .context-panel { box-shadow: var(--lift); border-radius: 2px; transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease; }
+    .pick-card { box-shadow: var(--lift-gold); }
+    .pick-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
+    @media (prefers-reduced-motion: reduce) {
+      .pick-card { transition: none; }
+      .pick-card:hover { transform: none; }
+    }
+
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
+    .offline-bar.show { transform: translateY(0); }
+  </style>
+  <style>
+    .wrap { max-width: 760px; margin: 0 auto; padding: 80px 16px 60px; }
+    .eyebrow { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); }
+    .title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 10vw, 56px); letter-spacing: 3px; line-height: 0.95; margin: 4px 0 14px; }
+    .title em { color: var(--gold); font-style: normal; }
+    .card { border: 1px solid var(--border); background: var(--surface); padding: 14px; margin: 0 0 12px; }
+    .card h3 { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); font-size: 15px; margin: 0 0 8px; }
+    .card p, .card li { font-size: 14px; line-height: 1.55; color: var(--text); }
+    .card ol, .card ul { padding-left: 20px; margin: 6px 0; }
+    .card .dim { color: var(--text-dim); font-size: 12px; }
+    .ctrls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ctrls label { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+    .ctrls select, .ctrls input { width: 100%; padding: 9px 8px; background: transparent; border: 1px solid var(--border); color: var(--text); font-size: 14px; }
+    .btn-gold { width: 100%; margin-top: 10px; padding: 12px; background: var(--gold); color: #000; border: none; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; font-size: 15px; cursor: pointer; }
+    .btn-line { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .leg { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .leg .who { color: var(--text); } .leg .meta { color: var(--text-dim); font-size: 12px; }
+    .leg .pct { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); white-space: nowrap; }
+    .leg button { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; }
+    .sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; text-align: center; }
+    .sum div { border: 1px solid var(--border); padding: 8px 4px; }
+    .sum b { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--gold); }
+    .sum span { font-size: 10px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+    .pos { color: var(--green) !important; } .neg { color: var(--red) !important; }
+    .tag { display: inline-block; font-size: 10px; letter-spacing: 1px; padding: 1px 6px; border: 1px solid var(--gold); color: var(--gold); margin-left: 6px; }
+    .payout-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+    .payout-grid input { padding: 6px 4px; font-size: 13px; text-align: center; }
+  </style>
+
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
+    <a href="guide.html"><span class="ico">?</span> How to Use</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+
+
+  <div class="wrap">
+    <div class="eyebrow">Multi-leg</div>
+    <div class="title">PARLAY &amp; <em>TEASER</em> BUILDER</div>
+
+    <div class="card">
+      <div class="ctrls">
+        <div><label>Ticket</label><select id="kind" onchange="syncUi()"><option value="parlay">Parlay</option><option value="teaser">Teaser</option></select></div>
+        <div><label>Legs</label><select id="legs">
+          <option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></div>
+        <div id="tSportBox"><label>Teaser sport</label><select id="tsport" onchange="syncUi()"><option value="football">Football (NFL/NCAAF)</option><option value="basketball">Basketball (NBA/WNBA/NCAAB)</option></select></div>
+        <div id="tPtsBox"><label>Teaser points</label><select id="tpts" onchange="syncUi()"></select></div>
+        <div><label>Pick legs by</label><select id="rank"><option value="chance">Highest chance</option><option value="value">Best value at the price</option></select></div>
+        <div><label>Totals</label><select id="totals"><option value="yes">Include</option><option value="no">Sides only</option></select></div>
+      </div>
+      <div id="payoutBox">
+        <label style="display:block;margin-top:10px;font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase">
+          Your book's teaser payout (American odds by number of legs — saved)</label>
+        <div class="payout-grid" id="payoutGrid"></div>
+        <div class="dim" style="margin-top:6px">Filled with typical figures; books differ, so set yours.</div>
+      </div>
+      <button class="btn-gold" onclick="build()">Build Ticket</button>
+      <div class="dim" id="status" style="margin-top:8px"></div>
+    </div>
+
+    <div id="result"></div>
+
+    <div class="card">
+      <h3>How legs are chosen</h3>
+      <p class="dim">From every game the pipeline rated (Full Slate and Totals), one leg per game, strongest first.
+      Teasers move each line toward you by the teaser points and re-price it on the model's spread of outcomes —
+      in the NFL, legs that cross both 3 and 7 (favorites of 7.5–8.5, dogs of 1.5–2.5 on a 6-point teaser) gain the most and are tagged.
+      The combined chance treats legs as independent, so same-game legs are never mixed.
+      A parlay or teaser compounds the book's margin; it's only worth it when the combined chance beats the payout's break-even.</p>
+    </div>
+  </div>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    const TEASER_POINTS = { football: [6, 6.5, 7], basketball: [4, 4.5, 5] };
+    // Typical American odds by legs for the smallest / middle / largest teaser.
+    const TYPICAL = [
+      { 4: 260, 5: 400, 6: 600, 7: 900, 8: 1200, 9: 1600, 10: 2000 },
+      { 4: 225, 5: 350, 6: 500, 7: 750, 8: 1000, 9: 1300, 10: 1700 },
+      { 4: 200, 5: 300, 6: 450, 7: 650, 8: 850, 9: 1100, 10: 1400 },
+    ];
+    const FOOTBALL = new Set(['NFL', 'NCAAF']), HOOPS = new Set(['NBA', 'WNBA', 'NCAAB']);
+    let rows = [], excluded = new Set(), lastTicket = null;
+
+    const dec = a => a > 0 ? 1 + a / 100 : 1 + 100 / Math.abs(a);
+    const amer = x => x >= 2 ? Math.round((x - 1) * 100) : Math.round(-100 / (x - 1));
+    const pct = v => (v * 100).toFixed(1) + '%';
+    const esc = s => String(s ?? '').replace(/[<>&]/g, '');
+    const fmtLine = v => (v > 0 ? '+' : '') + v;
+
+    function payoutKey() { return `edge_teaser_payout_${document.getElementById('tsport').value}_${document.getElementById('tpts').value}`; }
+    function payoutTable() {
+      const pts = Number(document.getElementById('tpts').value);
+      const idx = TEASER_POINTS[document.getElementById('tsport').value].indexOf(pts);
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(payoutKey()) || 'null'); } catch {}
+      return saved || TYPICAL[Math.max(0, idx)];
+    }
+    function syncUi() {
+      const teaser = document.getElementById('kind').value === 'teaser';
+      ['tSportBox', 'tPtsBox', 'payoutBox'].forEach(id => document.getElementById(id).hidden = !teaser);
+      const sel = document.getElementById('tpts'), sp = document.getElementById('tsport').value;
+      const keep = sel.value;
+      sel.innerHTML = TEASER_POINTS[sp].map(p => `<option value="${p}">${p}</option>`).join('');
+      if (TEASER_POINTS[sp].map(String).includes(keep)) sel.value = keep;
+      const t = payoutTable();
+      document.getElementById('payoutGrid').innerHTML = [4,5,6,7,8,9,10].map(n =>
+        `<div><div class="dim" style="text-align:center">${n}</div><input type="number" id="po${n}" value="${t[n] ?? ''}" onchange="savePayouts()" /></div>`).join('');
+    }
+    function savePayouts() {
+      const t = {};
+      [4,5,6,7,8,9,10].forEach(n => { const v = Number(document.getElementById('po' + n).value); if (isFinite(v) && Math.abs(v) >= 100) t[n] = v; });
+      localStorage.setItem(payoutKey(), JSON.stringify(t));
+    }
+
+    async function loadRows() {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) throw new Error('Connect Supabase in Settings first.');
+      const res = await fetch(`${url}/rest/v1/shadow_picks?select=*&commence_time=gt.${new Date().toISOString()}&order=commence_time.asc&limit=1000`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (!res.ok) throw new Error('Could not load rated games (HTTP ' + res.status + ').');
+      return (await res.json()).filter(p => p.decision !== 'REMOVED' && p.decision !== 'WITHDRAWN' && !String(p.decision || '').startsWith('LINE_'));
+    }
+
+    // Chance a side covers a line, from the pick's own numbers: the model's
+    // chance at the posted line, moved by what the points are worth on the
+    // ranking's spread of outcomes (key numbers in the NFL).
+    function sideAt(r, side, sideLine) {
+      const g = r.governor_snapshot || {}, core = window.EDGE_RATING;
+      const total = g.ranking?.model_spread, ph = g.posterior_home_prob;
+      if (!core || !isFinite(total) || !isFinite(ph) || !isFinite(r.market_spread)) return null;
+      const at = homeLine => { const c = core.coverProbability(-total, homeLine, null, { sport: r.sport }); return c ? c.home_cover : null; };
+      const ref = at(r.market_spread), now = at(side === 'home' ? sideLine : -sideLine);
+      if (ref == null || now == null) return null;
+      const home = Math.min(0.99, Math.max(0.01, ph + (now - ref)));
+      return side === 'home' ? home : 1 - home;
+    }
+
+    function candidates(kind, pts, sportSet, withTotals) {
+      const out = [];
+      rows.forEach(r => {
+        const g = r.governor_snapshot || {};
+        const isTotal = String(r.decision || '').startsWith('TOTAL_');
+        if (isTotal && !withTotals) return;
+        if (kind === 'teaser' && !sportSet.has(r.sport)) return;
+        const name = `${r.away_team} @ ${r.home_team}`;
+        if (isTotal) {
+          const line = Number(g.line ?? r.market_total);
+          if (!isFinite(line) || !isFinite(g.mu) || !window.EDGE_RATING?.totalProbability) return;
+          ['over', 'under'].forEach(side => {
+            const tl = kind === 'teaser' ? (side === 'over' ? line - pts : line + pts) : line;
+            const pr = EDGE_RATING.totalProbability(g.mu, tl, g.sd);
+            if (!pr) return;
+            const p = side === 'over' ? pr.over : pr.under;
+            const price = kind === 'teaser' ? -110 : (side === r.direction ? (g.price ?? -110) : -110);
+            out.push({ game: r.game_id, key: r.game_id + ':' + side, sport: r.sport, name, label: `${side === 'over' ? 'Over' : 'Under'} ${tl}`,
+                       note: kind === 'teaser' ? `from ${line}` : '', p, price, wong: false });
+          });
+          return;
+        }
+        if (g.bet_type === 'ML') {
+          if (kind === 'teaser') return;
+          const p = Number(r.confidence) / 100;
+          if (!isFinite(p) || !isFinite(g.price)) return;
+          out.push({ game: r.game_id, key: r.game_id + ':ml', sport: r.sport, name, label: `${r.side_team} ML`, note: '', p, price: g.price, wong: false });
+          return;
+        }
+        if (!isFinite(r.market_spread)) return;
+        ['home', 'away'].forEach(side => {
+          const base = side === 'home' ? r.market_spread : -r.market_spread;
+          const line = kind === 'teaser' ? base + pts : base;
+          const p = kind === 'teaser' ? sideAt(r, side, line)
+                  : (side === r.direction ? Number(r.confidence) / 100 : 1 - Number(r.confidence) / 100);
+          if (!isFinite(p)) return;
+          const team = side === 'home' ? r.home_team : r.away_team;
+          const price = kind === 'teaser' ? -110 : (side === r.direction ? (g.price ?? -110) : -110);
+          // Wong legs: a 6-point NFL teaser that crosses both 3 and 7.
+          const wong = kind === 'teaser' && r.sport === 'NFL' && pts === 6 && ((base <= -7.5 && base >= -8.5) || (base >= 1.5 && base <= 2.5));
+          out.push({ game: r.game_id, key: r.game_id + ':' + side, sport: r.sport, name, label: `${team} ${fmtLine(line)}`,
+                     note: kind === 'teaser' ? `from ${fmtLine(base)}` : '', p, price, wong });
+        });
+      });
+      return out;
+    }
+
+    async function build() {
+      const st = document.getElementById('status');
+      st.textContent = 'Loading rated games…';
+      try { rows = await loadRows(); } catch (e) { st.textContent = e.message; return; }
+      const kind = document.getElementById('kind').value, n = Number(document.getElementById('legs').value);
+      const pts = Number(document.getElementById('tpts').value);
+      const sportSet = document.getElementById('tsport').value === 'football' ? FOOTBALL : HOOPS;
+      const rankBy = document.getElementById('rank').value;
+      const cands = candidates(kind, pts, sportSet, document.getElementById('totals').value === 'yes').filter(c => !excluded.has(c.key));
+      const score = c => rankBy === 'value' ? c.p * dec(c.price) : c.p;
+      // One leg per game: the strongest.
+      const bestByGame = {};
+      cands.forEach(c => { if (!bestByGame[c.game] || score(c) > score(bestByGame[c.game])) bestByGame[c.game] = c; });
+      const pool = Object.values(bestByGame).sort((a, b) => score(b) - score(a));
+      if (pool.length < n) {
+        st.textContent = `Only ${pool.length} games available for this ticket — run the pipeline, or choose fewer legs.`;
+        document.getElementById('result').innerHTML = ''; return;
+      }
+      const legs = pool.slice(0, n);
+      const pAll = legs.reduce((s, l) => s * l.p, 1);
+      let decimal;
+      if (kind === 'parlay') decimal = legs.reduce((s, l) => s * dec(l.price), 1);
+      else {
+        const t = {}; [4,5,6,7,8,9,10].forEach(k => { const v = Number(document.getElementById('po' + k)?.value); if (isFinite(v) && Math.abs(v) >= 100) t[k] = v; });
+        if (!t[n]) { st.textContent = `Set your book's ${n}-leg teaser payout first.`; return; }
+        decimal = dec(t[n]);
+      }
+      const ev = pAll * decimal - 1, beLeg = Math.pow(1 / decimal, 1 / n);
+      lastTicket = { kind, n, pts, legs, pAll, decimal, ev };
+      st.textContent = `${pool.length} games to choose from · strongest ${n} shown · tap ✕ to swap a leg out`;
+      document.getElementById('result').innerHTML = `
+        <div class="card">
+          <h3>${kind === 'parlay' ? n + '-leg parlay' : n + '-leg ' + pts + '-point teaser'}</h3>
+          ${legs.map(l => `<div class="leg"><div><div class="who">${esc(l.label)}${l.wong ? '<span class="tag">WONG</span>' : ''}</div>
+            <div class="meta">${esc(l.sport)} · ${esc(l.name)}${l.note ? ' · ' + esc(l.note) : ''}${kind === 'parlay' ? ' · ' + fmtLine(l.price) : ''}</div></div>
+            <div style="display:flex;align-items:center;gap:6px"><span class="pct">${pct(l.p)}</span><button onclick="dropLeg('${l.key}')">✕</button></div></div>`).join('')}
+          <div class="sum">
+            <div><b>${pct(pAll)}</b><span>Chance all win</span></div>
+            <div><b>${fmtLine(amer(decimal))}</b><span>Pays (${decimal.toFixed(2)}×)</span></div>
+            <div><b class="${ev >= 0 ? 'pos' : 'neg'}">${ev >= 0 ? '+' : ''}${(ev * 100).toFixed(1)}%</b><span>Value</span></div>
+          </div>
+          <p class="dim" style="margin-top:8px">Each leg needs to hit ${pct(beLeg)} on average to break even at this payout.
+            ${ev >= 0 ? 'The combined chance beats the payout.' : 'The combined chance falls short of the payout — the book keeps the edge on this ticket.'}</p>
+          <button class="btn-line" onclick="copyTicket()">⧉ Copy Ticket</button>
+          ${excluded.size ? `<button class="btn-line" style="margin-left:6px" onclick="resetLegs()">Reset swaps</button>` : ''}
+        </div>`;
+    }
+
+    function dropLeg(key) { excluded.add(key); build(); }
+    function resetLegs() { excluded = new Set(); build(); }
+
+    async function copyTicket() {
+      if (!lastTicket) return;
+      const t = lastTicket;
+      const text = [
+        `${t.kind === 'parlay' ? t.n + '-leg parlay' : t.n + '-leg ' + t.pts + '-pt teaser'}`,
+        ...t.legs.map(l => `${l.label} (${l.sport} · ${l.name}) — ${pct(l.p)}`),
+        `Chance all win ${pct(t.pAll)} · pays ${fmtLine(amer(t.decimal))} · value ${(t.ev * 100).toFixed(1)}%`,
+      ].join('\n');
+      try { await navigator.clipboard.writeText(text); document.getElementById('status').textContent = 'Ticket copied.'; }
+      catch { document.getElementById('status').textContent = text; }
+    }
+
+    syncUi();
+
+  </script>
+  <script>
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+      }
+    })();
+  </script>
+</body>
+</html>
