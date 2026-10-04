@@ -12,30 +12,10 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <script src="power-engine.js"></script>
-  <script src="algorithms.js"></script>
-  <script src="governor.js"></script>
-  <script src="physics.js"></script>
-  <script src="claude.js"></script>
-  <script src="context-builder.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
-  <script src="injury-fragmentation.js"></script>
-  <script src="ats-tracker.js"></script>
-  <script src="orchestrator.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
+  <script src="edge-time.js"></script>
   <script src="team-aliases.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="situation-results.js"></script>
-  <script src="game-id-map.js"></script>
-  <script src="shadow-grader.js"></script>
-  <script src="sim-grader.js"></script>
-  <script src="backfill.js"></script>
+  <script src="qb-ratings.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -69,96 +49,173 @@
     .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
     .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
-    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(40px, 11vw, 68px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
     .page-title em { color: var(--gold); font-style: normal; }
 
-    /* SUMMARY STRIP */
-    .summary-strip { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
-    .sum-cell { padding: 14px 10px; text-align: center; border-right: 1px solid var(--border); }
+    .portfolio-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 14px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
+    .pf-btn:last-child { border-right: none; }
+    .pf-btn.active.real { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .pf-btn.active.sim { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .pf-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+    .pf-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .pf-btn.active.real .pf-val { color: var(--gold); }
+    .pf-btn.active.sim .pf-val { color: var(--blue); }
+
+    .mode-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
+    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; }
+    .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
+    .mode-pill.det { border-color: var(--gold-dim); color: var(--gold); }
+    .mode-pill.ai  { border-color: var(--blue); color: var(--blue); }
+    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
+    .sum-cell { padding: 12px 8px; border-right: 1px solid var(--border); text-align: center; }
     .sum-cell:last-child { border-right: none; }
-    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; color: var(--text); }
+    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
     .sum-val.gold { color: var(--gold); }
     .sum-val.green { color: var(--green); }
-    .sum-val.red { color: var(--red); }
-    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
+    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* SPORT TABS */
-    .sport-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; background: var(--bg2); }
-    .sport-tabs::-webkit-scrollbar { display: none; }
-    .stab { flex-shrink: 0; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 12px 16px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-    .stab.active { color: var(--gold); border-bottom-color: var(--gold); }
+    .filter-strip { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .filter-strip::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
 
-    /* CONTROLS */
-    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
-    .ctrl-label { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
-    .ctrl-btns { display: flex; gap: 0; border: 1px solid var(--border); }
-    .ctrl-btn { background: none; border: none; border-right: 1px solid var(--border); padding: 7px 14px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-    .ctrl-btn:last-child { border-right: none; }
-    .ctrl-btn.active { color: var(--gold); background: var(--gold-glow); }
+    .picks-list { padding: 16px 20px; }
+    .pick-card { background: var(--surface); border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+    .pick-card:hover { border-color: var(--border-bright); }
+    .pick-card.tier-elite  { border-left: 3px solid var(--gold); }
+    .pick-card.tier-high   { border-left: 3px solid var(--green); }
+    .pick-card.tier-solid  { border-left: 3px solid var(--text-mid); }
+    .pick-card.tier-lean   { border-left: 3px solid var(--text-dim); }
+    .pick-card.vetoed      { opacity: 0.5; }
+    .pick-card.passed      { opacity: 0.55; }
 
-    /* FAMILY LIST */
-    .family-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+    .pick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px; gap: 8px; }
+    .pick-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .pick-time { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); }
+    .decision-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid; }
+    .decision-tag.bet2u { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.1); }
+    .decision-tag.bet1u { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
+    .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
+    .decision-tag.pass  { border-color: var(--text-dim); color: var(--text-dim); }
+    .decision-tag.capped { border-color: var(--text-dim); color: var(--text-dim); }
+    .mode-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--border); color: var(--text-dim); }
+    .mode-badge.ai { border-color: var(--blue); color: var(--blue); }
 
-    /* FAMILY CARD */
-    .family-card { background: var(--surface); border: 1px solid var(--border); overflow: hidden; transition: border-color 0.2s; }
-    .family-card:hover { border-color: var(--border-bright); }
-    .family-card.disabled { opacity: 0.45; }
-    .family-card.vote-yes { border-left: 3px solid var(--green); }
-    .family-card.vote-no  { border-left: 3px solid var(--red); }
-    .family-card.vote-neu { border-left: 3px solid var(--text-dim); }
+    .pick-body { padding: 6px 14px 12px; }
+    .pick-matchup { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; line-height: 1.1; margin-bottom: 4px; }
+    .pick-side { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
+    .pick-side.away { color: var(--blue); }
 
-    .family-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; }
-    .family-num { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--gold-dim); width: 28px; flex-shrink: 0; text-align: center; }
-    .family-card.vote-yes .family-num { color: var(--green); }
-    .family-card.vote-no  .family-num { color: var(--red); }
-    .family-info { flex: 1; min-width: 0; }
-    .family-name { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--text); line-height: 1; margin-bottom: 4px; }
-    .family-desc { font-size: 12px; color: var(--text-dim); font-weight: 300; line-height: 1.4; }
-    .family-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
-    .family-vote-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; min-width: 50px; text-align: center; }
-    .family-vote-badge.yes { border-color: rgba(39,174,96,0.5); color: var(--green); }
-    .family-vote-badge.no  { border-color: rgba(231,76,60,0.4); color: var(--red); }
-    .family-vote-badge.neu { border-color: var(--border); color: var(--text-dim); }
-    .toggle { position: relative; width: 40px; height: 22px; cursor: pointer; flex-shrink: 0; }
-    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-    .toggle-track { position: absolute; inset: 0; background: var(--bg4); border: 1px solid var(--border); transition: all 0.25s; }
-    .toggle input:checked + .toggle-track { background: var(--gold-glow); border-color: var(--gold); }
-    .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; background: var(--text-dim); transition: all 0.25s; }
-    .toggle input:checked ~ .toggle-thumb { left: 21px; background: var(--gold); }
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); margin-bottom: 12px; }
+    .metric-cell { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .metric-cell:last-child { border-right: none; }
+    .metric-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .metric-val.gold  { color: var(--gold); }
+    .metric-val.green { color: var(--green); }
+    .metric-val.red   { color: var(--red); }
+    .metric-val.blue  { color: var(--blue); }
+    .metric-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-    /* FAMILY STATS */
-    .family-stats { display: flex; border-top: 1px solid var(--border); }
-    .fstat { flex: 1; padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
-    .fstat:last-child { border-right: none; }
-    .fstat-val { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 1px; color: var(--text-mid); }
-    .fstat-val.green { color: var(--green); }
-    .fstat-val.red { color: var(--red); }
-    .fstat-val.gold { color: var(--gold); }
-    .fstat-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 2px; }
+    .cons-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .cons-track { flex: 1; background: var(--bg4); height: 5px; overflow: hidden; }
+    .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
+    .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
 
-    /* WEIGHT ROW */
-    .weight-row { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg2); }
-    .weight-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
-    .weight-slider { flex: 1; -webkit-appearance: none; appearance: none; height: 3px; background: var(--bg4); outline: none; border: none; }
-    .weight-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: var(--gold); cursor: pointer; border: none; }
-    .weight-val { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; width: 40px; text-align: right; }
-    .weight-dynamic-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid var(--green); color: var(--green); }
+    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
 
-    /* SUB-ALGORITHMS */
-    .subs-section { border-top: 1px solid var(--border); background: var(--bg2); padding: 12px 16px 14px; display: none; }
-    .subs-section.open { display: block; }
-    .subs-head { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
-    .sub-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(201,168,76,0.05); }
-    .sub-row:last-child { border-bottom: none; }
-    .sub-role { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 6px; border: 1px solid; min-width: 46px; text-align: center; }
-    .sub-role.lead { border-color: var(--gold-dim); color: var(--gold); }
-    .sub-role.support { border-color: var(--border); color: var(--text-dim); }
-    .sub-name { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text-mid); flex: 1; }
-    .sub-weight { font-family: 'Bebas Neue', sans-serif; font-size: 15px; color: var(--gold); letter-spacing: 1px; min-width: 30px; text-align: right; }
+    .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .view-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+    .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .view-tab.active { color: var(--gold); border-color: var(--gold); }
+    .leans-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-dim); margin: 0 0 10px; }
+    .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
+    .best-line b { color: var(--gold); }
+    .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
+    .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
+    .pick-action-btn.copy { color: var(--text); }
+    .bankroll-note { border: 1px solid var(--gold); color: var(--gold); font-size: 12px; line-height: 1.5; padding: 8px 10px; margin: 0 0 10px; }
+    .bankroll-note[hidden] { display: none; }
+    .analytics { margin: 4px 0 10px; border: 1px solid var(--border); }
+    .analytics summary { cursor: pointer; padding: 8px 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+    .analytics-body { padding: 0 10px 10px; font-size: 12px; line-height: 1.6; color: var(--text); }
+    .analytics-body .row { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 3px 0; }
+    .analytics-body .row span:first-child { color: var(--text-dim); }
+    .analytics-body .fam { padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .analytics-body .fam b { font-weight: 600; }
+    .analytics-body .fam.off { opacity: 0.45; }
+    .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
+    .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
+    .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
+    .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
 
-    .expand-hint { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 5px; }
-    .expand-hint::after { content: '▾'; transition: transform 0.25s; display: inline-block; }
-    .family-card.expanded .expand-hint::after { transform: rotate(180deg); }
+    .context-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      border-radius: 2px;
+    }
+    .ctx-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(201,168,76,0.06);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.8px;
+    }
+    .ctx-row:last-child { border-bottom: none; }
+    .ctx-label {
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ctx-value { color: var(--text-mid); text-align: right; font-weight: 600; }
+    .ctx-value .pos { color: var(--green); }
+    .ctx-value .neg { color: var(--red); }
+    .ctx-value .gold { color: var(--gold); }
+    .ctx-value .blue { color: var(--blue); }
+
+    .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
+    .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
+    .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
+
+    .pick-actions { display: flex; gap: 0; border-top: 1px solid var(--border); }
+    .pick-action-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; }
+    .pick-action-btn:last-child { border-right: none; }
+    .pick-action-btn.approve { color: var(--green); }
+    .pick-action-btn.approve:hover { background: rgba(39,174,96,0.08); }
+    .pick-action-btn.skip { color: var(--red); }
+    .pick-action-btn.skip:hover { background: rgba(231,76,60,0.06); }
+    .pick-action-btn.simbet { color: var(--blue); }
+    .pick-action-btn.simbet:hover { background: rgba(74,144,217,0.08); }
+    .pick-action-btn.analysis { color: var(--gold); }
+    .pick-action-btn.analysis:hover { background: var(--gold-glow); }
+    .pick-action-btn.done { color: var(--text-dim); cursor: default; }
+    .pick-action-btn.bet-placed { color: var(--gold); background: var(--gold-glow); }
+    .pick-action-btn.sim-placed { color: var(--blue); background: rgba(74,144,217,0.08); }
+
+    .empty-state { padding: 48px 20px; text-align: center; }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
+    .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
+    .go-btn { display: inline-block; margin-top: 20px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; padding: 10px 24px; cursor: pointer; text-decoration: none; transition: all 0.2s; }
+    .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
 
     footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
     .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
@@ -166,66 +223,67 @@
 
     .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red { background: var(--red); color: #fff; }
 
-    /* ── ELEVATION ─────────────────────────────────────────────
-       Cards sit above the page rather than sharing its plane.
-       Two depths: resting, and raised on interaction. */
     :root {
       --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
       --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
       --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
     }
-    .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-    .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-    .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-    .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-    .key-block, .score-block, .verdict-block, .chart-box, .line-box,
-    .claude-panel, .pipeline-panel, .pending-box, .parlay-card, .trend-row-card {
-      box-shadow: var(--lift);
-      border-radius: 2px;
-      transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease;
-      will-change: transform;
-    }
-    .pick-card, .clv-card, .game-card {
-      box-shadow: var(--lift-gold);
-    }
-    .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-    .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-    .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-      box-shadow: var(--lift-high);
-      transform: translateY(-2px);
-    }
-    .mode-card.active, .decision-card.active, .portfolio-card.active, .theme-card.active {
-      box-shadow: var(--lift-high);
-      transform: translateY(-1px);
-    }
+    .pick-card, .stat-card, .game-card, .context-panel { box-shadow: var(--lift); border-radius: 2px; transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease; }
+    .pick-card { box-shadow: var(--lift-gold); }
+    .pick-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
     @media (prefers-reduced-motion: reduce) {
-      .stat-card, .pick-card, .bank-card, .cons-block, .game-card, .family-card,
-      .line-card, .key-card, .clv-card, .unit-card, .cmp-card, .sizing-card,
-      .cap-card, .limit-card, .sb-card, .mode-card, .decision-card, .portfolio-card,
-      .theme-card, .split-card, .trend-card, .mc-card, .snap-tile, .nav-tile,
-      .parlay-card, .trend-row-card {
-        transition: none;
-      }
-      .stat-card:hover, .pick-card:hover, .game-card:hover, .family-card:hover,
-      .line-card:hover, .key-card:hover, .cmp-card:hover, .snap-tile:hover,
-      .trend-card:hover, .split-card:hover, .nav-tile:hover, .parlay-card:hover {
-        transform: none;
-      }
+      .pick-card { transition: none; }
+      .pick-card:hover { transform: none; }
     }
 
-    /* ── OFFLINE BANNER ── */
-    .offline-bar {
-      position: fixed; top: 60px; left: 0; right: 0; z-index: 97;
-      background: #2A1F08; border-bottom: 1px solid var(--border-bright);
-      color: var(--gold); font-family: 'Barlow Condensed', sans-serif;
-      font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
-      padding: 7px 20px; text-align: center;
-      transform: translateY(-100%); transition: transform 0.25s ease;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
-    }
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
     .offline-bar.show { transform: translateY(0); }
   </style>
+  <style>
+    .wrap { max-width: 760px; margin: 0 auto; padding: 80px 16px 60px; }
+    .eyebrow { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); }
+    .title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 10vw, 56px); letter-spacing: 3px; line-height: 0.95; margin: 4px 0 14px; }
+    .title em { color: var(--gold); font-style: normal; }
+    .card { border: 1px solid var(--border); background: var(--surface); padding: 14px; margin: 0 0 12px; }
+    .card h3 { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); font-size: 15px; margin: 0 0 8px; }
+    .card p, .card li { font-size: 14px; line-height: 1.55; color: var(--text); }
+    .card ol, .card ul { padding-left: 20px; margin: 6px 0; }
+    .card .dim { color: var(--text-dim); font-size: 12px; }
+    .ctrls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ctrls label { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+    .ctrls select, .ctrls input { width: 100%; padding: 9px 8px; background: transparent; border: 1px solid var(--border); color: var(--text); font-size: 14px; }
+    .btn-gold { width: 100%; margin-top: 10px; padding: 12px; background: var(--gold); color: #000; border: none; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; font-size: 15px; cursor: pointer; }
+    .btn-line { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .leg { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .leg .who { color: var(--text); } .leg .meta { color: var(--text-dim); font-size: 12px; }
+    .leg .pct { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); white-space: nowrap; }
+    .leg button { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; }
+    .sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; text-align: center; }
+    .sum div { border: 1px solid var(--border); padding: 8px 4px; }
+    .sum b { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--gold); }
+    .sum span { font-size: 10px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+    .pos { color: var(--green) !important; } .neg { color: var(--red) !important; }
+    .tag { display: inline-block; font-size: 10px; letter-spacing: 1px; padding: 1px 6px; border: 1px solid var(--gold); color: var(--gold); margin-left: 6px; }
+    .payout-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+    .payout-grid input { padding: 6px 4px; font-size: 13px; text-align: center; }
+  </style>
+
+  <style>
+    .stabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 12px; }
+    .stabs button { flex-shrink: 0; padding: 8px 12px; background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; font-size: 12px; cursor: pointer; }
+    .stabs button.on { color: var(--gold); border-color: var(--gold); }
+    .kv { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .kv span:first-child { color: var(--text-dim); }
+    .tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tbl th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 4px 4px; border-bottom: 1px solid var(--border); }
+    .tbl td { padding: 5px 4px; border-bottom: 1px solid var(--border); }
+    .tbl td.n { text-align: right; white-space: nowrap; }
+  </style>
+
 </head>
 <body>
 
@@ -249,16 +307,17 @@
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
+    <a href="guide.html"><span class="ico">?</span> How to Use</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html" class="active"><span class="ico">⊞</span> Algorithm Suite</a>
-    <<a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
     <a href="lines.html"><span class="ico">→</span> Line Movement</a>
-    <div class="drawer-section">Records</div> 
+    <div class="drawer-section">Records</div>
     <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
-     <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
     <a href="history.html"><span class="ico">☰</span> Pick History</a>
-    <a href="diagnostic.html"><span class="ico">⚡</span> Fix</a>
     <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
     <div class="drawer-section">Control</div>
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
@@ -266,65 +325,16 @@
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
   </div>
 
-  <div class="toast" id="toast"></div>
 
-  <main>
 
-    <div class="page-header">
-      <div class="page-eye">Intelligence Engine</div>
-      <div class="page-title">ALGORITHM <em>SUITE</em></div>
-    </div>
-
-    <!-- SUMMARY -->
-    <div class="summary-strip">
-      <div class="sum-cell">
-        <div class="sum-val gold" id="sumFamilies">9</div>
-        <div class="sum-lbl">Families</div>
-      </div>
-      <div class="sum-cell">
-        <div class="sum-val" id="sumSubs">24</div>
-        <div class="sum-lbl">Sub-Algos</div>
-      </div>
-      <div class="sum-cell">
-        <div class="sum-val green" id="sumBest">—</div>
-        <div class="sum-lbl">Best ROI</div>
-      </div>
-      <div class="sum-cell">
-        <div class="sum-val" id="sumActive">—</div>
-        <div class="sum-lbl">Active</div>
-      </div>
-    </div>
-
-    <!-- SPORT TABS -->
-    <div class="sport-tabs" id="sportTabs">
-      <button class="stab active" data-sport="NFL">NFL</button>
-      <button class="stab" data-sport="NBA">NBA</button>
-      <button class="stab" data-sport="MLB">MLB</button>
-      <button class="stab" data-sport="NHL">NHL</button>
-      <button class="stab" data-sport="NCAAF">NCAAF</button>
-      <button class="stab" data-sport="NCAAB">NCAAB</button>
-      <button class="stab" data-sport="MLS">MLS</button>
-    </div>
-
-    <!-- CONTROLS -->
-    <div class="controls-bar">
-      <span class="ctrl-label">View</span>
-      <div class="ctrl-btns">
-        <button class="ctrl-btn active" id="viewAll" onclick="setView('all')">All</button>
-        <button class="ctrl-btn" id="viewOn" onclick="setView('on')">Active</button>
-        <button class="ctrl-btn" id="viewOff" onclick="setView('off')">Off</button>
-      </div>
-    </div>
-
-    <!-- FAMILY LIST -->
-    <div class="family-list" id="familyList"></div>
-
-    <footer>
-      <div class="foot-logo">EDGE</div>
-      <div class="foot-txt">9 signal families · 24 sub-algorithms · Deterministic + AI · © 2026</div>
-    </footer>
-
-  </main>
+  <div class="wrap">
+    <div class="eyebrow">Intelligence Engine</div>
+    <div class="title">ALGORITHM <em>SUITE</em></div>
+    <div class="card"><p class="dim">What actually drives each sport's picks right now — read-only. These numbers are learned by the Slate Test
+      and from graded games; nothing here is set by hand.</p></div>
+    <div class="stabs" id="stabs"></div>
+    <div id="body"></div>
+  </div>
 
   <script>
     // ── NAV ──
@@ -338,393 +348,192 @@
       ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
     }));
 
-    // ── FAMILY DEFINITIONS WITH SUB-ALGORITHMS ──
-    const FAMILIES = [
-      {
-        id: 'team_quality',
-        name: 'Team Quality',
-        desc: 'True team strength, adjusted for opponent. The predictive core.',
-        subs: [
-          { role: 'lead',    name: 'Elo Rating (Score-Adjusted)', weight: 4.0 },
-          { role: 'support', name: 'Massey Simple Rating System',  weight: 3.0 },
-          { role: 'support', name: 'Pythagorean Expectation',      weight: 3.0 },
-        ],
-      },
-      {
-        id: 'offense_defense',
-        name: 'Offense / Defense',
-        desc: 'Pace-adjusted scoring efficiency and scheme matchup edges.',
-        subs: [
-          { role: 'lead',    name: 'Net Rating (Pace-Adjusted)',   weight: 4.5 },
-          { role: 'support', name: 'Defense Scheme Matchup',        weight: 3.0 },
-          { role: 'support', name: 'Offensive Efficiency Delta',    weight: 2.5 },
-        ],
-      },
-      {
-        id: 'coaching',
-        name: 'Coaching',
-        desc: 'Situational spots, in-game adjustments, and close-game discipline.',
-        subs: [
-          { role: 'lead',    name: 'Composite Coaching Rating',     weight: 4.0 },
-          { role: 'support', name: 'Halftime Adjustment Diff',      weight: 3.0 },
-          { role: 'support', name: 'Close-Game Record',             weight: 3.0 },
-        ],
-      },
-      {
-        id: 'market',
-        name: 'Market Intelligence',
-        desc: 'Closing line value, sharp money, and reverse line movement.',
-        subs: [
-          { role: 'lead',    name: 'Closing Line Value (CLV)',      weight: 4.5 },
-          { role: 'support', name: 'Sharp Money Indicator',         weight: 3.5 },
-          { role: 'support', name: 'Reverse Line Movement',         weight: 2.0 },
-        ],
-      },
-      {
-        id: 'line_dynamics',
-        name: 'Line Dynamics',
-        desc: 'Steam moves, open-to-close magnitude, and public fade signals.',
-        subs: [
-          { role: 'lead',    name: 'Steam Move Detector',           weight: 4.0 },
-          { role: 'support', name: 'Open-to-Close Movement',        weight: 3.0 },
-          { role: 'support', name: 'Public Fade (Extremes)',        weight: 3.0 },
-        ],
-      },
-      {
-        id: 'fatigue',
-        name: 'Fatigue & Recovery',
-        desc: 'Rest differential, travel miles, and timezone shifts.',
-        subs: [
-          { role: 'lead',    name: 'Rest Differential',             weight: 4.0 },
-          { role: 'support', name: 'Travel Miles Penalty',          weight: 3.0 },
-          { role: 'support', name: 'Timezone Shift',                weight: 3.0 },
-        ],
-      },
-      {
-        id: 'environment',
-        name: 'Environment',
-        desc: 'Weather, venue, and park factors that suppress or inflate scoring.',
-        subs: [
-          { role: 'lead',    name: 'Wind Impact',                   weight: 4.0 },
-          { role: 'support', name: 'Temperature Impact',            weight: 3.0 },
-          { role: 'support', name: 'Precipitation Impact',          weight: 3.0 },
-        ],
-      },
-      {
-        id: 'trend',
-        name: 'Trend & Momentum',
-        desc: 'Recent form, regression signals, and home/away splits.',
-        subs: [
-          { role: 'lead',    name: 'Recency-Weighted Form',         weight: 4.0 },
-          { role: 'support', name: 'Regression to Mean',            weight: 3.5 },
-          { role: 'support', name: 'Home/Away Split Signal',        weight: 2.5 },
-        ],
-      },
-      {
-        id: 'injury',
-        name: 'Injury Impact',
-        desc: 'VORP-weighted impact of missing key players.',
-        subs: [
-          { role: 'lead',    name: 'Injury VORP Sum',               weight: 5.0 },
-          { role: 'support', name: 'Lineup Continuity',             weight: 3.0 },
-          { role: 'support', name: 'Questionable-Doubtful Penalty', weight: 2.0 },
-        ],
-      },
+    const SPORTS = ['NFL', 'NCAAF', 'NBA', 'WNBA', 'NCAAB', 'MLB', 'NHL', 'MLS'];
+    const ML = new Set(['MLB', 'NHL']);
+    const ROLES = [
+      ['Team quality', 'in strength', 'Glicko, Massey, Colley, Elo, Pythagorean — combined into the ranking'],
+      ['Offense / defense', 'in strength', 'scoring projection, held near the composite early in a season'],
+      ['Coaching', 'in strength', 'close-game record, about ±1 point at most'],
+      ['Rest / travel', 'adjusts', 'part of the rest/injury step (capped about ±4 points with injuries)'],
+      ['Injuries', 'adjusts', 'lineup share missing; quarterbacks are handled by the quarterback ratings instead'],
+      ['Market / line movement', 'shown only', 'the market is the starting point of every pick, not a vote'],
+      ['Weather', 'totals only', 'can lower an outdoor football total'],
+      ['Trends', 'shown only', 'ATS form and head-to-head, kept for reading'],
     ];
+    let sport = localStorage.getItem('edge_suite_sport') || 'NFL';
+    let table = null;
+    const esc = s => String(s ?? '').replace(/[<>&]/g, '');
+    const pct = v => v == null || !isFinite(v) ? '—' : (v * 100).toFixed(1) + '%';
+    const n2 = v => v == null || !isFinite(v) ? '—' : Number(v).toFixed(2);
 
-    // ── STATE ──
-    let currentSport = 'NFL';
-    let currentView = 'all';
-    let weightsBySport = {};   // { NFL: { team_quality: 10, ... } }
-    let perfBySport = {};      // { NFL: { team_quality: { wins, losses, roi, ... } } }
-    let expandedFamilies = new Set();
-
-    // ── SPORT TABS ──
-    document.querySelectorAll('.stab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('.stab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        currentSport = tab.dataset.sport;
-        render();
-      });
-    });
-
-    // ── VIEW ──
-    function setView(v) {
-      currentView = v;
-      ['all','on','off'].forEach(k => {
-        const btn = document.getElementById('view' + k.charAt(0).toUpperCase() + k.slice(1));
-        if (btn) btn.classList.toggle('active', k === v);
-      });
-      render();
-    }
-
-    // ── LOAD WEIGHTS FROM SUPABASE ──
-    async function loadWeights() {
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (!url || !key) return;
-
+    async function loadTable() {
+      try { const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null'); if (t) return t; } catch {}
+      // Not on this device yet: the copy the Slate Test saved to Supabase.
       try {
-        const res = await fetch(`${url}/rest/v1/algorithm_weights?select=*`, {
-          headers: { apikey: key, Authorization: `Bearer ${key}` }
-        });
-        if (!res.ok) return;
-        const rows = await res.json();
-
-        weightsBySport = {};
-        perfBySport = {};
-
-        rows.forEach(r => {
-          if (!weightsBySport[r.sport]) weightsBySport[r.sport] = {};
-          weightsBySport[r.sport][r.family] = {
-            dynamic_weight: r.dynamic_weight ?? r.base_weight ?? 7,
-            base_weight: r.base_weight ?? 7,
-          };
-
-          if (!perfBySport[r.sport]) perfBySport[r.sport] = {};
-          perfBySport[r.sport][r.family] = {
-            wins: r.wins || 0,
-            losses: r.losses || 0,
-            pushes: r.pushes || 0,
-            roi: r.roi ?? 0,
-          };
-        });
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const res = await fetch(`${url}/rest/v1/settings?id=eq.1&select=governor_calibration`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (res.ok) { const r = await res.json(); return r?.[0]?.governor_calibration || null; }
       } catch {}
+      return null;
     }
 
-    // ── GET WEIGHT FOR FAMILY ──
-    function getWeight(familyId) {
-      return weightsBySport[currentSport]?.[familyId]?.dynamic_weight ?? 7;
+    function wilson(w, n, z = 2.576) {
+      if (!n) return [0, 1];
+      const p = w / n, d = 1 + z * z / n, c = p + z * z / (2 * n), r = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+      return [(c - r) / d, (c + r) / d];
+    }
+    const lg = p => Math.log(p / (1 - p)), sg = x => 1 / (1 + Math.exp(-x));
+    // Same rule the governor uses for a spot's pull.
+    function spotPull(r, group) {
+      if (['rest', 'travel', 'injury', 'weather'].includes(group)) return { text: 'in rest/injury step', proven: false };
+      const n = (r.wins || 0) + (r.losses || 0);
+      const base = n && r.mkt_sum ? r.mkt_sum / n : 0.5;
+      const prior = sg(lg(base) + lg(0.51));
+      const [lo, hi] = wilson(r.wins || 0, n);
+      const proven = n >= 30 && (lo > base || hi < base);
+      const rate = proven ? ((r.wins || 0) + prior * 60) / (n + 60) : prior;
+      let edge = Math.max(-0.15, Math.min(0.15, lg(rate) - lg(base)));
+      if (group === 'power_line') edge *= 0.5;
+      const pts = edge * 25;
+      return { text: `${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts${proven ? ' · proven' : ' · not proven'}`, proven };
     }
 
-    function getBaseWeight(familyId) {
-      return weightsBySport[currentSport]?.[familyId]?.base_weight ?? 7;
-    }
+    function card(title, inner) { return `<div class="card"><h3>${title}</h3>${inner}</div>`; }
+    function kv(k, v) { return `<div class="kv"><span>${esc(k)}</span><span>${v}</span></div>`; }
 
-    function getPerf(familyId) {
-      return perfBySport[currentSport]?.[familyId] || { wins: 0, losses: 0, pushes: 0, roi: 0 };
-    }
-
-    // ── UPDATE WEIGHT (LOCAL) ──
-    async function updateWeight(familyId, val) {
-      if (!weightsBySport[currentSport]) weightsBySport[currentSport] = {};
-      if (!weightsBySport[currentSport][familyId]) weightsBySport[currentSport][familyId] = {};
-      weightsBySport[currentSport][familyId].dynamic_weight = parseFloat(val);
-
-      // Persist to Supabase
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-      if (url && key) {
-        try {
-          await fetch(
-            `${url}/rest/v1/algorithm_weights?family=eq.${encodeURIComponent(familyId)}&sport=eq.${encodeURIComponent(currentSport)}`,
-            {
-              method: 'PATCH',
-              headers: {
-                apikey: key,
-                Authorization: `Bearer ${key}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ dynamic_weight: parseFloat(val), last_updated: new Date().toISOString() }),
-            }
-          );
-        } catch {}
-      }
-
-      // Sync to local governor cache
-      syncDynamicWeightsLocal();
-
-      document.getElementById('wval-' + familyId).textContent = val;
-    }
-
-    // ── TOGGLE FAMILY ON/OFF ──
-    function toggleFamily(familyId, enabled) {
-      const card = document.getElementById('fcard-' + familyId);
-      if (card) card.classList.toggle('disabled', !enabled);
-      localStorage.setItem(`edge_family_enabled_${currentSport}_${familyId}`, String(enabled));
-      updateSummary();
-    }
-
-    function isFamilyEnabled(familyId) {
-      const stored = localStorage.getItem(`edge_family_enabled_${currentSport}_${familyId}`);
-      return stored === null ? true : stored === 'true';
-    }
-
-    // ── EXPAND/COLLAPSE ──
-    function toggleExpand(familyId) {
-      if (expandedFamilies.has(familyId)) expandedFamilies.delete(familyId);
-      else expandedFamilies.add(familyId);
-
-      const card = document.getElementById('fcard-' + familyId);
-      const subs = document.getElementById('subs-' + familyId);
-      if (card) card.classList.toggle('expanded', expandedFamilies.has(familyId));
-      if (subs) subs.classList.toggle('open', expandedFamilies.has(familyId));
-    }
-
-    // ── RENDER ──
     function render() {
-      const list = document.getElementById('familyList');
+      document.getElementById('stabs').innerHTML = SPORTS.map(s => `<button class="${s === sport ? 'on' : ''}" onclick="pick('${s}')">${s}</button>`).join('');
+      const t = table || {};
+      const key = ML.has(sport) ? `${sport}_ML` : sport;
+      let html = '';
 
-      // Filter by view
-      const visible = FAMILIES.filter(f => {
-        const on = isFamilyEnabled(f.id);
-        if (currentView === 'on') return on;
-        if (currentView === 'off') return !on;
-        return true;
-      });
+      // Strength
+      const blend = t.blend?.[key] || t.blend?.[sport];
+      const fit = t.rating_fit?.[sport];
+      html += card('Strength — the ranking', [
+        kv('Weight on the ranking\'s disagreement with the market', blend ? `<b>${n2(blend.w_strength)}</b> (learned on ${blend.games || '?'} games)` : '<b>0.30</b> (default — not learned yet)'),
+        blend?.test ? kv('Held-out log loss: learned vs default', `${n2(blend.test.fit)} vs ${n2(blend.test.default)}`) : '',
+        kv('Ranking model', fit ? `fitted on ${fit.n} games · typical miss ±${n2(fit.rmse)}` : 'hand-set blend (no fit saved)'),
+        kv('Early season', 'counts in proportion to games played; never moves a pick more than about 10 points'),
+      ].join(''));
 
-      if (!visible.length) {
-        list.innerHTML = `<div style="text-align:center;padding:40px 20px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">No families match view</div>`;
-        updateSummary();
-        return;
+      // Proof / sizing
+      const m = t.sport_metrics?.[key] || t.sport_metrics?.[sport];
+      const factor = !m ? 0.6 : m.skill > 0 ? 1 : m.skill > -0.02 ? 0.6 : 0.35;
+      html += card('Proof — how bets are sized', [
+        kv('Slate Test skill vs the market', m ? `<b class="${m.skill > 0 ? 'pos' : 'neg'}">${(m.skill * 100).toFixed(2)}%</b> over ${m.games} games` : 'not tested'),
+        kv('Bet size factor', `<b>${Math.round(factor * 100)}%</b> of the full Kelly size${!m ? ' (untested)' : ''}`),
+        m && m.model_mae != null ? kv('Ranking vs market miss', `${n2(m.model_mae)} vs ${n2(m.market_mae)}`) : '',
+      ].join(''));
+
+      // Totals + calibration
+      const tw = t.total_weight?.[sport];
+      const cal = t.sports?.[sport] || {}, calMl = t.sports?.[`${sport}_ML`] || {};
+      const calN = o => Object.values(o).reduce((s, b) => s + (b.samples || 0), 0);
+      html += card('Totals and calibration', [
+        kv('Weight on the model\'s total', tw ? `<b>${n2(tw.w)}</b> (learned on ${tw.games} games)` : '<b>0.30</b> (default)'),
+        kv('Spread calibration', Object.keys(cal).length ? `${Object.keys(cal).length} bands · ${calN(cal)} games` : 'none yet — run the Slate Test with learned values'),
+        ML.has(sport) ? kv('Moneyline calibration', Object.keys(calMl).length ? `${Object.keys(calMl).length} bands · ${calN(calMl)} games` : 'none yet') : '',
+      ].join(''));
+
+      // Spots
+      const recs = t.spot_records?.[key] || t.spot_records?.[sport] || {};
+      const rows = Object.entries(recs).filter(([, r]) => r && r.deduped).sort((a, b) => ((b[1].wins || 0) + (b[1].losses || 0)) - ((a[1].wins || 0) + (a[1].losses || 0)));
+      html += card('Spots — situations and their records', rows.length
+        ? `<table class="tbl"><tr><th>Situation</th><th class="n">Record</th><th class="n">Rate</th><th class="n">Counts as</th></tr>` +
+          rows.map(([id, r]) => { const n = (r.wins || 0) + (r.losses || 0); const s = spotPull(r, r.group);
+            return `<tr><td>${esc(r.label || id)}</td><td class="n">${r.wins}-${r.losses}</td><td class="n">${pct(n ? r.wins / n : null)}</td><td class="n ${s.proven ? 'pos' : ''}">${esc(s.text)}</td></tr>`; }).join('') + `</table>`
+        : '<p class="dim">No records yet for this sport — the Slate Test builds them.</p>');
+
+      // Families
+      html += card('Families — what each one does', `<table class="tbl">` + ROLES.map(([f, role, what]) =>
+        `<tr><td>${f}</td><td class="n" style="color:var(--gold)">${role}</td></tr><tr><td colspan="2" class="dim">${what}</td></tr>`).join('') + `</table>`);
+
+      // Outside data + quarterbacks (on demand: no calls until tapped)
+      html += card('Outside data — is it helping?', `<p class="dim">Compares graded games' ranking spread with and without each source
+        (SP+, NFL efficiency, starting pitchers, goalies, quarterback changes) against the final margin.</p>
+        <button class="btn-line" onclick="outsideReport()">Run the comparison</button><div id="outside"></div>`);
+      if (sport === 'NFL' || sport === 'NCAAF') {
+        html += card('Quarterback ratings', `<p class="dim">Adjusted yards per attempt, corrected for opponent, pulled toward a starting value by 150 attempts.
+          A quarterback change moves the spread by the gap × ${sport === 'NFL' ? '2.5' : '2.0'} points.</p>
+          <button class="btn-line" onclick="qbList()">Load ratings</button><div id="qbs"></div>`);
       }
-
-      list.innerHTML = visible.map((f, idx) => buildFamilyCard(f, idx)).join('');
-      updateSummary();
+      document.getElementById('body').innerHTML = html;
     }
 
-    function buildFamilyCard(f, idx) {
-      const enabled = isFamilyEnabled(f.id);
-      const weight = getWeight(f.id);
-      const baseW = getBaseWeight(f.id);
-      const perf = getPerf(f.id);
-      const expanded = expandedFamilies.has(f.id);
+    function pick(s) { sport = s; localStorage.setItem('edge_suite_sport', s); render(); }
 
-      const total = perf.wins + perf.losses;
-      const winPct = total > 0 ? (perf.wins / total * 100).toFixed(0) + '%' : '—';
-      const record = total > 0 ? `${perf.wins}-${perf.losses}` : '—';
-      const roi = perf.roi != null && total > 0 ? (perf.roi > 0 ? '+' : '') + (perf.roi * 100).toFixed(1) + '%' : '—';
-      const roiCls = perf.roi > 0 ? 'green' : perf.roi < 0 ? 'red' : '';
-
-      const isDynamic = Math.abs(weight - baseW) > 0.01;
-
-      const subsRows = f.subs.map(s => `
-        <div class="sub-row">
-          <span class="sub-role ${s.role}">${s.role === 'lead' ? 'LEAD' : 'SUPPORT'}</span>
-          <span class="sub-name">${s.name}</span>
-          <span class="sub-weight">${s.weight.toFixed(1)}</span>
-        </div>
-      `).join('');
-
-      return `
-        <div class="family-card ${enabled ? '' : 'disabled'} ${expanded ? 'expanded' : ''}" id="fcard-${f.id}">
-          <div class="family-head" onclick="toggleExpand('${f.id}')">
-            <div class="family-num">${String(idx + 1).padStart(2, '0')}</div>
-            <div class="family-info">
-              <div class="family-name">${f.name}</div>
-              <div class="family-desc">${f.desc}</div>
-            </div>
-            <div class="family-right">
-              <label class="toggle" onclick="event.stopPropagation()">
-                <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleFamily('${f.id}', this.checked)" />
-                <div class="toggle-track"></div>
-                <div class="toggle-thumb"></div>
-              </label>
-              <span class="expand-hint">${f.subs.length} subs</span>
-            </div>
-          </div>
-
-          <div class="family-stats">
-            <div class="fstat">
-              <div class="fstat-val">${record}</div>
-              <div class="fstat-lbl">W-L</div>
-            </div>
-            <div class="fstat">
-              <div class="fstat-val">${winPct}</div>
-              <div class="fstat-lbl">Win %</div>
-            </div>
-            <div class="fstat">
-              <div class="fstat-val ${roiCls}">${roi}</div>
-              <div class="fstat-lbl">ROI</div>
-            </div>
-            <div class="fstat">
-              <div class="fstat-val gold">${weight.toFixed(1)}</div>
-              <div class="fstat-lbl">Weight</div>
-            </div>
-          </div>
-
-          <div class="weight-row">
-            <span class="weight-lbl">Weight</span>
-            <input type="range" class="weight-slider" min="1" max="10" step="0.5" value="${weight}"
-              oninput="updateWeight('${f.id}', this.value)" />
-            <span class="weight-val" id="wval-${f.id}">${weight.toFixed(1)}</span>
-            ${isDynamic ? `<span class="weight-dynamic-badge">ADJUSTED</span>` : ''}
-          </div>
-
-          <div class="subs-section ${expanded ? 'open' : ''}" id="subs-${f.id}">
-            <div class="subs-head">Sub-Algorithms</div>
-            ${subsRows}
-          </div>
-        </div>`;
-    }
-
-    // ── SUMMARY ──
-    function updateSummary() {
-      const totalSubs = FAMILIES.reduce((s, f) => s + f.subs.length, 0);
-      document.getElementById('sumFamilies').textContent = FAMILIES.length;
-      document.getElementById('sumSubs').textContent = totalSubs;
-
-      const active = FAMILIES.filter(f => isFamilyEnabled(f.id)).length;
-      document.getElementById('sumActive').textContent = `${active}/${FAMILIES.length}`;
-
-      // Best ROI in current sport
-      const rois = FAMILIES
-        .map(f => getPerf(f.id).roi || 0)
-        .filter(r => r !== 0);
-      const best = rois.length ? Math.max(...rois) : null;
-      document.getElementById('sumBest').textContent = best !== null
-        ? (best > 0 ? '+' : '') + (best * 100).toFixed(1) + '%'
-        : '—';
-    }
-
-    // ── SYNC DYNAMIC WEIGHTS TO LOCALSTORAGE ──
-    // The governor reads from edge_dynamic_weights when present
-    function syncDynamicWeightsLocal() {
-      const bySport = {};
-      Object.entries(weightsBySport).forEach(([sport, families]) => {
-        bySport[sport] = {};
-        Object.entries(families).forEach(([family, data]) => {
-          bySport[sport][family] = data.dynamic_weight;
+    async function outsideReport() {
+      const box = document.getElementById('outside');
+      box.innerHTML = '<p class="dim">Loading graded games…</p>';
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const rows = [];
+        for (let off = 0; off < 20000; off += 1000) {
+          const res = await fetch(`${url}/rest/v1/shadow_picks?sport=eq.${sport}&result=not.is.null&actual_margin=not.is.null` +
+            `&select=decision,actual_margin,governor_snapshot&limit=1000&offset=${off}`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const page = await res.json(); rows.push(...page); if (page.length < 1000) break;
+        }
+        const by = {};
+        rows.forEach(r => {
+          if (/^(TOTAL|LINE)_/.test(String(r.decision || ''))) return;
+          const rk = (r.governor_snapshot || {}).ranking || {};
+          const fx = rk.external_effect || (r.governor_snapshot || {}).external_effect;
+          if (!fx || !isFinite(rk.model_spread) || !isFinite(r.actual_margin)) return;
+          Object.entries(fx).forEach(([src, eff]) => {
+            if (!isFinite(eff) || !eff) return;
+            const withIt = Math.abs(r.actual_margin + rk.model_spread);
+            const without = Math.abs(r.actual_margin + (rk.model_spread + eff));
+            const b = by[src] = by[src] || { n: 0, w: 0, wo: 0, better: 0 };
+            b.n++; b.w += withIt; b.wo += without; if (withIt < without) b.better++;
+          });
         });
-      });
-      localStorage.setItem('edge_dynamic_weights', JSON.stringify(bySport));
+        const names = { sp: 'College SP+', eff: 'NFL efficiency', pitchers: 'Starting pitchers', goalies: 'Goalies', qb: 'Quarterback changes' };
+        const list = Object.entries(by);
+        box.innerHTML = list.length
+          ? `<table class="tbl"><tr><th>Source</th><th class="n">Games</th><th class="n">Miss with</th><th class="n">Without</th><th class="n">Closer</th></tr>` +
+            list.map(([s, b]) => `<tr><td>${names[s] || s}</td><td class="n">${b.n}</td><td class="n ${b.w < b.wo ? 'pos' : 'neg'}">${(b.w / b.n).toFixed(2)}</td>` +
+              `<td class="n">${(b.wo / b.n).toFixed(2)}</td><td class="n">${(b.better / b.n * 100).toFixed(0)}%</td></tr>`).join('') + `</table>` +
+            `<p class="dim">Average points the ranking spread missed the final margin by, with and without the source. Lower with it means it's helping; it needs a few weeks of graded games to mean much.</p>`
+          : '<p class="dim">No graded games with outside data yet — it starts with picks made after this update.</p>';
+      } catch (e) { box.innerHTML = `<p class="dim">Couldn't load: ${esc(e.message)}</p>`; }
     }
 
-    // ── TOAST ──
-    function showToast(msg) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2000);
+    async function qbList() {
+      const box = document.getElementById('qbs');
+      if (!window.EDGE_QB) { box.innerHTML = '<p class="dim">qb-ratings.js is missing.</p>'; return; }
+      box.innerHTML = '<p class="dim">Loading box scores…</p>';
+      try {
+        const rowsRes = await (async () => {
+          const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+          const out = []; const since = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+          for (let off = 0; off < 30000; off += 1000) {
+            const res = await fetch(`${url}/rest/v1/player_game_stats?sport=eq.${sport}&pass_attempts=gt.0&game_date=gte.${since}` +
+              `&select=game_id,game_date,player_id,player_name,team_name,opponent,pass_attempts,passing_yards,passing_tds,interceptions` +
+              `&order=game_date.asc,game_id.asc&limit=1000&offset=${off}`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const page = await res.json(); out.push(...page); if (page.length < 1000) break;
+          }
+          return out;
+        })();
+        const model = EDGE_QB.build(sport, rowsRes);
+        const list = Object.values(model.players).filter(p => p.att >= 50).map(p => ({ ...p, r: EDGE_QB.ratingOf(model, p) }))
+          .sort((a, b) => b.r - a.r).slice(0, 60);
+        box.innerHTML = `<p class="dim">League average ${model.lg.toFixed(2)} adjusted yards per attempt.</p>` +
+          `<table class="tbl"><tr><th>Quarterback</th><th>Team</th><th class="n">Att</th><th class="n">Rating</th></tr>` +
+          list.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.team)}</td><td class="n">${p.att}</td><td class="n">${p.r.toFixed(2)}</td></tr>`).join('') + `</table>`;
+      } catch (e) { box.innerHTML = `<p class="dim">Couldn't load: ${esc(e.message)}</p>`; }
     }
 
-    // ── INIT ──
-    (async () => {
-      await loadWeights();
-      syncDynamicWeightsLocal();
-      render();
-    })();
+    (async () => { table = await loadTable(); render(); })();
+
   </script>
-
-  <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
   <script>
-    // ── PWA / OFFLINE ──
     (function () {
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js').catch(function () {});
-        });
+        window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
       }
-      var bar = document.getElementById('offlineBar');
-      function sync() {
-        if (!bar) return;
-        bar.classList.toggle('show', !navigator.onLine);
-        document.body.classList.toggle('is-offline', !navigator.onLine);
-      }
-      window.addEventListener('online', sync);
-      window.addEventListener('offline', sync);
-      sync();
     })();
   </script>
 </body>
