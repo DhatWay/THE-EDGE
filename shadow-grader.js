@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20261004-01';
+  const BUILD = 'shadowgrade-20261005-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -216,9 +216,25 @@ const EDGE_SHADOW_GRADER = (() => {
     // games are now looked up on ESPN's scoreboard by date and team
     // names, graded, and linked so the next lookup is direct.
     const gradedIds = new Set(updates.map(u => u.id));
-    const leftover = pending.filter(p => !gradedIds.has(p.id)
-      && p.decision !== 'WITHDRAWN' && p.decision !== 'REMOVED'
-      && p.commence_time && (Date.now() - new Date(p.commence_time).getTime()) > FINISHED_AFTER_MS);
+    // Every pending pick goes to ESPN unless there's a stated reason not
+    // to — and each reason is reported, so nothing sits pending silently.
+    // Withdrawn picks (from before every game was kept) are graded too.
+    const leftover = [];
+    const skip = { removed: [], noTime: [], notFinished: [] };
+    const cutoff = Date.now() - FINISHED_AFTER_MS;
+    pending.forEach(p => {
+      if (gradedIds.has(p.id)) return;
+      if (p.decision === 'REMOVED') { skip.removed.push(p); return; }
+      if (!p.commence_time) { skip.noTime.push(p); return; }
+      if (new Date(p.commence_time).getTime() > cutoff) { skip.notFinished.push(p); return; }
+      leftover.push(p);
+    });
+    const byDecision = {};
+    pending.forEach(p => { byDecision[p.decision || '—'] = (byDecision[p.decision || '—'] || 0) + 1; });
+    log(`  still ungraded check: ${pending.length} pending (${Object.entries(byDecision).map(([k, v]) => `${v} ${k}`).join(', ')}) · ` +
+        `${leftover.length} finished → ESPN · ${skip.notFinished.length} not finished yet · ${skip.noTime.length} no start time · ${skip.removed.length} removed`);
+    skip.notFinished.slice(0, 3).forEach(p => log(`  still ungraded: ${p.sport} ${p.away_team} @ ${p.home_team} — starts ${new Date(p.commence_time).toLocaleString()} (not finished yet)`));
+    skip.noTime.slice(0, 3).forEach(p => log(`  still ungraded: ${p.sport || ''} game ${p.game_id} — no start time saved with the pick`));
     if (leftover.length) {
       const direct = await gradeFromEspn(leftover, log);
       direct.updates.forEach(u => {
