@@ -88,8 +88,14 @@ const EDGE_RATING = (() => {
   // Home advantage in points, applied at projection time.
   const HOME_POINTS = { NFL: 2.0, NCAAF: 2.8, NBA: 2.6, NCAAB: 3.3, NHL: 0.25, MLB: 0.20, MLS: 0.38 };
 
+  // How much a game's combined score swings around its expectation.
+  // (Declared above the module's return so it is initialised.)
+  const TOTAL_SD = { NFL: 13.5, NCAAF: 16.5, NBA: 18, WNBA: 15, NCAAB: 15.5, MLB: 3.3, NHL: 1.9, MLS: 1.6 };
+
   return {
     BUILD,
+    TOTAL_SD,
+    totalProbability,
     coverProbability,
     anchorToMarket,
     fitMarketBlend,
@@ -769,6 +775,24 @@ const EDGE_RATING = (() => {
   }
 
   // Abramowitz and Stegun 7.1.26 — accurate to about 1e-7.
+
+  // Chance the combined score goes over / under a total, with pushes
+  // set aside the way grading does (a whole-number total can land on).
+  function totalProbability(mu, line, sd) {
+    if (!isFinite(mu) || !isFinite(line) || !(sd > 0)) return null;
+    let pOver, pUnder, pPush = 0;
+    if (Number.isInteger(line)) {
+      pOver = 1 - normalCdf((line + 0.5 - mu) / sd);
+      pUnder = normalCdf((line - 0.5 - mu) / sd);
+      pPush = Math.max(0, 1 - pOver - pUnder);
+    } else {
+      pOver = 1 - normalCdf((line - mu) / sd);
+      pUnder = 1 - pOver;
+    }
+    const over = (pOver + pUnder) > 0 ? pOver / (pOver + pUnder) : 0.5;
+    return { over: round(over, 4), under: round(1 - over, 4), push: round(pPush, 4) };
+  }
+
   function normalCdf(z) {
     const t = 1 / (1 + 0.2316419 * Math.abs(z));
     const d = 0.3989422804014327 * Math.exp(-z * z / 2);
