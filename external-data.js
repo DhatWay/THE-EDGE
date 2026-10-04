@@ -15,11 +15,14 @@
 const EDGE_EXTERNAL = (function () {
   'use strict';
 
-  const BUILD = 'ext-20261004-01';
+  const BUILD = 'ext-20261005-01';
 
   const SB_URL = () => localStorage.getItem('edge_supabase_url');
   const SB_KEY = () => localStorage.getItem('edge_supabase_key');
-  const CFBD_KEY = () => (localStorage.getItem('edge_cfbd_api_key') || '').trim();
+  // The key as pasted can carry a "Bearer " prefix, quotes or spaces
+  // (copied from the email); only the key itself is sent.
+  const CFBD_KEY = () => (localStorage.getItem('edge_cfbd_api_key') || '')
+    .trim().replace(/^bearer\s+/i, '').replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, '');
 
   // League levels the starters are measured against.
   const LG_FIP = 4.15;          // MLB league FIP (≈ league ERA)
@@ -203,7 +206,11 @@ const EDGE_EXTERNAL = (function () {
     if (cached) return cached;
     const h = { Authorization: `Bearer ${key}`, Accept: 'application/json' };
     const spRes = await fetch(`https://api.collegefootballdata.com/ratings/sp?year=${year}`, { headers: h });
-    if (spRes.status === 401) throw new Error('CollegeFootballData key rejected');
+    if (spRes.status === 401 || spRes.status === 403) {
+      const why = (await spRes.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 140);
+      throw new Error(`CollegeFootballData turned the key down (HTTP ${spRes.status}${why ? ': ' + why : ''}). ` +
+        `Key on file: ${key.length} characters, starts "${key.slice(0, 4)}". Re-copy it from the email, or request a new one.`);
+    }
     if (!spRes.ok) throw new Error('SP+ HTTP ' + spRes.status);
     let sp = await spRes.json();
     let source = 'SP+';
