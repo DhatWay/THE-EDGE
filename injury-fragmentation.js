@@ -38,7 +38,7 @@
 
 const EDGE_INJURY = (() => {
 
-  const BUILD = 'inj-20260930-02';
+  const BUILD = 'inj-20261005-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -162,10 +162,15 @@ const EDGE_INJURY = (() => {
       // Percent of each team's regular lineup missing.
       const homeScale = lineupScale(sport, roster[homeNorm] || []);
       const awayScale = lineupScale(sport, roster[awayNorm] || []);
-      const homeOff = round(sumDeduction(homeInjuries, 'offensive_contribution') * homeScale, 2);
-      const homeDef = round(sumDeduction(homeInjuries, 'defensive_contribution') * homeScale, 2);
-      const awayOff = round(sumDeduction(awayInjuries, 'offensive_contribution') * awayScale, 2);
-      const awayDef = round(sumDeduction(awayInjuries, 'defensive_contribution') * awayScale, 2);
+      // In football the quarterback is priced by the quarterback step
+      // (ratings, or the flat out/doubtful amount) — leaving him in the
+      // lineup deduction too counted one injury twice.
+      const noQb = list => (sport === 'NFL' || sport === 'NCAAF')
+        ? list.filter(i => String(i.position || '').toUpperCase() !== 'QB') : list;
+      const homeOff = round(sumDeduction(noQb(homeInjuries), 'offensive_contribution') * homeScale, 2);
+      const homeDef = round(sumDeduction(noQb(homeInjuries), 'defensive_contribution') * homeScale, 2);
+      const awayOff = round(sumDeduction(noQb(awayInjuries), 'offensive_contribution') * awayScale, 2);
+      const awayDef = round(sumDeduction(noQb(awayInjuries), 'defensive_contribution') * awayScale, 2);
 
       // Starting quarterback out or doubtful: the team's highest-rated
       // QB on the roster, listed at out/doubtful strength (0.8+).
@@ -384,8 +389,46 @@ const EDGE_INJURY = (() => {
     if (fresh && Object.keys(fresh).length) {
       cache[sport] = { fetchedAt: Date.now(), byTeam: fresh };
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
+      saveSnapshot(sport, fresh);
     }
     return fresh || {};
+  }
+
+  // ── DAILY SNAPSHOT ──
+  // The day's injury report, saved once per sport per day to
+  // injury_snapshots, so injury effects can be tested later (past
+  // reports aren't kept anywhere else). Runs in the background and never
+  // holds up a pick; skipped quietly if the table isn't set up yet.
+  async function saveSnapshot(sport, byTeam) {
+    try {
+      const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      const mark = `edge_injury_snapshot_${sport}`;
+      if (localStorage.getItem(mark) === day) return;
+      const url = (localStorage.getItem('edge_supabase_url') || '').replace(/\/+$/, '');
+      const key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return;
+      const rows = [];
+      const seen = new Set();
+      Object.entries(byTeam || {}).forEach(([team, list]) => (list || []).forEach(i => {
+        if (!i || !i.name) return;
+        const k = `${team}|${i.name}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        rows.push({ snapshot_date: day, sport, team, player: i.name, position: i.position || null,
+                    status: i.status || null, reported: i.date || null });
+      }));
+      if (!rows.length) return;
+      for (let n = 0; n < rows.length; n += 500) {
+        const res = await fetch(`${url}/rest/v1/injury_snapshots?on_conflict=snapshot_date,sport,team,player`, {
+          method: 'POST',
+          headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json',
+                     Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify(rows.slice(n, n + 500)),
+        });
+        if (!res.ok) { logEdgeError('injury.snapshot', new Error('HTTP ' + res.status)); return; }
+      }
+      localStorage.setItem(mark, day);
+    } catch (e) { try { logEdgeError('injury.snapshot', e); } catch {} }
   }
 
   async function fetchEspnInjuries(sport, teamFilter) {
