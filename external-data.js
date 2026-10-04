@@ -15,7 +15,7 @@
 const EDGE_EXTERNAL = (function () {
   'use strict';
 
-  const BUILD = 'ext-20261003-02';
+  const BUILD = 'ext-20261004-01';
 
   const SB_URL = () => localStorage.getItem('edge_supabase_url');
   const SB_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -169,6 +169,18 @@ const EDGE_EXTERNAL = (function () {
           });
         }
       } catch {}
+      // Any starter the batch call came back without: his own stats
+      // call, then last season if he has no innings yet this year.
+      for (const id of ids.filter(i => !stats[i])) {
+        for (const yr of [season, String(Number(season) - 1)]) {
+          try {
+            const r1 = await fetch(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=season&group=pitching&season=${yr}`);
+            if (!r1.ok) continue;
+            const st = (await r1.json())?.stats?.[0]?.splits?.[0]?.stat;
+            if (st && parseFloat(st.inningsPitched) > 0) { stats[id] = { st, person: { id } }; break; }
+          } catch {}
+        }
+      }
     }
     const out = games.map(g => ({
       home: g.home, away: g.away,
@@ -193,7 +205,30 @@ const EDGE_EXTERNAL = (function () {
     const spRes = await fetch(`https://api.collegefootballdata.com/ratings/sp?year=${year}`, { headers: h });
     if (spRes.status === 401) throw new Error('CollegeFootballData key rejected');
     if (!spRes.ok) throw new Error('SP+ HTTP ' + spRes.status);
-    const sp = await spRes.json();
+    let sp = await spRes.json();
+    let source = 'SP+';
+    // Before SP+ is published for a season: ESPN's FPI through the same
+    // service, then last season's SP+ pulled halfway to average.
+    if (!Array.isArray(sp) || sp.filter(t => t && t.team !== 'nationalAverages' && isFinite(t.rating)).length < 20) {
+      try {
+        const f = await fetch(`https://api.collegefootballdata.com/ratings/fpi?year=${year}`, { headers: h });
+        const fpi = f.ok ? await f.json() : [];
+        if (Array.isArray(fpi) && fpi.length >= 20) {
+          sp = fpi.filter(t => t && isFinite(t.fpi)).map(t => ({ team: t.team, rating: +t.fpi }));
+          source = 'FPI';
+        }
+      } catch {}
+    }
+    if (!Array.isArray(sp) || sp.length < 20) {
+      try {
+        const p = await fetch(`https://api.collegefootballdata.com/ratings/sp?year=${year - 1}`, { headers: h });
+        const prev = p.ok ? await p.json() : [];
+        if (Array.isArray(prev) && prev.length >= 20) {
+          sp = prev.filter(t => t && isFinite(t.rating)).map(t => ({ ...t, rating: t.rating / 2 }));
+          source = `SP+ ${year - 1} (halved)`;
+        }
+      } catch {}
+    }
     let teams = [];
     try {
       const tRes = await fetch(`https://api.collegefootballdata.com/teams?year=${year}`, { headers: h });
@@ -216,7 +251,7 @@ const EDGE_EXTERNAL = (function () {
       const k2 = norm(s, 'NCAAF');
       if (!lookup[k2]) lookup[k2] = { school: s, ...r };
     });
-    const out = { lookup, count: Object.keys(bySchool).length };
+    const out = { lookup, count: Object.keys(bySchool).length, source };
     cacheSet(ck, out);
     return out;
   }
