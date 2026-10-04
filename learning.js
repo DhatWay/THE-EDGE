@@ -40,7 +40,7 @@
 
 const EDGE_LEARNING = (() => {
 
-  const BUILD = 'learn-20260930-01';
+  const BUILD = 'learn-20261005-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -151,12 +151,11 @@ const EDGE_LEARNING = (() => {
       log('Computing per-sport-family performance');
       const sportFamilyStats = computeSportFamilyStats(picks);
 
-      // ── 3. Current weights ──
-      log('Loading current weights');
-      const currentWeights = await loadWeights();
-
-      log('Computing new weights');
-      const updates = computeWeightUpdates(sportFamilyStats, currentWeights);
+      // ── 3. (Family weights retired) ──
+      // The governor builds each pick from the market, strength, spots
+      // and rest/injuries; the old 1–10 family weights are no longer read,
+      // so they are no longer updated.
+      const updates = [];
 
       // ── 4. Calibration ──
       log('Building calibration table');
@@ -165,12 +164,6 @@ const EDGE_LEARNING = (() => {
 
       // ── 5. Persist ──
       if (!dryRun) {
-        log('Persisting weight updates');
-        const w = await persistWeights(updates);
-        if (w.inserted || w.updated || w.failed) {
-          log(`  ${w.updated} written · ${w.failed} failed`);
-        }
-
         try {
           localStorage.setItem('edge_governor_calibration', JSON.stringify(calibration));
         } catch (e) { logEdgeError('learning.calibrationLocal', e); }
