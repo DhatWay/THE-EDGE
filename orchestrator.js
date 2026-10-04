@@ -216,6 +216,15 @@ const EDGE_ORCHESTRATOR = (() => {
         } catch (e) { log('  outside data failed: ' + e.message); }
       }
 
+      // ── Stage 3c · Quarterbacks (football): expected starter vs usual ──
+      if (window.EDGE_QB && gameList.some(g => ['NFL', 'NCAAF'].includes(g._sport || g.sport))) {
+        log('Stage 3c · Quarterbacks');
+        try {
+          builtContext = builtContext || {};
+          builtContext.qbByGame = await EDGE_QB.forGames(gameList, builtContext.injuriesByGame || {}, log);
+        } catch (e) { log('  quarterbacks failed: ' + e.message); }
+      }
+
       log('Stage 4/7 · Computing game priors');
       const priors = await buildPriors(gameList, powerIndex, builtContext, log);
       summary.stages.priors_built = priors.length;
@@ -732,7 +741,8 @@ const EDGE_ORCHESTRATOR = (() => {
           homeStats: homePower,
           awayStats: awayPower,
           league: powerIndex.league?.[sport] || null,
-          adjustments: { qb_home_out: !!inj?.home_qb_out, qb_away_out: !!inj?.away_qb_out },
+          adjustments: { qb_home_out: !!inj?.home_qb_out, qb_away_out: !!inj?.away_qb_out,
+                         qb: context?.qbByGame?.[game.id] || null },
           external: context?.externalByGame?.[game.id] || null,
           rest: {
             home: context?.restByTeam?.[`${sport}:${game.home_team}`] ?? null,
