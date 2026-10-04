@@ -246,6 +246,8 @@
     <a href="matchups.html" class="active"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
+    <a href="guide.html"><span class="ico">?</span> How to Use</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -300,7 +302,7 @@
         <div id="inputAudit"></div>
       </div>
       <div class="refresh-actions">
-        <button class="refresh-btn" id="refreshBtn" onclick="fetchMatchups({force:true})">↻ Refresh</button>
+        <button class="refresh-btn" id="refreshBtn" onclick="manualRefresh()">↻ Refresh</button>
         <button class="refresh-btn primary" id="runBtn" onclick="runPipeline()">▶ Run Pipeline</button>
       </div>
     </div>
@@ -732,10 +734,12 @@
       catch (e) { logEdgeError('matchups.rawCache', e); }
     }
 
+    // The board is downloaded once and kept until you tap Refresh — it
+    // no longer expires on a timer, so opening the page costs no credits.
     function readCache() {
       try {
         const ts = parseInt(localStorage.getItem('edge_todays_games_ts') || '0');
-        if (!ts || Date.now() - ts > CACHE_TTL_MS) return null;
+        if (!ts) return null;
         const raw = localStorage.getItem('edge_all_games_raw');
         const games = raw ? JSON.parse(raw) : JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
         if (!Array.isArray(games) || !games.length) return null;
@@ -1556,6 +1560,12 @@
       setTimeout(scheduleLiveScores, 60000);
     }
 
+    // The one place odds (credits) and scores are fetched.
+    async function manualRefresh() {
+      await fetchMatchups({ force: true });
+      try { await refreshLiveScores(); } catch {}
+    }
+
     function scheduleRefresh() {
       const hasLive = allGames.some(g => gameStatusLabel(g).cls === 'live');
       if (hasLive && navigator.onLine) {
@@ -1563,11 +1573,12 @@
       }
     }
 
-    fetchMatchups().then(() => { refreshLiveScores(); scheduleRefresh(); });
-    setTimeout(scheduleLiveScores, 60000);
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshLiveScores(); });
+    // Opening the page reads the saved board (downloading only if there
+    // is none yet). Odds, games and scores update when you tap Refresh —
+    // no timers, nothing in the background.
+    fetchMatchups();
 
-    window.addEventListener('online', () => { fetchMatchups({ force: true }); });
+    // (Coming back online no longer re-downloads on its own.)
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
