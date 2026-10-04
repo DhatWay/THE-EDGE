@@ -559,9 +559,25 @@ const EDGE_SHADOW_GRADER = (() => {
 
   function gradeOne(pick, score) {
     const direction = String(pick.direction || '').toLowerCase();
-    if (direction !== 'home' && direction !== 'away') return null;
-
     const gs = pick.governor_snapshot || {};
+
+    // Totals: the combined score against the total, at its price.
+    if (gs.bet_type === 'TOTAL') {
+      if (direction !== 'over' && direction !== 'under') return null;
+      const line = Number(gs.line ?? gs.market_total ?? pick.market_total);
+      if (!isFinite(line)) return null;
+      const combined = Number(score.home_score) + Number(score.away_score);
+      const diff = direction === 'over' ? combined - line : line - combined;
+      const units = Number(pick.units) || 0;
+      const price = isFinite(Number(gs.price)) && Number(gs.price) !== 0 ? Number(gs.price) : DEFAULT_JUICE;
+      const win = price > 0 ? price / 100 : 100 / Math.abs(price);
+      if (Math.abs(diff) < 0.01) return { result: 'P', pnl: 0, actual_margin: combined };
+      return diff > 0
+        ? { result: 'W', pnl: round(units * win, 2), actual_margin: combined }
+        : { result: 'L', pnl: round(-units, 2), actual_margin: combined };
+    }
+
+    if (direction !== 'home' && direction !== 'away') return null;
     const isML = gs.bet_type === 'ML';
     const homeMargin = score.home_score - score.away_score;
 
