@@ -282,7 +282,7 @@
           <div class="pipeline-title">Full Data Refresh</div>
         </div>
         <div class="pipeline-desc">
-          Runs every data stage in order, for the sports selected above: Power Ratings → Build Rosters → Enrich Rosters → Build ATS → Backfill Scores → Backfill &amp; Calibration → Pull Player Stats → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks (spreads and props) → Grade Sim Bets.
+          Runs every data stage in order, for the sports selected above: Build ATS → Backfill Scores → Pull Player Stats → Power Ratings → Build Rosters → Enrich Rosters → Backfill &amp; Calibration → Refresh Injuries → Backfill Game ID Map → Grade Shadow Picks (spreads and props) → Grade Sim Bets.
         </div>
         <div class="pipeline-actions single">
           <button class="pipeline-btn blue" id="runFullRefreshBtn" onclick="runFullRefresh()">↻ Run Full Refresh</button>
@@ -744,27 +744,28 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      log('Stage 1/11 · Power Ratings');
-      try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
-
-      log('Stage 2/11 · Build Rosters');
-      try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
-
-      log('Stage 3/11 · Enrich Rosters');
-      try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
-
-      log('Stage 4/11 · Build ATS & H2H');
+      // Scores and lines first, so the ratings are built on every game
+      // played — they used to be rebuilt before the newest scores came in.
+      log('Stage 1/11 · Build ATS & H2H');
       try { await runAtsBuild(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 5/11 · Backfill Scores');
+      log('Stage 2/11 · Backfill Scores');
       try { await runScoreBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
-      log('Stage 6/11 · Backfill & Calibration');
-      try { await runBackfill(true); } catch (e) { log('  failed: ' + e.message); }
-
-
-      log('Stage 7/11 · Pull Player Stats');
+      log('Stage 3/11 · Pull Player Stats');
       try { await runBoxScoreFetch(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 4/11 · Power Ratings');
+      try { await runPowerRatings(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 5/11 · Build Rosters');
+      try { await runRosterBuild(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 6/11 · Enrich Rosters');
+      try { await runRosterEnrich(true); } catch (e) { log('  failed: ' + e.message); }
+
+      log('Stage 7/11 · Backfill & Calibration');
+      try { await runBackfill(true); } catch (e) { log('  failed: ' + e.message); }
 
 
       log('Stage 8/11 · Refresh Injuries');
@@ -1382,7 +1383,15 @@
 
       let result;
       try {
-        result = await window.EDGE_SIM_GRADER.run({ onProgress: log });
+        // Both portfolios — real-money bets were never graded before.
+        result = await window.EDGE_SIM_GRADER.run({ mode: 'sim', onProgress: log });
+        log('Real-money bets:');
+        const real = await window.EDGE_SIM_GRADER.run({ mode: 'real', onProgress: log });
+        if (result && result.ok && real && real.ok) {
+          ['graded', 'unresolved', 'pending_score', 'legacy', 'pending'].forEach(k => {
+            if (isFinite(real[k])) result[k] = (result[k] || 0) + real[k];
+          });
+        }
       } catch (e) {
         log('failed: ' + e.message);
         if (!silent) { btn.disabled = false; showToast('Sim grader failed', 'error'); }
