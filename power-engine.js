@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261003-02';
+  const BUILD = 'pe-20261005-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -66,6 +66,8 @@ const EDGE_POWER = (() => {
   // move. Its main job is to stop a false edge: without it the model
   // rates a team with its healthy QB after the line has moved.
   const QB_OUT_POINTS = { NFL: 4.5, NCAAF: 3.5 };
+  // Most a quarterback change can move a spread.
+  const QB_CAP = { NFL: 10, NCAAF: 12 };
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -219,6 +221,8 @@ const EDGE_POWER = (() => {
     qualifiesForRating,
     composeOverall,
     coachAdjustmentPoints,
+    CLOSE_MARGIN,
+    COACHING_WEIGHTS,
   };
 
   // ============================================================
@@ -1086,6 +1090,7 @@ const EDGE_POWER = (() => {
     // the composite, and the rest-day gap, each with a learned weight.
     const fit = ratingFitFor(sport);
     let modelSource = 'blend';
+    let restInFit = false;
     const projMargin = projectionSpread != null ? -projectionSpread : null;
     const compMargin = compositeSpread != null ? -compositeSpread : null;
     if (fit && projMargin != null && compMargin != null) {
@@ -1093,7 +1098,11 @@ const EDGE_POWER = (() => {
         ? Math.max(-7, Math.min(7, rest.home - rest.away)) : 0;
       const c = fit.coef;
       const fitted = c[0] + c[1] * projMargin + c[2] * compMargin + c[3] * restDiff;
-      if (isFinite(fitted)) { modelSpread = round(-fitted, 2); modelSource = 'fitted'; }
+      if (isFinite(fitted)) {
+        modelSpread = round(-fitted, 2); modelSource = 'fitted';
+        // The fit priced the rest gap, so the rest step must not add it again.
+        restInFit = (isFinite(rest.home) && isFinite(rest.away)) && Math.abs(c[3]) > 1e-6;
+      }
     }
 
     // ── Outside data (external-data.js) ──
@@ -1102,17 +1111,24 @@ const EDGE_POWER = (() => {
     // games (75% share early, 40% from about week 9).
     let extInfo = null;
     const gMin = Math.min(Number(homeStats.games_played) || 0, Number(awayStats.games_played) || 0);
+    // What each outside source moved the spread, in points toward home —
+    // saved with every rating so its worth can be measured on results.
+    const extEffect = {};
     if (sport === 'NCAAF' && external?.sp && isFinite(external.sp.home?.rating) && isFinite(external.sp.away?.rating) && modelSpread != null) {
       const w = clamp(0.75 - 0.04 * gMin, 0.4, 0.75);
       const spSpread = -((external.sp.home.rating - external.sp.away.rating) + (core?.HOME_POINTS?.NCAAF ?? 2.8));
+      const before = modelSpread;
       modelSpread = round((1 - w) * modelSpread + w * spSpread, 2);
+      extEffect.sp = round(before - modelSpread, 2);
       extInfo = { sp: { home: external.sp.home, away: external.sp.away, spread: round(spSpread, 2), weight: round(w, 2) } };
     }
     // NFL: efficiency (EPA per play, both sides of the ball) — 30% share.
     if (sport === 'NFL' && external?.eff && isFinite(external.eff.margin) && modelSpread != null) {
       const w = 0.3;
       const effSpread = -(external.eff.margin + (core?.HOME_POINTS?.NFL ?? 2.0));
+      const before = modelSpread;
       modelSpread = round((1 - w) * modelSpread + w * effSpread, 2);
+      extEffect.eff = round(before - modelSpread, 2);
       extInfo = { ...(extInfo || {}), eff: { ...external.eff, spread: round(effSpread, 2), weight: w } };
     }
     // MLB / NHL: tonight's starting pitcher or goalie against league level
@@ -1120,16 +1136,31 @@ const EDGE_POWER = (() => {
     let starterDelta = 0;
     if (sport === 'MLB' && external?.mlb && isFinite(external.mlb.runs_home)) {
       starterDelta = external.mlb.runs_home;
+      extEffect.pitchers = round(starterDelta, 2);
       extInfo = { ...(extInfo || {}), pitchers: external.mlb };
     }
     if (sport === 'NHL' && external?.nhl && isFinite(external.nhl.goals_home)) {
       starterDelta = external.nhl.goals_home;
+      extEffect.goalies = round(starterDelta, 2);
       extInfo = { ...(extInfo || {}), goalies: external.nhl };
     }
 
-    // Starting quarterback out or doubtful (home view: positive helps home).
+    // Quarterbacks (home view: positive helps home). With quarterback
+    // ratings: each team's expected starter against the quarterback its
+    // ratings were built on, in points. Without them: a flat amount when
+    // the starter is listed out or doubtful.
     const qbPts = QB_OUT_POINTS[sport] || 0;
-    const qbDelta = qbPts ? ((adjustments.qb_away_out ? qbPts : 0) - (adjustments.qb_home_out ? qbPts : 0)) : 0;
+    const qbr = adjustments.qb || null;
+    let qbDelta = 0, qbSource = null;
+    if (qbr && (isFinite(qbr.home_delta) || isFinite(qbr.away_delta))) {
+      const cap = QB_CAP[sport] ?? 10;
+      qbDelta = round(clamp((Number(qbr.home_delta) || 0) - (Number(qbr.away_delta) || 0), -cap, cap), 2);
+      qbSource = 'ratings';
+    } else if (qbPts) {
+      qbDelta = (adjustments.qb_away_out ? qbPts : 0) - (adjustments.qb_home_out ? qbPts : 0);
+      qbSource = qbDelta ? 'flat' : null;
+    }
+    if (qbDelta) extEffect.qb = qbDelta;
 
     const totalModelSpread = round(
       modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1) - qbDelta - starterDelta,
@@ -1183,7 +1214,10 @@ const EDGE_POWER = (() => {
       composite_spread: compositeSpread,
       model_source: modelSource,
       fit: modelSource === 'fitted' ? { n: fit.n, rmse: fit.rmse, window: fit.window || null } : null,
-      qb: { home_out: !!adjustments.qb_home_out, away_out: !!adjustments.qb_away_out, points: qbDelta },
+      qb: { home_out: !!adjustments.qb_home_out, away_out: !!adjustments.qb_away_out, points: qbDelta, source: qbSource,
+            home: qbr?.home || null, away: qbr?.away || null },
+      rest_in_fit: restInFit,
+      external_effect: Object.keys(extEffect).length ? extEffect : null,
       external: extInfo,
       rest_days: { home: rest.home ?? null, away: rest.away ?? null },
       projection_weight: projectionWeight != null ? round(projectionWeight, 2) : null,
