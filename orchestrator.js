@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261004-02';
+  const BUILD = 'orch-20261004-03';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -424,6 +424,11 @@ const EDGE_ORCHESTRATOR = (() => {
           total_spread: prior.model_spread ?? null,
           home_ml: prior.market?.home_ml ?? null,
           away_ml: prior.market?.away_ml ?? null,
+          total: totalsByGame[p.game_id] ? {
+            mu: totalsByGame[p.game_id].mu, sd: totalsByGame[p.game_id].sd,
+            market_total: totalsByGame[p.game_id].market_total, model_total: totalsByGame[p.game_id].model_total,
+            side: totalsByGame[p.game_id].side, p: totalsByGame[p.game_id].p, tier: totalsByGame[p.game_id].tier,
+          } : null,
           game_id: p.game_id,
           decision: p.decision,
           direction: p.direction,
@@ -438,6 +443,29 @@ const EDGE_ORCHESTRATOR = (() => {
       try {
         localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations }));
       } catch {}
+
+      // ── Totals (over / under) for every game with a posted total ──
+      const totalsByGame = {};
+      priors.forEach(prior => {
+        const g = prior._raw_game || {};
+        const mt = Number(prior.market?.total ?? g.total);
+        const model = Number(prior.projection?.total);
+        if (!isFinite(mt) || !isFinite(model) || !window.EDGE_GOVERNOR?.rateTotal) return;
+        const sp = prior.sport;
+        // Weather can only lower an outdoor football total.
+        let weatherAdj = 0;
+        if (sp === 'NFL' || sp === 'NCAAF') {
+          const env = (algoResults.find(r => r.prior?.game_id === prior.game_id)?.families || []).find(f => f.family === 'environment');
+          if (env && Number(env.signal) < 0) weatherAdj = Number(env.signal) * 4;
+        }
+        const gh = Number(prior.home_power?.games_played), ga = Number(prior.away_power?.games_played);
+        const full = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 }[sp] || 10;
+        const certainty = (isFinite(gh) && isFinite(ga)) ? Math.max(0.25, Math.min(1, Math.min(gh, ga) / full)) : 1;
+        const r = EDGE_GOVERNOR.rateTotal({ sport: sp, modelTotal: model, marketTotal: mt,
+          overPrice: Number(g.over_price), underPrice: Number(g.under_price), weatherAdj, certainty });
+        if (r) totalsByGame[prior.game_id] = { ...r, certainty: Math.round(certainty * 100) / 100 };
+      });
+      summary.totals = Object.keys(totalsByGame).length;
 
       // Where the passed games stopped, in one line.
       const tally = {};
@@ -473,6 +501,12 @@ const EDGE_ORCHESTRATOR = (() => {
         } else {
           log(`  persist failed: ${persistResult.status || ''} ${persistResult.reason || ''}`);
           summary.errors.push('Persist: ' + (persistResult.reason || 'unknown'));
+        }
+
+        if (Object.keys(totalsByGame).length) {
+          const tr = await persistTotals(totalsByGame, priors, mode, runId);
+          log(`  totals: ${tr.saved} new · ${tr.refreshed} refreshed${tr.failed ? ` · ${tr.failed} not saved (${tr.error})` : ''}`);
+          if (summary.persist) summary.persist.totals = tr;
         }
 
         const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
@@ -1100,6 +1134,66 @@ const EDGE_ORCHESTRATOR = (() => {
   //                                 longer likes it, and nothing was bet
   // A pick made days ahead used to be frozen at its first evaluation,
   // blind to later injuries and line moves.
+  // One row per game for its total, kept apart from the side rating
+  // (decision TOTAL_2U / TOTAL_1U / TOTAL_LEAN / TOTAL_PASS). Graded
+  // on the combined score at the posted total and price.
+  async function persistTotals(totalsByGame, priors, mode, runId) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    const out = { saved: 0, refreshed: 0, failed: 0, error: null };
+    if (!url || !key) return out;
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const ids = Object.keys(totalsByGame);
+    const existing = new Map();
+    const since = new Date(Date.now() - 14 * 86400000).toISOString();
+    for (let i = 0; i < ids.length; i += 100) {
+      const inList = ids.slice(i, i + 100).map(id => `"${id}"`).join(',');
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?select=id,game_id,decision&game_id=in.(${inList})&decision=like.TOTAL_*&created_at=gte.${since}`, { headers });
+        if (res.ok) (await res.json()).forEach(r => { if (!existing.has(r.game_id)) existing.set(r.game_id, r.id); });
+      } catch {}
+    }
+    const now = Date.now();
+    const unitsFor = (t) => {
+      const base = { '2U': 2, '1U': 1, LEAN: 0.5 }[t.tier] || 0;
+      if (!base) return 0;
+      // Untested totals bet small: tier × how settled the ratings are × 0.6.
+      return Math.max(0.25, Math.round(base * (t.certainty || 1) * 0.6 * 4) / 4);
+    };
+    const rows = [];
+    Object.entries(totalsByGame).forEach(([gid, t]) => {
+      const prior = priors.find(x => x.game_id === gid) || {};
+      if (prior.commence_time && new Date(prior.commence_time).getTime() <= now) return;   // started: locked
+      rows.push({
+        ...(existing.has(gid) ? { id: existing.get(gid) } : {}),
+        run_id: runId, game_id: gid, pick_id: `${gid}:total`, sport: prior.sport,
+        home_team: prior.home_team, away_team: prior.away_team, commence_time: prior.commence_time,
+        decision_mode: mode, decision: 'TOTAL_' + t.tier, direction: t.side,
+        side_team: `${t.side === 'over' ? 'Over' : 'Under'} ${t.market_total}`,
+        confidence: Math.round(t.p * 1000) / 10, edge: Math.round((t.p - t.break_even) * 10000) / 10000,
+        units: unitsFor(t), market_total: t.market_total,
+        governor_snapshot: { bet_type: 'TOTAL', line: t.market_total, price: t.price, ev: t.ev, break_even: t.break_even,
+          model_total: t.model_total, market_total: t.market_total, mu: t.mu, sd: t.sd, shift: t.shift,
+          weight: t.weight, weight_source: t.weight_source, certainty: t.certainty, weather_adj: t.weather_adj, push: t.push },
+      });
+    });
+    const send = async (list, query, prefer) => fetch(`${url}/rest/v1/shadow_picks${query}`, {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/json', Prefer: prefer }, body: JSON.stringify(list) });
+    const post = async (list, query, prefer) => {
+      let ok = 0;
+      if (!list.length) return 0;
+      try { const r = await send(list, query, prefer); if (r.ok) return list.length; out.error = `HTTP ${r.status} ${(await r.text().catch(() => '')).slice(0, 160)}`; } catch (e) { out.error = e.message; }
+      for (const row of list) {
+        try { const r1 = await send([row], query, prefer); if (r1.ok) ok++; else { out.failed++; if (!out.error) out.error = `HTTP ${r1.status}`; } } catch { out.failed++; }
+      }
+      return ok;
+    };
+    const updates = rows.filter(r => r.id), inserts = rows.filter(r => !r.id).map(r => ({ ...r, created_at: new Date().toISOString() }));
+    out.refreshed = await post(updates, '?on_conflict=id', 'resolution=merge-duplicates,return=minimal');
+    out.saved = await post(inserts, '', 'return=minimal');
+    if (!out.failed) out.error = null;
+    return out;
+  }
+
   async function persistShadowPicks(picks, priors, mode, runId, evaluatedIds = []) {
     const url = SUPABASE_URL();
     const key = SUPABASE_KEY();
@@ -1122,7 +1216,7 @@ const EDGE_ORCHESTRATOR = (() => {
           `${url}/rest/v1/shadow_picks?select=id,game_id,decision&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
           { headers });
         if (res.ok) (await res.json()).forEach(r => {
-          if (String(r.decision || '').startsWith('LINE_')) return;
+          if (/^(LINE|TOTAL)_/.test(String(r.decision || ''))) return;
           if (!existing.has(r.game_id)) existing.set(r.game_id, r.id);
           if (r.decision === 'REMOVED') removedGames.add(r.game_id);
         });
