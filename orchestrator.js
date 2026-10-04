@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261004-03';
+  const BUILD = 'orch-20261005-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -1226,7 +1226,7 @@ const EDGE_ORCHESTRATOR = (() => {
           `${url}/rest/v1/shadow_picks?select=id,game_id,decision&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
           { headers });
         if (res.ok) (await res.json()).forEach(r => {
-          if (/^(LINE|TOTAL)_/.test(String(r.decision || ''))) return;
+          if (/^(LINE|TOTAL)_/.test(String(r.decision || '')) || r.decision === 'MINE') return;
           if (!existing.has(r.game_id)) existing.set(r.game_id, r.id);
           if (r.decision === 'REMOVED') removedGames.add(r.game_id);
         });
