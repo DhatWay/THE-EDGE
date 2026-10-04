@@ -357,6 +357,7 @@
       <div class="clv-card">
         <div class="key-lbl">Average CLV</div>
         <div class="clv-val" id="clvDisplay">—</div>
+        <div class="clv-desc" id="clvBeat" style="margin-bottom:8px">—</div>
         <div class="clv-desc">
           Closing Line Value measures whether picks consistently beat the closing number.
           Positive CLV is the strongest long-term indicator of edge. Requires line history tracking.
@@ -419,7 +420,9 @@
     }
 
     function picksForMode() {
-      return allPicks.filter(p => p.decision_mode === currentMode);
+      // AI-lead picks count with AI (they had no tab of their own).
+      return allPicks.filter(p => p.decision_mode === currentMode
+        || (currentMode === 'ai_assisted' && p.decision_mode === 'ai_lead'));
     }
 
     // Paged: Supabase returns at most 1,000 rows per request, so a
@@ -449,7 +452,11 @@
       }
 
       try {
-        allPicks = await fetchAllPicks(`${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc`, sbKey);
+        // Bets only: rated games with no edge, totals ratings and lines
+        // entered from other books are left out of the performance record.
+        const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED']);
+        allPicks = (await fetchAllPicks(`${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc`, sbKey))
+          .filter(p => BET_TIERS.has(p.decision));
       } catch (e) { logEdgeError('performance.loadPerformance', e); }
 
       renderAll();
@@ -743,6 +750,18 @@
       const avg = picks.reduce((s, p) => s + p.clv, 0) / picks.length;
       document.getElementById('clvDisplay').textContent =
         (avg > 0 ? '+' : '') + avg.toFixed(2);
+
+      // Beat the close: of the last 100 picks with a closing line, how
+      // many got a better number than the close, and by how much. Above
+      // half, consistently, is the quickest honest sign of a real edge.
+      const recent = picks.slice().sort((a, b) => new Date(b.commence_time || b.created_at) - new Date(a.commence_time || a.created_at)).slice(0, 100);
+      const beat = recent.filter(p => p.clv > 0).length, lost = recent.filter(p => p.clv < 0).length;
+      const recentAvg = recent.reduce((s, p) => s + p.clv, 0) / recent.length;
+      const el = document.getElementById('clvBeat');
+      if (el) {
+        el.innerHTML = `Last ${recent.length}: beat the close <b>${beat}</b> times, worse <b>${lost}</b>, same ${recent.length - beat - lost} · ` +
+          `<b>${(beat + lost ? beat / (beat + lost) * 100 : 0).toFixed(1)}%</b> beat rate · average ${recentAvg > 0 ? '+' : ''}${recentAvg.toFixed(2)} pts`;
+      }
     }
 
     function renderUnits() {
