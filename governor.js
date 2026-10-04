@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261004-01';
+  const BUILD = 'gov-20261005-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -311,7 +311,10 @@ const EDGE_GOVERNOR = (() => {
       const [lo, hi] = wilson(w, n);
       const proven = n >= SPOT_MIN_GAMES && (lo > base || hi < base);
       const rate = proven ? (w + priorRate * SPOT_PRIOR_GAMES) / (n + SPOT_PRIOR_GAMES) : priorRate;
-      const edge = clamp(logit(rate) - logit(base), -SPOT_EACH_CAP, SPOT_EACH_CAP);
+      // Power-vs-line spots partly restate what strength measures, so
+      // they count at half.
+      const share = x.group === 'power_line' ? 0.5 : 1;
+      const edge = clamp((logit(rate) - logit(base)) * share, -SPOT_EACH_CAP, SPOT_EACH_CAP);
       return { id: x.id, label: x.label || x.id, side: x.side, group: x.group || x.id, record: `${w}-${l}`,
                rate: round(rate, 4), base: round(base, 4), proven,
                edge: round(x.side === 'home' ? edge : -edge, 4) };
