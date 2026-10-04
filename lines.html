@@ -19,6 +19,7 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="team-aliases.js"></script>
+  <script src="my-picks.js"></script>
   <script src="context-builder.js"></script>
   <script src="trends-engine.js"></script>
   <script src="prop-trends-engine.js"></script>
@@ -769,6 +770,7 @@
 
           <div class="lc-actions">
             <a href="analysis.html?game=${enc}" class="lc-btn gold">◎ Analysis</a>
+            <a class="lc-btn" onclick='EDGE_MYPICK.open(${JSON.stringify(String(l.id)).replace(/'/g, "&#39;")}, ${JSON.stringify({ home_team: l.home, away_team: l.away, sport: l.sport, time: l.time }).replace(/'/g, "&#39;")})'>★ My Pick</a>
             <a href="picks.html" class="lc-btn">✓ Picks</a>
             <a href="matchups.html" class="lc-btn">⚡ Game</a>
           </div>
