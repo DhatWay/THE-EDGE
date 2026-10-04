@@ -156,7 +156,12 @@
     .view-tab { flex: 1; padding: 9px 2px; font-size: 11px !important; background: transparent; border: 1px solid var(--border); color: var(--text-dim);
       font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
     .view-tab.active { color: var(--gold); border-color: var(--gold); }
-    .grade-row { display: flex; gap: 10px; align-items: center; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); }
+    .grade-row { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); flex-wrap: wrap; }
+    .grade-why { margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--text-dim); }
+    .money-box { border: 1px solid var(--border); padding: 8px 10px; margin: 0 0 10px; }
+    .money-row { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--text-dim); padding: 4px 0; }
+    .money-row b { color: var(--text); }
+    .money-row .pos { color: var(--green); } .money-row .neg { color: var(--red); }
     .grade-btn { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold);
       font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
     .pnl.pos { color: var(--green); }
@@ -245,6 +250,8 @@
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
     <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
+    <a href="guide.html"><span class="ico">?</span> How to Use</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -283,6 +290,8 @@
         <div class="mode-sub" id="aiRoi">—</div>
       </div>
     </div>
+
+    <div class="money-box" id="moneyBox" hidden></div>
 
     <div class="record-grid">
       <div class="rec-cell">
@@ -525,9 +534,23 @@
       const st = document.getElementById('gradeStatus');
       if (!window.EDGE_SHADOW_GRADER || !EDGE_SHADOW_GRADER.autoGrade) { st.textContent = 'Grader not loaded — purge cache and reopen.'; return; }
       st.textContent = 'Grading…';
+      const notes = [];
       try {
-        const r = await EDGE_SHADOW_GRADER.autoGrade({ force: true });
-        st.textContent = `Graded ${r.picks || 0} picks · ${r.bets || 0} bets`;
+        // Run the pick grader with its log kept, so every game still
+        // pending says why (not final yet, not found on ESPN, a save
+        // refused), then the bet grader for both portfolios.
+        const r = await EDGE_SHADOW_GRADER.run({ onProgress: m => notes.push(m) });
+        let bets = 0;
+        if (window.EDGE_SIM_GRADER) {
+          for (const m of ['sim', 'real']) {
+            try { const b = await EDGE_SIM_GRADER.run({ mode: m, onProgress: x => notes.push(x) }); bets += (b && b.graded) || 0; } catch {}
+          }
+        }
+        localStorage.setItem('edge_last_autograde', String(Date.now()));
+        const why = notes.filter(n => /still ungraded|failed|refused|HTTP|error|missing|unresolved|awaiting/i.test(n)).slice(0, 8);
+        st.innerHTML = `Graded ${r && r.ok ? (r.graded || 0) : 0} picks · ${bets} bets` +
+          (r && !r.ok ? ` · grader: ${r.error || 'failed'}` : '') +
+          (why.length ? `<div class="grade-why">${why.map(n => n.trim().replace(/[<>&]/g, '')).join('<br>')}</div>` : '');
         await loadPicks();
       } catch (e) { st.textContent = 'Grading failed: ' + e.message; }
     }
@@ -560,7 +583,36 @@
       });
     }
 
+    // My Bets: what was wagered, won or lost, and the balance now —
+    // per portfolio, in dollars, from the logged bets.
+    function renderMoney() {
+      const box = document.getElementById('moneyBox');
+      if (!box) return;
+      if (currentView !== 'bets') { box.hidden = true; return; }
+      const fmt = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+      const part = (mode, label, startKey, startDefault) => {
+        const bets = allBets.filter(b => ((b._bet || {}).mode || 'sim') === mode);
+        if (!bets.length) return '';
+        const wagered = bets.reduce((s, b) => s + (Number(b._bet.amount) || 0), 0);
+        const settled = bets.filter(b => b.result);
+        const atRisk = bets.filter(b => !b.result).reduce((s, b) => s + (Number(b._bet.amount) || 0), 0);
+        const profit = settled.reduce((s, b) => s + (Number(b._bet.pnl) || 0), 0);
+        const start = parseFloat(localStorage.getItem(startKey) || startDefault) || 0;
+        const balance = start + profit;
+        return `<div class="money-row"><b>${label}</b>
+          <span>Wagered <b>${fmt(wagered)}</b></span>
+          <span>Profit <b class="${profit >= 0 ? 'pos' : 'neg'}">${profit >= 0 ? '+' : ''}${fmt(profit)}</b></span>
+          <span>Still riding <b>${fmt(atRisk)}</b></span>
+          <span>Balance <b>${fmt(balance)}</b></span>
+          <span class="dim">starting ${fmt(start)}</span></div>`;
+      };
+      const html = part('real', 'Real', 'edge_bankroll', '1000') + part('sim', 'Sim', 'edge_sim_bankroll', '1000');
+      box.innerHTML = html || '<div class="money-row">No bets logged yet.</div>';
+      box.hidden = false;
+    }
+
     function renderSummary() {
+      renderMoney();
       const picks = picksForMode();
       const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
       const wins   = picks.filter(p => p.result === 'W').length;
@@ -700,7 +752,9 @@
       }
 
       body.innerHTML = picks.map(p => {
-        const date = p.created_at ? new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+        // The game's date (your time zone) — the pick was often made the day before.
+        const when = p.commence_time || p.created_at;
+        const date = when ? new Date(when).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
         const resCls = p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : p.result === 'P' ? 'p' : 'pending';
         const resStr = p.result || 'PENDING';
         const pnlVal = p.pnl != null ? p.pnl : null;
