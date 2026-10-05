@@ -38,6 +38,7 @@
   <script src="game-id-map.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
+  <script src="bankroll.js"></script>
   <script src="backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -337,7 +338,7 @@
     </details>
 
     <div class="view-tabs">
-      <button class="view-tab active" data-view="picks" onclick="setHistView('picks')">Picks</button>
+      <button class="view-tab active" data-view="picks" onclick="setHistView('picks')">Model Picks</button>
       <button class="view-tab" data-view="slate" onclick="setHistView('slate')">Full Slate</button>
       <button class="view-tab" data-view="totals" onclick="setHistView('totals')">Totals</button>
       <button class="view-tab" data-view="lines" onclick="setHistView('lines')">My Lines</button>
@@ -660,31 +661,23 @@
 
     // My Bets: what was wagered, won or lost, and the balance now —
     // per portfolio, in dollars, from the logged bets.
-    function renderMoney() {
+    async function renderMoney() {
       const box = document.getElementById('moneyBox');
       if (!box) return;
       if (currentView !== 'bets') { box.hidden = true; return; }
-      const fmt = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
-      const part = (mode, label, startKey, startDefault) => {
-        const bets = allBets.filter(b => ((b._bet || {}).mode || 'sim') === mode);
-        if (!bets.length) return '';
-        const wagered = bets.reduce((s, b) => s + (Number(b._bet.amount) || 0), 0);
-        const settled = bets.filter(b => b.result);
-        const atRisk = bets.filter(b => !b.result).reduce((s, b) => s + (Number(b._bet.amount) || 0), 0);
-        const profit = settled.reduce((s, b) => s + (Number(b._bet.pnl) || 0), 0);
-        const start = parseFloat(localStorage.getItem(startKey) || startDefault) || 0;
-        const balance = start + profit;
-        return `<div class="money-row"><b>${label}</b>
-          <span>Wagered <b>${fmt(wagered)}</b></span>
-          <span>Profit <b class="${profit >= 0 ? 'pos' : 'neg'}">${profit >= 0 ? '+' : ''}${fmt(profit)}</b></span>
-          <span>Still riding <b>${fmt(atRisk)}</b></span>
-          <span>Balance <b>${fmt(balance)}</b></span>
-          <span class="dim">starting ${fmt(start)}</span></div>`;
-      };
-      const html = part('real', 'Real', 'edge_bankroll', '1000') + part('sim', 'Sim', 'edge_sim_bankroll', '1000');
-      box.innerHTML = html || '<div class="money-row">No bets logged yet.</div>';
+      if (!window.EDGE_BANKROLL) { box.hidden = true; return; }
+      const m = await EDGE_BANKROLL.compute();
+      const $ = EDGE_BANKROLL.money;
+      const part = (p, label) => !p.bets ? '' : `<div class="money-row"><b>${label}</b>
+          <span>Wagered <b>${$(p.wagered)}</b></span>
+          <span>Profit <b class="${p.profit >= 0 ? 'pos' : 'neg'}">${p.profit >= 0 ? '+' : ''}${$(p.profit)}</b></span>
+          <span>Still riding <b>${$(p.riding)}</b></span>
+          <span>Balance <b>${$(p.balance)}</b></span>
+          <span class="dim">starting ${$(p.start)}</span></div>`;
+      box.innerHTML = (part(m.real, 'Real') + part(m.sim, 'Sim')) || '<div class="money-row">No bets logged yet.</div>';
       box.hidden = false;
     }
+
 
     function renderSummary() {
       renderMoney();
