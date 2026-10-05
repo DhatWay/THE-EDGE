@@ -46,7 +46,7 @@
 
 const EDGE_ROSTER_ENGINE = (() => {
 
-  const BUILD = 'roster-20260926-01';
+  const BUILD = 'roster-20261006-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -64,8 +64,12 @@ const EDGE_ROSTER_ENGINE = (() => {
 
   const POSITION_GROUPS = {
     NFL: {
-      QB: 'OFFENSE_SKILL', RB: 'OFFENSE_SKILL', FB: 'OFFENSE_SKILL',
-      WR: 'OFFENSE_SKILL', TE: 'OFFENSE_SKILL',
+      // Each skill position is its own group, with its own starters and
+      // weight. Lumped together as one six-man "skill" group, a backup
+      // quarterback could be marked a starter and was weighted like a
+      // receiver.
+      QB: 'QB', RB: 'RB', FB: 'RB', HB: 'RB',
+      WR: 'WR', TE: 'TE',
       OT: 'OFFENSE_LINE', OG: 'OFFENSE_LINE', C: 'OFFENSE_LINE',
       G: 'OFFENSE_LINE', T: 'OFFENSE_LINE', OL: 'OFFENSE_LINE',
       DT: 'DEFENSE_FRONT', NT: 'DEFENSE_FRONT', DL: 'DEFENSE_FRONT',
@@ -105,6 +109,7 @@ const EDGE_ROSTER_ENGINE = (() => {
   POSITION_GROUPS.WNBA  = POSITION_GROUPS.NBA;
 
   const STARTER_COUNTS = {
+    QB: 1, RB: 1, WR: 3, TE: 1,
     OFFENSE_SKILL: 6, OFFENSE_LINE: 5,
     DEFENSE_FRONT: 2, DEFENSE_EDGE: 2, DEFENSE_MID: 3, DEFENSE_SECONDARY: 4,
     SPECIAL: 3,
@@ -116,6 +121,7 @@ const EDGE_ROSTER_ENGINE = (() => {
   };
 
   const POSITION_WEIGHTS = {
+    QB: 0.75, RB: 0.45, WR: 0.50, TE: 0.40,
     OFFENSE_SKILL: 0.55, OFFENSE_LINE: 0.45,
     DEFENSE_FRONT: 0.40, DEFENSE_EDGE: 0.55,
     DEFENSE_MID: 0.40, DEFENSE_SECONDARY: 0.50,
@@ -128,6 +134,7 @@ const EDGE_ROSTER_ENGINE = (() => {
   };
 
   const OFFENSE_GROUPS = new Set([
+    'QB', 'RB', 'WR', 'TE',
     'OFFENSE_SKILL', 'OFFENSE_LINE', 'GUARD', 'WING', 'BIG',
     'PITCHER_START', 'PITCHER_RELIEF', 'CATCHER', 'INFIELD', 'OUTFIELD', 'DH',
     'FORWARD', 'MIDFIELD', 'HITTER',
