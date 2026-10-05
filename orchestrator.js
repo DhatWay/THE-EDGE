@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261005-02';
+  const BUILD = 'orch-20261005-03';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -132,7 +132,12 @@ const EDGE_ORCHESTRATOR = (() => {
 
       // ── Stage 1 · Games ──
       log('Stage 1/7 · Loading games');
-      const gameList = games || loadTodaysGames();
+      // Games that have already started (or finished) are left out: their
+      // picks are locked and a rating after kickoff means nothing.
+      const allGiven = games || loadTodaysGames();
+      const nowMs = Date.now();
+      const gameList = allGiven.filter(g => !g.commence_time || new Date(g.commence_time).getTime() > nowMs);
+      if (allGiven.length > gameList.length) log(`  ${allGiven.length - gameList.length} games already started — skipped`);
       if (!gameList.length) {
         summary.errors.push('No games loaded');
         summary.duration_ms = Date.now() - startedAt;
