@@ -75,13 +75,13 @@ const EDGE_PROP_TRENDS = (() => {
   // ============================================================
 
   const NFL_THRESHOLDS = [
-    { stat: 'passing_yards',    label: 'pass yds',   thresholds: [200, 250, 300, 350], groups: ['OFFENSE_SKILL'] },
-    { stat: 'passing_tds',      label: 'pass TD',    thresholds: [1, 2, 3], groups: ['OFFENSE_SKILL'] },
-    { stat: 'rushing_yards',    label: 'rush yds',   thresholds: [50, 75, 100, 125], groups: ['OFFENSE_SKILL'] },
-    { stat: 'rushing_tds',      label: 'rush TD',    thresholds: [1, 2], groups: ['OFFENSE_SKILL'] },
-    { stat: 'receptions',       label: 'receptions', thresholds: [4, 6, 8, 10], groups: ['OFFENSE_SKILL'] },
-    { stat: 'receiving_yards',  label: 'rec yds',    thresholds: [50, 75, 100], groups: ['OFFENSE_SKILL'] },
-    { stat: 'receiving_tds',    label: 'rec TD',     thresholds: [1, 2], groups: ['OFFENSE_SKILL'] },
+    { stat: 'passing_yards',    label: 'pass yds',   thresholds: [200, 250, 300, 350], groups: ['OFFENSE_SKILL', 'QB'] },
+    { stat: 'passing_tds',      label: 'pass TD',    thresholds: [1, 2, 3], groups: ['OFFENSE_SKILL', 'QB'] },
+    { stat: 'rushing_yards',    label: 'rush yds',   thresholds: [50, 75, 100, 125], groups: ['OFFENSE_SKILL', 'RB', 'QB'] },
+    { stat: 'rushing_tds',      label: 'rush TD',    thresholds: [1, 2], groups: ['OFFENSE_SKILL', 'RB', 'QB'] },
+    { stat: 'receptions',       label: 'receptions', thresholds: [4, 6, 8, 10], groups: ['OFFENSE_SKILL', 'WR', 'TE', 'RB'] },
+    { stat: 'receiving_yards',  label: 'rec yds',    thresholds: [50, 75, 100], groups: ['OFFENSE_SKILL', 'WR', 'TE', 'RB'] },
+    { stat: 'receiving_tds',    label: 'rec TD',     thresholds: [1, 2], groups: ['OFFENSE_SKILL', 'WR', 'TE', 'RB'] },
   ];
 
   const NBA_THRESHOLDS = [
