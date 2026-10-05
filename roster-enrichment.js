@@ -54,7 +54,7 @@
 
 const EDGE_ROSTER_ENRICH = (() => {
 
-  const BUILD = 'enrich-20260926-01';
+  const BUILD = 'enrich-20261006-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -91,13 +91,21 @@ const EDGE_ROSTER_ENRICH = (() => {
     // absent — the box score does not carry them and the old
     // config's five defensive columns caused the entire NFL
     // enrichment read to fail.
-    { col: 'passing_yards',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-    { col: 'passing_tds',      weight: 1.0, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-    { col: 'rushing_yards',    weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-    { col: 'rushing_tds',      weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-    { col: 'receiving_yards',  weight: 0.7, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-    { col: 'receiving_tds',    weight: 0.8, groups: ['OFFENSE_SKILL'], agg: 'sum' },
-    { col: 'receptions',       weight: 0.5, groups: ['OFFENSE_SKILL'], agg: 'sum' },
+    // Per game, and each position measured against its own position:
+    // quarterbacks on passing, backs on rushing, receivers and tight ends
+    // on catching. (Season totals across one mixed group rated a
+    // receiver against quarterbacks' passing yards.) The old lumped group
+    // stays listed for rows written before the split.
+    { col: 'passing_yards',    weight: 1.0, groups: ['QB', 'OFFENSE_SKILL'], agg: 'avg' },
+    { col: 'passing_tds',      weight: 0.9, groups: ['QB', 'OFFENSE_SKILL'], agg: 'avg' },
+    { col: 'interceptions',    weight: 0.6, groups: ['QB'], agg: 'avg', inverted: true },
+    { col: 'rushing_yards',    weight: 0.3, groups: ['QB'], agg: 'avg' },
+    { col: 'rushing_yards',    weight: 1.0, groups: ['RB', 'OFFENSE_SKILL'], agg: 'avg' },
+    { col: 'rushing_tds',      weight: 0.8, groups: ['RB', 'OFFENSE_SKILL'], agg: 'avg' },
+    { col: 'receiving_yards',  weight: 0.4, groups: ['RB'], agg: 'avg' },
+    { col: 'receiving_yards',  weight: 1.0, groups: ['WR', 'TE', 'OFFENSE_SKILL'], agg: 'avg' },
+    { col: 'receptions',       weight: 0.7, groups: ['WR', 'TE', 'OFFENSE_SKILL'], agg: 'avg' },
+    { col: 'receiving_tds',    weight: 0.8, groups: ['WR', 'TE', 'OFFENSE_SKILL'], agg: 'avg' },
   ];
 
   const NBA_METRICS = [
@@ -154,6 +162,7 @@ const EDGE_ROSTER_ENRICH = (() => {
   };
 
   const POSITION_WEIGHTS = {
+    QB: 0.75, RB: 0.45, WR: 0.50, TE: 0.40,
     OFFENSE_SKILL: 0.55, OFFENSE_LINE: 0.45,
     DEFENSE_FRONT: 0.40, DEFENSE_EDGE: 0.55,
     DEFENSE_MID: 0.40, DEFENSE_SECONDARY: 0.50,
@@ -166,6 +175,7 @@ const EDGE_ROSTER_ENRICH = (() => {
   };
 
   const OFFENSE_GROUPS = new Set([
+    'QB', 'RB', 'WR', 'TE',
     'OFFENSE_SKILL', 'OFFENSE_LINE', 'GUARD', 'WING', 'BIG',
     'PITCHER_START', 'PITCHER_RELIEF', 'CATCHER', 'INFIELD', 'OUTFIELD', 'DH',
     'FORWARD', 'MIDFIELD', 'HITTER',
@@ -245,6 +255,39 @@ const EDGE_ROSTER_ENRICH = (() => {
     const agg = await loadAggregates(url, key, sport, currentSeason, metrics);
     const statCount = Object.keys(agg).length;
     log(`  ${statCount} players with current-season games (${currentSeason})`);
+
+    // Early in a season most players have fewer than MIN_GAMES games, so
+    // almost no one was rated and everyone kept the roster template
+    // (the -22.6 seen on backups everywhere). Until a player has
+    // MIN_GAMES this season, last season's per-game numbers fill in,
+    // weighted by how many games each season has.
+    const prevSeason = String(Number(currentSeason) - 1);
+    const thin = Object.entries(agg).filter(([, a]) => (a.games || 0) < MIN_GAMES);
+    if (thin.length || statCount < players.length / 4) {
+      const prev = await loadAggregates(url, key, sport, prevSeason, metrics);
+      let filled = 0;
+      const mergeOne = (cur, old) => {
+        const out = { games: (cur?.games || 0) + (old?.games || 0) };
+        metrics.forEach(m => {
+          const c = cur?.[m.col], o = old?.[m.col];
+          if (c == null && o == null) return;
+          if (m.agg === 'avg') {
+            const cg = cur?.games || 0, og = old?.games || 0;
+            out[m.col] = (c != null && o != null) ? (c * cg + o * og) / Math.max(1, cg + og) : (c ?? o);
+          } else {
+            out[m.col] = (c || 0) + (o || 0);
+          }
+        });
+        return out;
+      };
+      Object.entries(prev).forEach(([pid, old]) => {
+        const cur = agg[pid];
+        if (cur && (cur.games || 0) >= MIN_GAMES) return;
+        agg[pid] = mergeOne(cur, old);
+        filled++;
+      });
+      log(`  ${filled} players filled in with last season (${prevSeason}) until they have ${MIN_GAMES} games this season`);
+    }
 
     if (!statCount) {
       return emptyResult('player_game_stats has no current-season rows — run Fetch Box Scores first');
