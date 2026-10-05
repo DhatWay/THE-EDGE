@@ -38,7 +38,7 @@
 
 const EDGE_INJURY = (() => {
 
-  const BUILD = 'inj-20261005-01';
+  const BUILD = 'inj-20261005-02';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -167,6 +167,11 @@ const EDGE_INJURY = (() => {
       // lineup deduction too counted one injury twice.
       const noQb = list => (sport === 'NFL' || sport === 'NCAAF')
         ? list.filter(i => String(i.position || '').toUpperCase() !== 'QB') : list;
+      const footballQb = i => (sport === 'NFL' || sport === 'NCAAF') && String(i.position || '').toUpperCase() === 'QB';
+      [[homeInjuries, homeScale], [awayInjuries, awayScale]].forEach(([list, scale]) => list.forEach(i => {
+        i.qb_priced = footballQb(i);
+        i.share_pct = i.qb_priced ? 0 : round(((i.offensive_contribution || 0) + (i.defensive_contribution || 0)) * scale, 1);
+      }));
       const homeOff = round(sumDeduction(noQb(homeInjuries), 'offensive_contribution') * homeScale, 2);
       const homeDef = round(sumDeduction(noQb(homeInjuries), 'defensive_contribution') * homeScale, 2);
       const awayOff = round(sumDeduction(noQb(awayInjuries), 'offensive_contribution') * awayScale, 2);
@@ -318,6 +323,11 @@ const EDGE_INJURY = (() => {
         if (!recent) return;
       }
 
+      // A player's contribution is a quality score, not playing time, so
+      // a third-string quarterback carried nearly a starter's weight.
+      // Starters count in full; everyone else at a fifth, for the snaps
+      // or minutes a reserve actually plays.
+      const roleWeight = player.is_starter ? 1 : 0.2;
       matched.push({
         name: player.name,
         position: player.position,
@@ -326,8 +336,9 @@ const EDGE_INJURY = (() => {
         is_starter: player.is_starter,
         status: inj.status,
         multiplier,
-        offensive_contribution: round((player.offensive_contribution || 0) * multiplier, 2),
-        defensive_contribution: round((player.defensive_contribution || 0) * multiplier, 2),
+        role_weight: roleWeight,
+        offensive_contribution: round((player.offensive_contribution || 0) * multiplier * roleWeight, 2),
+        defensive_contribution: round((player.defensive_contribution || 0) * multiplier * roleWeight, 2),
       });
     });
 
