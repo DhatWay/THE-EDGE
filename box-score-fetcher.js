@@ -50,7 +50,7 @@
 
 const EDGE_BOXSCORE = (() => {
 
-  const BUILD = 'box-20260927-01';
+  const BUILD = 'box-20261005-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -145,7 +145,7 @@ create unique index if not exists player_game_stats_unique_idx
     log(`  ${games.length} games on file`);
 
     log('  checking which already have complete player stats');
-    const existing = await loadExistingCounts(sport, url, key);
+    const existing = await loadExistingCounts(sport, url, key, games.map(g => String(g.game_id)));
     log(`  ${existing.size} games have some stats on file`);
 
     const pending = games.filter(g => !existing.has(g.game_id));
@@ -245,29 +245,43 @@ create unique index if not exists player_game_stats_unique_idx
     });
   }
 
-  // Returns a Map of game_id → stored row count. Games with a
-  // small count are partial writes that deserve a re-fetch.
-  async function loadExistingCounts(sport, url, key) {
+  // Returns a Map of game_id → stored row count, for the games about to
+  // be fetched only. It used to page through every stored row for the
+  // sport (80,000+ for NCAAB); a slow page deep in that read ended it
+  // early, the rest looked missing, and the run started over. Asking
+  // about the candidate games in small batches is fast and complete.
+  // (Writes were never duplicated — they upsert on game_id + player_id —
+  // but the whole sport was re-downloaded.)
+  async function loadExistingCounts(sport, url, key, gameIds = []) {
     const counts = new Map();
-    const pageSize = 1000;
-    for (let offset = 0; offset < 2000000; offset += pageSize) {
-      try {
-        const res = await fetch(
-          `${url}/rest/v1/player_game_stats?sport=eq.${sport}` +
-          `&select=game_id&order=game_id.asc,player_id.asc&limit=${pageSize}&offset=${offset}`,
-          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-        );
-        if (!res.ok) break;
-        const rows = await res.json();
-        rows.forEach(r => {
-          if (!r.game_id) return;
-          counts.set(r.game_id, (counts.get(r.game_id) || 0) + 1);
-        });
-        if (rows.length < pageSize) break;
-      } catch (e) {
-        logEdgeError('boxscore.loadExisting.' + sport, e);
-        break;
+    const ids = [...new Set(gameIds.filter(Boolean))];
+    for (let i = 0; i < ids.length; i += 40) {
+      const chunk = ids.slice(i, i + 40);
+      const inList = chunk.map(id => `"${String(id).replace(/"/g, '')}"`).join(',');
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          let offset = 0;
+          while (true) {
+            const res = await fetch(
+              `${url}/rest/v1/player_game_stats?game_id=in.(${inList})` +
+              `&select=game_id&order=game_id.asc,player_id.asc&limit=1000&offset=${offset}`,
+              { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+            );
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const rows = await res.json();
+            rows.forEach(r => { if (r.game_id) counts.set(r.game_id, (counts.get(r.game_id) || 0) + 1); });
+            if (rows.length < 1000) break;
+            offset += 1000;
+          }
+          ok = true;
+        } catch (e) {
+          if (attempt === 2) logEdgeError('boxscore.loadExisting.' + sport, e);
+        }
       }
+      // If a batch can't be checked after three tries, its games are
+      // treated as already on file rather than re-downloaded blind.
+      if (!ok) chunk.forEach(id => { if (!counts.has(id)) counts.set(id, 12); });
     }
     return counts;
   }
@@ -423,8 +437,8 @@ create unique index if not exists player_game_stats_unique_idx
 
     const MAPS = {
       NFL: {
-        QB: 'OFFENSE_SKILL', RB: 'OFFENSE_SKILL', FB: 'OFFENSE_SKILL',
-        WR: 'OFFENSE_SKILL', TE: 'OFFENSE_SKILL',
+        QB: 'QB', RB: 'RB', FB: 'RB', HB: 'RB',
+        WR: 'WR', TE: 'TE',
         OT: 'OFFENSE_LINE', OG: 'OFFENSE_LINE', C: 'OFFENSE_LINE',
         G: 'OFFENSE_LINE', T: 'OFFENSE_LINE', OL: 'OFFENSE_LINE',
         DT: 'DEFENSE_FRONT', NT: 'DEFENSE_FRONT', DL: 'DEFENSE_FRONT',
