@@ -23,6 +23,7 @@
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
+  <script src="bankroll.js"></script>
   <script src="learning.js"></script>
   <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
@@ -608,11 +609,14 @@
       loadBetLog();
     }
 
-    function updateBankrolls() {
-      const real = parseFloat(localStorage.getItem('edge_bankroll') || '0');
-      const sim = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
-      document.getElementById('realBankroll').textContent = '$' + real.toLocaleString();
-      document.getElementById('simBankroll').textContent = '$' + sim.toLocaleString();
+    // Same calculation as Today's Picks and Pick History (bankroll.js):
+    // start, plus settled profit, minus stakes still riding. The older
+    // on-phone sim tracker kept its own number, which drifted.
+    async function updateBankrolls() {
+      if (!window.EDGE_BANKROLL) return;
+      const m = await EDGE_BANKROLL.compute();
+      document.getElementById('realBankroll').textContent = EDGE_BANKROLL.money(m.real.balance);
+      document.getElementById('simBankroll').textContent = EDGE_BANKROLL.money(m.sim.balance);
     }
 
     // ── CAPS ──
