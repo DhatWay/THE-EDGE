@@ -156,6 +156,10 @@
 
     .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
     .view-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+    .earlier-box { margin: 10px 0; font-size: 12px; color: var(--text-dim); border: 1px solid var(--border); padding: 6px 10px; }
+    .earlier-box summary { cursor: pointer; letter-spacing: 1px; }
+    .earlier-row { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+    .earlier-row b.pos { color: var(--green); } .earlier-row b.neg { color: var(--red); }
     .pf-sub { font-size: 10px; color: var(--text-dim); margin-top: 3px; letter-spacing: 0.3px; line-height: 1.4; }
     .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
       font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
@@ -635,31 +639,34 @@
       }
     }
 
+    // Clear removes every model pick on this page for games that haven't
+    // started. It used to delete only picks *created* today, but most of
+    // today's picks were created on earlier days and refreshed since — so
+    // they stayed, and looked like they came right back. Your own picks
+    // (MY PICK) and lines from other books are kept; placed bets are
+    // never touched. The next pipeline run rates these games again.
     async function clearTodaysPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
       if (!url || !key) { showToast('Supabase not connected', 'red'); return; }
-      if (!confirm('Delete all of today\'s picks? Cannot be undone.')) return;
-
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-
+      const now = Date.now();
+      const doomed = allPicks.filter(p => p.id && p.decision !== 'MINE' && !String(p.decision || '').startsWith('LINE_')
+        && (!p.commence_time || new Date(p.commence_time).getTime() > now));
+      if (!doomed.length) { showToast('No upcoming picks to clear', ''); return; }
+      if (!confirm(`Remove ${doomed.length} upcoming picks from this page? Your own picks and placed bets stay.`)) return;
       try {
-        await fetch(
-          `${url}/rest/v1/shadow_picks?created_at=gte.${todayStart.toISOString()}`,
-          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } }
-        );
-
-        const flags = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && (k.startsWith('edge_bet_sim_') || k.startsWith('edge_bet_real_'))) flags.push(k);
+        let removed = 0;
+        for (let i = 0; i < doomed.length; i += 100) {
+          const ids = doomed.slice(i, i + 100).map(p => p.id).join(',');
+          const res = await fetch(`${url}/rest/v1/shadow_picks?id=in.(${ids})`,
+            { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=representation' } });
+          if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
+          removed += (await res.json().catch(() => [])).length;
         }
-        flags.forEach(k => localStorage.removeItem(k));
-
-        allPicks = [];
+        const gone = new Set(doomed.map(p => p.id));
+        allPicks = allPicks.filter(p => !gone.has(p.id));
         renderPicks();
-        showToast('Today\'s picks cleared', '');
+        showToast(removed === doomed.length ? `Cleared ${removed} picks` : `Cleared ${removed} of ${doomed.length} — the rest were refused`, removed === doomed.length ? '' : 'red');
       } catch (e) {
         logEdgeError('picks.clearTodaysPicks', e);
         showToast('Clear failed: ' + e.message, 'red');
@@ -776,8 +783,15 @@
       return picks.filter(isPickRow);
     }
 
+    // Games that have started or finished leave the main list (their
+    // results are in Pick History, and in "Earlier today" below).
+    function upcomingOnly(picks) {
+      const now = Date.now();
+      return picks.filter(p => !p.commence_time || new Date(p.commence_time).getTime() > now);
+    }
+
     function applyFilter(picks) {
-      picks = inView(picks);
+      picks = inView(upcomingOnly(picks));
       if (currentFilter === 'all') return picks;
       if (currentFilter === 'elite') return picks.filter(p => (p.confidence || 0) >= 60);
       if (currentFilter === 'high')  return picks.filter(p => (p.confidence || 0) >= 57);
@@ -833,12 +847,28 @@
       return 'lean';
     }
 
+    // Today's games that have already started, with their results.
+    function renderEarlier() {
+      let box = document.getElementById('earlierBox');
+      const list = document.getElementById('picksList');
+      if (!box && list) { box = document.createElement('details'); box.id = 'earlierBox'; box.className = 'earlier-box'; list.parentNode.insertBefore(box, list.nextSibling); }
+      if (!box) return;
+      const now = Date.now();
+      const earlier = inView(allPicks).filter(p => p.commence_time && new Date(p.commence_time).getTime() <= now);
+      if (!earlier.length) { box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = `<summary>Earlier today · ${earlier.length} game${earlier.length === 1 ? '' : 's'} started</summary>` +
+        earlier.map(p => `<div class="earlier-row"><span>${(p.sport || '')} · ${(p.away_team || '')} @ ${(p.home_team || '')}</span>` +
+          `<span>${(p.side_team || p.direction || '')}</span><b class="${p.result === 'W' ? 'pos' : p.result === 'L' ? 'neg' : ''}">${p.result || 'in progress / pending'}</b></div>`).join('');
+    }
+
     function renderPicks() {
       const note = document.getElementById('bankrollNote');
       if (note) note.hidden = parseFloat(localStorage.getItem('edge_bankroll') || '0') > 0;
       const filtered = applyFilter(allPicks);
       updateSummary(filtered);
       const list = document.getElementById('picksList');
+      renderEarlier();
 
       if (!filtered.length) {
         list.innerHTML = `
