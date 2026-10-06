@@ -724,8 +724,11 @@ async function run() {
     log(`  ${gameResults.length} graded picks`);
     log(`  ${situationRows.length} situation rows`);
 
-    // ── 7. Persist via the module ──
-    if (situationRows.length && situationsTableAvailable) {
+    // ── 7. Situation rows are no longer stored ──
+    // Picks use the spot records kept with the calibration (one entry per
+    // situation, each game once), not these per-game rows, which grew by
+    // thousands with every test. The report above still shows them.
+    if (false && situationRows.length && situationsTableAvailable) {
       log('Clearing prior situation_results for this sport…');
       const cleared = await EDGE_SITUATION_RESULTS.clearForSport(sport);
       if (!cleared.ok) {
