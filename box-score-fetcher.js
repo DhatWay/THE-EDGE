@@ -50,7 +50,7 @@
 
 const EDGE_BOXSCORE = (() => {
 
-  const BUILD = 'box-20261005-01';
+  const BUILD = 'box-20261006-02';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -545,7 +545,10 @@ create unique index if not exists player_game_stats_unique_idx
 
       shots_on_target: null,
 
-      raw: stats,
+      // The full ESPN stat copy is no longer stored: nothing reads it (the
+      // stats used are all in their own columns) and it was the biggest
+      // single use of database space.
+      raw: null,
     };
 
     const num = (v) => {
