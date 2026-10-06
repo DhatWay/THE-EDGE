@@ -50,7 +50,7 @@
 
 const EDGE_BOXSCORE = (() => {
 
-  const BUILD = 'box-20261006-02';
+  const BUILD = 'box-20261006-03';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -689,13 +689,13 @@ create unique index if not exists player_game_stats_unique_idx
     // One row per (game_id, player_id) in the batch, whatever
     // produced it — the upsert rejects a batch that holds a key twice.
     const deduped = dedupeBatch(rowsIn);
-    const rows = (missingCols && missingCols.size)
-      ? deduped.map(r => {
-          const o = {};
-          Object.keys(r).forEach(k => { if (!missingCols.has(k)) o[k] = r[k]; });
-          return o;
-        })
-      : deduped;
+    // The raw stat copy is never sent — the column can be dropped from
+    // the table to free space, and writes keep working either way.
+    const rows = deduped.map(r => {
+      const o = {};
+      Object.keys(r).forEach(k => { if (k !== 'raw' && !(missingCols && missingCols.has(k))) o[k] = r[k]; });
+      return o;
+    });
 
     for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
       const chunk = rows.slice(i, i + WRITE_CHUNK);
