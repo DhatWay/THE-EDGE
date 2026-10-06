@@ -1,871 +1,540 @@
-// ============================================================
-// EDGE — ALGORITHMS ENGINE v2.0
-//
-// Nine families. Each receives a GamePrior from EDGE_POWER plus
-// whatever context has been gathered, and returns a verdict.
-//
-// Every family returns the same shape:
-//   {
-//     family:       string,
-//     signal:       number,   -1 = strong away, +1 = strong home
-//     vote:         'yes' | 'no' | 'neu',
-//     confidence:   number,   0.5 to 1.0
-//     edge:         number,   0 to 0.15 — expected points vs line
-//     reason:       string,
-//     subs:         array,    every sub-signal that went into the vote
-//     data:         object,   raw inputs used, for backtesting
-//   }
-//
-// The signal field is the primary gradeable output. A signal of
-// +0.4 means "leaning home"; the slate test can then ask whether
-// games with signal > 0.2 historically covered more often than
-// the market implied. Vote and confidence are derived from
-// signal, not the other way around.
-//
-// v2.0 — coaching family loses its always-zero halftime sub.
-// environment family loses its calendar heuristics. Every
-// remaining sub-signal is data-driven. WNBA added to weights.
-// ============================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDGE — Algorithm Suite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#C9A84C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <script src="auth.js"></script>
+  <script src="edge-time.js"></script>
+  <script src="team-aliases.js"></script>
+  <script src="qb-ratings.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C; --gold-bright: #E8C76A; --gold-dim: #8A6E2F;
+      --gold-glow: rgba(201,168,76,0.10); --bg: #080808; --bg2: #0F0F0F;
+      --bg4: #1C1C1C; --surface: #111111; --border: rgba(201,168,76,0.12);
+      --border-bright: rgba(201,168,76,0.32); --text: #F0EAD8;
+      --text-dim: #7A7060; --text-mid: #A89878; --green: #27AE60; --red: #E74C3C;
+      --blue: #4A90D9;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Barlow', sans-serif; min-height: 100vh; overflow-x: hidden; }
+    nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 60px; background: rgba(8,8,8,0.97); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .logo-mark { width: 34px; height: 34px; background: var(--gold); color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; clip-path: polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%); }
+    .logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 5px; color: var(--gold); line-height: 1; }
+    .logo-sub  { font-size: 8px; letter-spacing: 2.5px; color: var(--text-dim); text-transform: uppercase; }
+    .hamburger { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; gap: 5px; padding: 6px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--gold); transition: all 0.28s ease; }
+    .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+    .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+    .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 98; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .overlay.open { opacity: 1; pointer-events: all; }
+    .drawer { position: fixed; top: 60px; right: 0; width: 270px; height: calc(100vh - 60px); background: var(--bg2); border-left: 1px solid var(--border); z-index: 99; transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; padding-bottom: 30px; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-section { padding: 18px 20px 6px; font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); }
+    .drawer a { display: flex; align-items: center; gap: 13px; padding: 12px 20px; font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-mid); text-decoration: none; border-left: 2px solid transparent; transition: all 0.2s; }
+    .drawer a:hover, .drawer a.active { color: var(--gold); border-left-color: var(--gold); background: var(--gold-glow); }
+    .drawer a .ico { width: 16px; text-align: center; font-size: 13px; opacity: 0.8; }
+    main { padding-top: 60px; }
+    .page-header { padding: 32px 20px 20px; border-bottom: 1px solid var(--border); }
+    .page-eye { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .page-eye::before { content: ''; display: block; width: 20px; height: 1px; background: var(--gold); }
+    .page-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(42px, 12vw, 72px); letter-spacing: 4px; line-height: 0.9; }
+    .page-title em { color: var(--gold); font-style: normal; }
 
-const EDGE_ALGOS = (() => {
+    .portfolio-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .pf-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 14px 8px; cursor: pointer; transition: all 0.2s; text-align: center; border-bottom: 3px solid transparent; }
+    .pf-btn:last-child { border-right: none; }
+    .pf-btn.active.real { border-bottom-color: var(--gold); background: var(--gold-glow); }
+    .pf-btn.active.sim { border-bottom-color: var(--blue); background: rgba(74,144,217,0.08); }
+    .pf-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+    .pf-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .pf-btn.active.real .pf-val { color: var(--gold); }
+    .pf-btn.active.sim .pf-val { color: var(--blue); }
 
-  const FAMILIES = [
-    'team_quality',
-    'offense_defense',
-    'coaching',
-    'market',
-    'line_dynamics',
-    'fatigue',
-    'environment',
-    'trend',
-    'injury',
-  ];
+    .mode-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); gap: 10px; flex-wrap: wrap; }
+    .mode-info { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; }
+    .mode-pill { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 3px 9px; border: 1px solid; }
+    .mode-pill.det { border-color: var(--gold-dim); color: var(--gold); }
+    .mode-pill.ai  { border-color: var(--blue); color: var(--blue); }
+    .run-btn { background: var(--gold); border: none; color: #000; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 2px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  const FAMILY_WEIGHTS = {
-    NFL: {
-      team_quality: 10, offense_defense: 8, coaching: 8,
-      market: 10, line_dynamics: 9, fatigue: 8,
-      environment: 7, trend: 6, injury: 10,
-    },
-    NBA: {
-      team_quality: 9, offense_defense: 10, coaching: 7,
-      market: 9, line_dynamics: 8, fatigue: 10,
-      environment: 2, trend: 8, injury: 10,
-    },
-    WNBA: {
-      team_quality: 9, offense_defense: 10, coaching: 7,
-      market: 9, line_dynamics: 8, fatigue: 10,
-      environment: 2, trend: 8, injury: 10,
-    },
-    MLB: {
-      team_quality: 8, offense_defense: 8, coaching: 6,
-      market: 9, line_dynamics: 8, fatigue: 7,
-      environment: 10, trend: 7, injury: 8,
-    },
-    NHL: {
-      team_quality: 8, offense_defense: 8, coaching: 7,
-      market: 9, line_dynamics: 8, fatigue: 8,
-      environment: 2, trend: 7, injury: 9,
-    },
-    NCAAF: {
-      team_quality: 9, offense_defense: 8, coaching: 9,
-      market: 9, line_dynamics: 8, fatigue: 7,
-      environment: 8, trend: 7, injury: 9,
-    },
-    NCAAB: {
-      team_quality: 9, offense_defense: 9, coaching: 8,
-      market: 8, line_dynamics: 8, fatigue: 8,
-      environment: 3, trend: 7, injury: 8,
-    },
-    MLS: {
-      team_quality: 8, offense_defense: 8, coaching: 7,
-      market: 8, line_dynamics: 7, fatigue: 8,
-      environment: 10, trend: 8, injury: 8,
-    },
-    DEFAULT: {
-      team_quality: 8, offense_defense: 8, coaching: 7,
-      market: 9, line_dynamics: 8, fatigue: 8,
-      environment: 6, trend: 7, injury: 8,
-    },
-  };
+    .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); }
+    .sum-cell { padding: 12px 8px; border-right: 1px solid var(--border); text-align: center; }
+    .sum-cell:last-child { border-right: none; }
+    .sum-val { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: var(--text); line-height: 1; }
+    .sum-val.gold { color: var(--gold); }
+    .sum-val.green { color: var(--green); }
+    .sum-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
 
-  const MIN_ATS_SAMPLE = 6;
-  const MIN_H2H_SAMPLE = 3;
+    .filter-strip { display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .filter-strip::-webkit-scrollbar { display: none; }
+    .fchip { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .fchip.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
 
-  return {
-    runAll,
-    runFamily,
-    FAMILIES,
-    FAMILY_WEIGHTS,
-    getFamilyWeight,
-  };
+    .picks-list { padding: 16px 20px; }
+    .pick-card { background: var(--surface); border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+    .pick-card:hover { border-color: var(--border-bright); }
+    .pick-card.tier-elite  { border-left: 3px solid var(--gold); }
+    .pick-card.tier-high   { border-left: 3px solid var(--green); }
+    .pick-card.tier-solid  { border-left: 3px solid var(--text-mid); }
+    .pick-card.tier-lean   { border-left: 3px solid var(--text-dim); }
+    .pick-card.vetoed      { opacity: 0.5; }
+    .pick-card.passed      { opacity: 0.55; }
 
-  // ============================================================
-  // ── ENTRY ──
-  // ============================================================
+    .pick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px; gap: 8px; }
+    .pick-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sport-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; background: var(--bg4); border: 1px solid var(--border); color: var(--text-dim); }
+    .pick-time { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); }
+    .decision-tag { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid; }
+    .decision-tag.bet2u { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.1); }
+    .decision-tag.bet1u { border-color: var(--green); color: var(--green); background: rgba(39,174,96,0.08); }
+    .decision-tag.lean  { border-color: var(--text-mid); color: var(--text-mid); }
+    .decision-tag.vetoed { border-color: var(--red); color: var(--red); }
+    .decision-tag.pass  { border-color: var(--text-dim); color: var(--text-dim); }
+    .decision-tag.capped { border-color: var(--text-dim); color: var(--text-dim); }
+    .mode-badge { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--border); color: var(--text-dim); }
+    .mode-badge.ai { border-color: var(--blue); color: var(--blue); }
 
-  async function runAll(prior, context = {}) {
-    const results = [];
-    for (const family of FAMILIES) {
+    .pick-body { padding: 6px 14px 12px; }
+    .pick-matchup { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; line-height: 1.1; margin-bottom: 4px; }
+    .pick-side { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
+    .pick-side.away { color: var(--blue); }
+
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); margin-bottom: 12px; }
+    .metric-cell { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+    .metric-cell:last-child { border-right: none; }
+    .metric-val { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--text); line-height: 1; }
+    .metric-val.gold  { color: var(--gold); }
+    .metric-val.green { color: var(--green); }
+    .metric-val.red   { color: var(--red); }
+    .metric-val.blue  { color: var(--blue); }
+    .metric-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+
+    .cons-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .cons-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
+    .cons-track { flex: 1; background: var(--bg4); height: 5px; overflow: hidden; }
+    .cons-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright)); box-shadow: 0 0 5px var(--gold); transition: width 0.7s ease; }
+    .cons-num { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--gold); letter-spacing: 1px; white-space: nowrap; }
+
+    .pick-reason { font-size: 12px; color: var(--text-dim); line-height: 1.55; font-weight: 300; margin-bottom: 10px; }
+
+    .picks-tools { display: flex; gap: 8px; margin: 0 0 10px; }
+    .view-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+    .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .view-tab.active { color: var(--gold); border-color: var(--gold); }
+    .leans-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-dim); margin: 0 0 10px; }
+    .best-line { font-size: 12px; color: var(--text-dim); margin: 0 0 8px; }
+    .best-line b { color: var(--gold); }
+    .tool-btn { flex: 1; background: none; border: 1px solid var(--border); color: var(--text); font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 10px; cursor: pointer; }
+    .tool-btn.gold { border-color: var(--gold); color: var(--gold); }
+    .pick-action-btn.copy { color: var(--text); }
+    .bankroll-note { border: 1px solid var(--gold); color: var(--gold); font-size: 12px; line-height: 1.5; padding: 8px 10px; margin: 0 0 10px; }
+    .bankroll-note[hidden] { display: none; }
+    .analytics { margin: 4px 0 10px; border: 1px solid var(--border); }
+    .analytics summary { cursor: pointer; padding: 8px 10px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+    .analytics-body { padding: 0 10px 10px; font-size: 12px; line-height: 1.6; color: var(--text); }
+    .analytics-body .row { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 3px 0; }
+    .analytics-body .row span:first-child { color: var(--text-dim); }
+    .analytics-body .fam { padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .analytics-body .fam b { font-weight: 600; }
+    .analytics-body .fam.off { opacity: 0.45; }
+    .family-mini { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .family-chip { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 7px; border: 1px solid; }
+    .family-chip.yes { border-color: rgba(39,174,96,0.4); color: var(--green); }
+    .family-chip.no  { border-color: rgba(231,76,60,0.35); color: var(--red); }
+    .family-chip.neu { border-color: var(--border); color: var(--text-dim); }
+
+    .context-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      border-radius: 2px;
+    }
+    .ctx-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(201,168,76,0.06);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.8px;
+    }
+    .ctx-row:last-child { border-bottom: none; }
+    .ctx-label {
+      color: var(--text-dim);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ctx-value { color: var(--text-mid); text-align: right; font-weight: 600; }
+    .ctx-value .pos { color: var(--green); }
+    .ctx-value .neg { color: var(--red); }
+    .ctx-value .gold { color: var(--gold); }
+    .ctx-value .blue { color: var(--blue); }
+
+    .claude-note { background: rgba(74,144,217,0.06); border: 1px solid rgba(74,144,217,0.25); padding: 10px 12px; margin-bottom: 12px; }
+    .claude-note-lbl { font-family: 'Barlow Condensed', sans-serif; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--blue); margin-bottom: 3px; }
+    .claude-note-txt { font-size: 12px; color: var(--text-mid); line-height: 1.5; font-weight: 300; }
+
+    .pick-actions { display: flex; gap: 0; border-top: 1px solid var(--border); }
+    .pick-action-btn { flex: 1; background: none; border: none; border-right: 1px solid var(--border); padding: 12px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 5px; }
+    .pick-action-btn:last-child { border-right: none; }
+    .pick-action-btn.approve { color: var(--green); }
+    .pick-action-btn.approve:hover { background: rgba(39,174,96,0.08); }
+    .pick-action-btn.skip { color: var(--red); }
+    .pick-action-btn.skip:hover { background: rgba(231,76,60,0.06); }
+    .pick-action-btn.simbet { color: var(--blue); }
+    .pick-action-btn.simbet:hover { background: rgba(74,144,217,0.08); }
+    .pick-action-btn.analysis { color: var(--gold); }
+    .pick-action-btn.analysis:hover { background: var(--gold-glow); }
+    .pick-action-btn.done { color: var(--text-dim); cursor: default; }
+    .pick-action-btn.bet-placed { color: var(--gold); background: var(--gold-glow); }
+    .pick-action-btn.sim-placed { color: var(--blue); background: rgba(74,144,217,0.08); }
+
+    .empty-state { padding: 48px 20px; text-align: center; }
+    .empty-icon { font-size: 32px; opacity: 0.2; margin-bottom: 14px; }
+    .empty-title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; color: var(--text-dim); margin-bottom: 8px; }
+    .empty-sub { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim); line-height: 1.8; }
+    .go-btn { display: inline-block; margin-top: 20px; border: 1px solid var(--gold-dim); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; padding: 10px 24px; cursor: pointer; text-decoration: none; transition: all 0.2s; }
+    .go-btn:hover { background: var(--gold-glow); border-color: var(--gold); }
+
+    footer { padding: 28px 20px; text-align: center; border-top: 1px solid var(--border); margin-top: 10px; }
+    .foot-logo { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 7px; color: var(--gold-dim); margin-bottom: 6px; }
+    .foot-txt { font-size: 11px; color: var(--text-dim); letter-spacing: 0.5px; line-height: 1.7; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px); background: var(--green); color: #000; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 10px 24px; z-index: 200; opacity: 0; transition: all 0.3s; white-space: nowrap; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.blue { background: var(--blue); color: #fff; }
+    .toast.red { background: var(--red); color: #fff; }
+
+    :root {
+      --lift: 0 2px 4px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.38);
+      --lift-high: 0 4px 8px rgba(0,0,0,0.5), 0 16px 36px rgba(0,0,0,0.46), 0 0 0 1px rgba(201,168,76,0.06);
+      --lift-gold: 0 2px 4px rgba(0,0,0,0.45), 0 10px 28px rgba(0,0,0,0.42), 0 0 22px rgba(201,168,76,0.07);
+    }
+    .pick-card, .stat-card, .game-card, .context-panel { box-shadow: var(--lift); border-radius: 2px; transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.2s ease; }
+    .pick-card { box-shadow: var(--lift-gold); }
+    .pick-card:hover { box-shadow: var(--lift-high); transform: translateY(-2px); }
+    @media (prefers-reduced-motion: reduce) {
+      .pick-card { transition: none; }
+      .pick-card:hover { transform: none; }
+    }
+
+    .offline-bar { position: fixed; top: 60px; left: 0; right: 0; z-index: 97; background: #2A1F08; border-bottom: 1px solid var(--border-bright); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; padding: 7px 20px; text-align: center; transform: translateY(-100%); transition: transform 0.25s ease; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
+    .offline-bar.show { transform: translateY(0); }
+  </style>
+  <style>
+    .wrap { max-width: 760px; margin: 0 auto; padding: 80px 16px 60px; }
+    .eyebrow { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold); }
+    .title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 10vw, 56px); letter-spacing: 3px; line-height: 0.95; margin: 4px 0 14px; }
+    .title em { color: var(--gold); font-style: normal; }
+    .card { border: 1px solid var(--border); background: var(--surface); padding: 14px; margin: 0 0 12px; }
+    .card h3 { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); font-size: 15px; margin: 0 0 8px; }
+    .card p, .card li { font-size: 14px; line-height: 1.55; color: var(--text); }
+    .card ol, .card ul { padding-left: 20px; margin: 6px 0; }
+    .card .dim { color: var(--text-dim); font-size: 12px; }
+    .ctrls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ctrls label { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+    .ctrls select, .ctrls input { width: 100%; padding: 9px 8px; background: transparent; border: 1px solid var(--border); color: var(--text); font-size: 14px; }
+    .btn-gold { width: 100%; margin-top: 10px; padding: 12px; background: var(--gold); color: #000; border: none; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; font-size: 15px; cursor: pointer; }
+    .btn-line { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold); font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .leg { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .leg .who { color: var(--text); } .leg .meta { color: var(--text-dim); font-size: 12px; }
+    .leg .pct { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); white-space: nowrap; }
+    .leg button { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; }
+    .sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; text-align: center; }
+    .sum div { border: 1px solid var(--border); padding: 8px 4px; }
+    .sum b { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--gold); }
+    .sum span { font-size: 10px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+    .pos { color: var(--green) !important; } .neg { color: var(--red) !important; }
+    .tag { display: inline-block; font-size: 10px; letter-spacing: 1px; padding: 1px 6px; border: 1px solid var(--gold); color: var(--gold); margin-left: 6px; }
+    .payout-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+    .payout-grid input { padding: 6px 4px; font-size: 13px; text-align: center; }
+  </style>
+
+  <style>
+    .stabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 12px; }
+    .stabs button { flex-shrink: 0; padding: 8px 12px; background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; font-size: 12px; cursor: pointer; }
+    .stabs button.on { color: var(--gold); border-color: var(--gold); }
+    .kv { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .kv span:first-child { color: var(--text-dim); }
+    .tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tbl th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 4px 4px; border-bottom: 1px solid var(--border); }
+    .tbl td { padding: 5px 4px; border-bottom: 1px solid var(--border); }
+    .tbl td.n { text-align: right; white-space: nowrap; }
+  </style>
+
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">
+      <div class="logo-mark">ED</div>
+      <div>
+        <div class="logo-text">EDGE</div>
+        <div class="logo-sub">AI Betting Intelligence</div>
+      </div>
+    </a>
+    <button class="hamburger" id="ham" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-section">Core</div>
+    <a href="index.html"><span class="ico">◆</span> Dashboard</a>
+    <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
+    <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
+    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
+    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
+    <a href="guide.html"><span class="ico">?</span> How to Use</a>
+    <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
+    <div class="drawer-section">Intelligence</div>
+    <a href="algorithms.html" class="active"><span class="ico">⊞</span> Algorithm Suite</a>
+    <a href="power.html"><span class="ico">▲</span> Power Ratings</a>
+    <a href="lines.html"><span class="ico">→</span> Line Movement</a>
+    <div class="drawer-section">Records</div>
+    <a href="intelligence.html"><span class="ico">▦</span> Intelligence</a>
+    <a href="data.html"><span class="ico">▤</span> Data Explorer</a>
+    <a href="history.html"><span class="ico">☰</span> Pick History</a>
+    <a href="performance.html"><span class="ico">◑</span> Performance & ROI</a>
+    <div class="drawer-section">Control</div>
+    <a href="betting.html"><span class="ico">●</span> Betting Control</a>
+    <a href="settings.html"><span class="ico">◈</span> Settings</a>
+    <a href="admin.html"><span class="ico">⬡</span> Admin</a>
+  </div>
+
+
+
+  <div class="wrap">
+    <div class="eyebrow">Intelligence Engine</div>
+    <div class="title">ALGORITHM <em>SUITE</em></div>
+    <div class="card"><p class="dim">What actually drives each sport's picks right now — read-only. These numbers are learned by the Slate Test
+      and from graded games; nothing here is set by hand.</p></div>
+    <div class="stabs" id="stabs"></div>
+    <div id="body"></div>
+  </div>
+
+  <script>
+    // ── NAV ──
+    const ham = document.getElementById('ham');
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('overlay');
+    function toggleDrawer() { ham.classList.toggle('open'); drawer.classList.toggle('open'); overlay.classList.toggle('open'); }
+    ham.addEventListener('click', toggleDrawer);
+    overlay.addEventListener('click', toggleDrawer);
+    drawer.querySelectorAll('a').forEach(l => l.addEventListener('click', () => {
+      ham.classList.remove('open'); drawer.classList.remove('open'); overlay.classList.remove('open');
+    }));
+
+    const SPORTS = ['NFL', 'NCAAF', 'NBA', 'WNBA', 'NCAAB', 'MLB', 'NHL', 'MLS'];
+    const ML = new Set(['MLB', 'NHL']);
+    const ROLES = [
+      ['Team quality', 'in strength', 'Glicko, Massey, Colley, Elo, Pythagorean — combined into the ranking'],
+      ['Offense / defense', 'in strength', 'scoring projection, held near the composite early in a season'],
+      ['Coaching', 'in strength', 'close-game record, about ±1 point at most'],
+      ['Rest / travel', 'adjusts', 'part of the rest/injury step (capped about ±4 points with injuries)'],
+      ['Injuries', 'adjusts', 'lineup share missing; quarterbacks are handled by the quarterback ratings instead'],
+      ['Market / line movement', 'shown only', 'the market is the starting point of every pick, not a vote'],
+      ['Weather', 'totals only', 'can lower an outdoor football total'],
+      ['Trends', 'shown only', 'ATS form and head-to-head, kept for reading'],
+    ];
+    let sport = localStorage.getItem('edge_suite_sport') || 'NFL';
+    let table = null;
+    const esc = s => String(s ?? '').replace(/[<>&]/g, '');
+    const pct = v => v == null || !isFinite(v) ? '—' : (v * 100).toFixed(1) + '%';
+    const n2 = v => v == null || !isFinite(v) ? '—' : Number(v).toFixed(2);
+
+    async function loadTable() {
+      try { const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null'); if (t) return t; } catch {}
+      // Not on this device yet: the copy the Slate Test saved to Supabase.
       try {
-        const r = await runFamily(family, prior, context);
-        if (r) results.push(r);
-      } catch (e) {
-        results.push(neutral(family, `Error: ${e.message}`));
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const res = await fetch(`${url}/rest/v1/settings?id=eq.1&select=governor_calibration`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (res.ok) { const r = await res.json(); return r?.[0]?.governor_calibration || null; }
+      } catch {}
+      return null;
+    }
+
+    function wilson(w, n, z = 2.576) {
+      if (!n) return [0, 1];
+      const p = w / n, d = 1 + z * z / n, c = p + z * z / (2 * n), r = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+      return [(c - r) / d, (c + r) / d];
+    }
+    const lg = p => Math.log(p / (1 - p)), sg = x => 1 / (1 + Math.exp(-x));
+    // Same rule the governor uses for a spot's pull.
+    function spotPull(r, group) {
+      if (['rest', 'travel', 'injury', 'weather'].includes(group)) return { text: 'in rest/injury step', proven: false };
+      const n = (r.wins || 0) + (r.losses || 0);
+      const base = n && r.mkt_sum ? r.mkt_sum / n : 0.5;
+      const prior = sg(lg(base) + lg(0.51));
+      const [lo, hi] = wilson(r.wins || 0, n);
+      const proven = n >= 30 && (lo > base || hi < base);
+      const rate = proven ? ((r.wins || 0) + prior * 60) / (n + 60) : prior;
+      let edge = Math.max(-0.15, Math.min(0.15, lg(rate) - lg(base)));
+      if (group === 'power_line') edge *= 0.5;
+      const pts = edge * 25;
+      return { text: `${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts${proven ? ' · proven' : ' · not proven'}`, proven };
+    }
+
+    function card(title, inner) { return `<div class="card"><h3>${title}</h3>${inner}</div>`; }
+    function kv(k, v) { return `<div class="kv"><span>${esc(k)}</span><span>${v}</span></div>`; }
+
+    function render() {
+      document.getElementById('stabs').innerHTML = SPORTS.map(s => `<button class="${s === sport ? 'on' : ''}" onclick="pick('${s}')">${s}</button>`).join('');
+      const t = table || {};
+      const key = ML.has(sport) ? `${sport}_ML` : sport;
+      let html = '';
+
+      // Strength
+      const blend = t.blend?.[key] || t.blend?.[sport];
+      const fit = t.rating_fit?.[sport];
+      html += card('Strength — the ranking', [
+        kv('Weight on the ranking\'s disagreement with the market', blend ? `<b>${n2(blend.w_strength)}</b> (learned on ${blend.games || '?'} games)` : '<b>0.30</b> (default — not learned yet)'),
+        blend?.test ? kv('Held-out log loss: learned vs default', `${n2(blend.test.fit)} vs ${n2(blend.test.default)}`) : '',
+        kv('Ranking model', fit ? `fitted on ${fit.n} games · typical miss ±${n2(fit.rmse)}` : 'hand-set blend (no fit saved)'),
+        kv('Early season', 'counts in proportion to games played; never moves a pick more than about 10 points'),
+      ].join(''));
+
+      // Proof / sizing
+      const m = t.sport_metrics?.[key] || t.sport_metrics?.[sport];
+      const factor = !m ? 0.6 : m.skill > 0 ? 1 : m.skill > -0.02 ? 0.6 : 0.35;
+      html += card('Proof — how bets are sized', [
+        kv('Slate Test skill vs the market', m ? `<b class="${m.skill > 0 ? 'pos' : 'neg'}">${(m.skill * 100).toFixed(2)}%</b> over ${m.games} games` : 'not tested'),
+        kv('Bet size factor', `<b>${Math.round(factor * 100)}%</b> of the full Kelly size${!m ? ' (untested)' : ''}`),
+        m && m.model_mae != null ? kv('Ranking vs market miss', `${n2(m.model_mae)} vs ${n2(m.market_mae)}`) : '',
+      ].join(''));
+
+      // Totals + calibration
+      const tw = t.total_weight?.[sport];
+      const cal = t.sports?.[sport] || {}, calMl = t.sports?.[`${sport}_ML`] || {};
+      const calN = o => Object.values(o).reduce((s, b) => s + (b.samples || 0), 0);
+      html += card('Totals and calibration', [
+        kv('Weight on the model\'s total', tw ? `<b>${n2(tw.w)}</b> (learned on ${tw.games} games)` : '<b>0.30</b> (default)'),
+        kv('Spread calibration', Object.keys(cal).length ? `${Object.keys(cal).length} bands · ${calN(cal)} games` : 'none yet — run the Slate Test with learned values'),
+        ML.has(sport) ? kv('Moneyline calibration', Object.keys(calMl).length ? `${Object.keys(calMl).length} bands · ${calN(calMl)} games` : 'none yet') : '',
+      ].join(''));
+
+      // Spots
+      const recs = t.spot_records?.[key] || t.spot_records?.[sport] || {};
+      const rows = Object.entries(recs).filter(([, r]) => r && r.deduped).sort((a, b) => ((b[1].wins || 0) + (b[1].losses || 0)) - ((a[1].wins || 0) + (a[1].losses || 0)));
+      html += card('Spots — situations and their records', rows.length
+        ? `<table class="tbl"><tr><th>Situation</th><th class="n">Record</th><th class="n">Rate</th><th class="n">Counts as</th></tr>` +
+          rows.map(([id, r]) => { const n = (r.wins || 0) + (r.losses || 0); const s = spotPull(r, r.group);
+            return `<tr><td>${esc(r.label || id)}</td><td class="n">${r.wins}-${r.losses}</td><td class="n">${pct(n ? r.wins / n : null)}</td><td class="n ${s.proven ? 'pos' : ''}">${esc(s.text)}</td></tr>`; }).join('') + `</table>`
+        : '<p class="dim">No records yet for this sport — the Slate Test builds them.</p>');
+
+      // Families
+      html += card('Families — what each one does', `<table class="tbl">` + ROLES.map(([f, role, what]) =>
+        `<tr><td>${f}</td><td class="n" style="color:var(--gold)">${role}</td></tr><tr><td colspan="2" class="dim">${what}</td></tr>`).join('') + `</table>`);
+
+      // Outside data + quarterbacks (on demand: no calls until tapped)
+      html += card('Outside data — is it helping?', `<p class="dim">Compares graded games' ranking spread with and without each source
+        (SP+, NFL efficiency, starting pitchers, goalies, quarterback changes) against the final margin.</p>
+        <button class="btn-line" onclick="outsideReport()">Run the comparison</button><div id="outside"></div>`);
+      if (sport === 'NFL' || sport === 'NCAAF') {
+        html += card('Quarterback ratings', `<p class="dim">Adjusted yards per attempt, corrected for opponent, pulled toward a starting value by 150 attempts.
+          A quarterback change moves the spread by the gap × ${sport === 'NFL' ? '2.5' : '2.0'} points.</p>
+          <button class="btn-line" onclick="qbList()">Load ratings</button><div id="qbs"></div>`);
       }
-    }
-    return results;
-  }
-
-  async function runFamily(family, prior, context) {
-    switch (family) {
-      case 'team_quality':    return familyTeamQuality(prior);
-      case 'offense_defense': return familyOffenseDefense(prior);
-      case 'coaching':        return familyCoaching(prior);
-      case 'market':          return familyMarket(prior, context);
-      case 'line_dynamics':   return familyLineDynamics(prior, context);
-      case 'fatigue':         return familyFatigue(prior, context);
-      case 'environment':     return familyEnvironment(prior, context);
-      case 'trend':           return familyTrend(prior, context);
-      case 'injury':          return familyInjury(prior, context);
-      default: return null;
-    }
-  }
-
-  function getFamilyWeight(sport, family) {
-    const w = FAMILY_WEIGHTS[sport] || FAMILY_WEIGHTS.DEFAULT;
-    return w[family] ?? 7;
-  }
-
-  // ============================================================
-  // ── FAMILY 1 · TEAM QUALITY ──
-  //
-  // Uses Glicko-2, Massey, Colley, Pythagorean, and Elo. Every
-  // engine is a real rating system with a real history. The
-  // family votes in the direction all four agree on, weighted by
-  // how sure each engine is of the ranking.
-  // ============================================================
-
-  function familyTeamQuality(prior) {
-    const h = prior.home_power;
-    const a = prior.away_power;
-
-    // Rating certainty from Glicko. High RD means the rating is
-    // still settling — an edge over an unsettled team carries
-    // less weight than the same edge over a settled one.
-    const hRd = h.glicko_rd ?? null;
-    const aRd = a.glicko_rd ?? null;
-    const certainty = (hRd != null && aRd != null)
-      ? clamp(1 - (((hRd + aRd) / 2) - 40) / 260, 0, 1)
-      : null;
-
-    const subs = [];
-
-    // Elo gap
-    const eloDiff = (h.elo || 1500) - (a.elo || 1500);
-    subs.push(signalFrom(eloDiff / 25, 3, 8, 'Elo'));
-
-    // Massey (stored in srs column)
-    const srsDiff = (h.srs || 0) - (a.srs || 0);
-    subs.push(signalFrom(srsDiff, 2, 6, 'Massey'));
-
-    // Pythagorean
-    const pythDiff = ((h.pythagorean || 0.5) - (a.pythagorean || 0.5)) * 100;
-    subs.push(signalFrom(pythDiff, 5, 15, 'Pythagorean'));
-
-    // Glicko composite points
-    const hPts = h.composite_points;
-    const aPts = a.composite_points;
-    if (hPts != null && aPts != null) {
-      subs.push(signalFrom(hPts - aPts, 2, 6, 'Composite'));
+      document.getElementById('body').innerHTML = html;
     }
 
-    // Engine agreement — do all three independent raters see the
-    // same side? When Glicko, Massey, and Colley align, the
-    // rating is solid. When they split, the team is hard to read.
-    if (h.massey != null && a.massey != null &&
-        h.colley != null && a.colley != null &&
-        h.glicko_rating != null && a.glicko_rating != null) {
-      const glicko = Math.sign(h.glicko_rating - a.glicko_rating);
-      const massey = Math.sign(h.massey - a.massey);
-      const colley = Math.sign(h.colley - a.colley);
-      const agree = glicko === massey && massey === colley && glicko !== 0;
-      subs.push({
-        vote: agree ? (glicko > 0 ? 'yes' : 'no') : 'neu',
-        confidence: agree ? 0.72 : 0.5,
-        edge: agree ? round(Math.abs(h.massey - a.massey) / 100, 4) : 0,
-        signal: agree ? glicko * 0.6 : 0,
-        reason: agree
-          ? 'Glicko, Massey and Colley all favour the same side'
-          : 'Rating engines disagree',
-      });
-    }
+    function pick(s) { sport = s; localStorage.setItem('edge_suite_sport', s); render(); }
 
-    const family = resolveFamily('team_quality', subs, {
-      elo_diff: round(eloDiff, 1),
-      massey_diff: round(srsDiff, 2),
-      pyth_diff: round(pythDiff, 2),
-      composite_diff: (hPts != null && aPts != null) ? round(hPts - aPts, 2) : null,
-      home_rd: hRd,
-      away_rd: aRd,
-      certainty: certainty != null ? round(certainty, 3) : null,
-    });
-
-    // Scale confidence by rating certainty when we have it.
-    if (certainty != null && family.vote !== 'neu') {
-      const scaled = 0.5 + (family.confidence - 0.5) * (0.55 + 0.45 * certainty);
-      family.confidence = round(scaled, 3);
-      if (certainty < 0.35) {
-        family.reason += ` · ratings still unsettled (RD ~${Math.round((hRd + aRd) / 2)})`;
-      }
-    }
-
-    return family;
-  }
-
-  // ============================================================
-  // ── FAMILY 2 · OFFENSE / DEFENSE ──
-  //
-  // Attack and defense ratings are opponent-adjusted per
-  // possession. The family looks for a strength that meets a
-  // specific weakness in this matchup.
-  // ============================================================
-
-  function familyOffenseDefense(prior) {
-    const h = prior.home_power;
-    const a = prior.away_power;
-
-    const homeNet = (h.offense || 50) - (100 - (h.defense || 50));
-    const awayNet = (a.offense || 50) - (100 - (a.defense || 50));
-    const netDiff = homeNet - awayNet;
-    const netVote = signalFrom(netDiff, 8, 25, 'Net rating');
-
-    const dm = prior.defense_matchup || {};
-    const dmAdj = dm.adjustment_points || 0;
-    const dmVote = signalFrom(dmAdj, 1, 4, 'Scheme');
-
-    const offDiff = (h.offense || 50) - (a.offense || 50);
-    const offVote = signalFrom(offDiff, 6, 18, 'Offense');
-
-    // Interaction: top attack vs weak defense specifically.
-    let interaction = null;
-    if (h.offense >= 70 && a.defense <= 40) {
-      interaction = { vote: 'yes', confidence: 0.74, edge: 0.06, signal: 0.55, reason: 'Elite home offense vs weak away defense' };
-    } else if (a.offense >= 70 && h.defense <= 40) {
-      interaction = { vote: 'no', confidence: 0.74, edge: 0.06, signal: -0.55, reason: 'Elite away offense vs weak home defense' };
-    }
-
-    const subs = [netVote, dmVote, offVote];
-    if (interaction) subs.push(interaction);
-
-    return resolveFamily('offense_defense', subs, {
-      home_net: round(homeNet, 1),
-      away_net: round(awayNet, 1),
-      matchup_adj: round(dmAdj, 2),
-      scheme: dm.scheme_advantage || 'neutral',
-    });
-  }
-
-  // ============================================================
-  // ── FAMILY 3 · COACHING ──
-  //
-  // Two sub-signals: composite coaching rating and close-game
-  // record. The previous version also carried a halftime
-  // adjustment that was always zero — it diluted the two real
-  // signals with a neutral vote. Removed.
-  // ============================================================
-
-  function familyCoaching(prior) {
-    const hc = prior.home_power?._coach || {};
-    const ac = prior.away_power?._coach || {};
-
-    const subs = [];
-
-    const coachDiff = (hc.overall || 50) - (ac.overall || 50);
-    subs.push(signalFrom(coachDiff, 10, 30, 'Coaching'));
-
-    const closeDiff = ((hc.close_game_record || 0.5) - (ac.close_game_record || 0.5)) * 100;
-    subs.push(signalFrom(closeDiff, 8, 20, 'Close games'));
-
-    return resolveFamily('coaching', subs, {
-      coach_diff: round(coachDiff, 1),
-      close_diff: round(closeDiff, 1),
-    });
-  }
-
-  // ============================================================
-  // ── FAMILY 4 · MARKET INTELLIGENCE ──
-  //
-  // Reads the closing line value of the market itself. When the
-  // line has moved since open, that movement is information.
-  // CLV, sharp money, and public fade.
-  // ============================================================
-
-  function familyMarket(prior, context) {
-    const hist = context.lineHistory || {};
-    const market = prior.market || {};
-    const open = market.open_spread;
-    const current = market.current_spread;
-
-    const subs = [];
-
-    // Open-to-close movement. A line moving toward home means
-    // money came in on home. Sharp money moves the line; the
-    // public bets the other way.
-    if (open !== null && current !== null && open !== current) {
-      const move = current - open;
-      // move is negative when the line moves toward home
-      const clvVote = signalFrom(-move, 0.5, 2, 'CLV');
-      subs.push(clvVote);
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No line movement' });
-    }
-
-    // Sharp percentage, when the data exists.
-    const sharpPct = hist.sharp_pct;
-    if (typeof sharpPct === 'number') {
-      const sharpVal = (sharpPct - 50) / 10;
-      subs.push(signalFrom(sharpVal, 0.5, 2, 'Sharp%'));
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No sharp % data' });
-    }
-
-    // Reverse line movement — public on home but line moved away.
-    const publicPct = hist.public_pct;
-    if (typeof publicPct === 'number' && open !== null && current !== null) {
-      const publicOnHome = publicPct > 60;
-      const lineAgainstPublic = (publicOnHome && current > open) || (!publicOnHome && current < open);
-      if (lineAgainstPublic) {
-        subs.push({
-          vote: publicOnHome ? 'no' : 'yes',
-          confidence: 0.78,
-          edge: 0.06,
-          signal: publicOnHome ? -0.7 : 0.7,
-          reason: `RLM: ${publicPct}% public, line moved opposite`,
+    async function outsideReport() {
+      const box = document.getElementById('outside');
+      box.innerHTML = '<p class="dim">Loading graded games…</p>';
+      try {
+        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+        const rows = [];
+        for (let off = 0; off < 20000; off += 1000) {
+          const res = await fetch(`${url}/rest/v1/shadow_picks?sport=eq.${sport}&result=not.is.null&actual_margin=not.is.null` +
+            `&select=decision,actual_margin,governor_snapshot&limit=1000&offset=${off}`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const page = await res.json(); rows.push(...page); if (page.length < 1000) break;
+        }
+        const by = {};
+        rows.forEach(r => {
+          if (/^(TOTAL|LINE)_/.test(String(r.decision || ''))) return;
+          const rk = (r.governor_snapshot || {}).ranking || {};
+          const fx = rk.external_effect || (r.governor_snapshot || {}).external_effect;
+          if (!fx || !isFinite(rk.model_spread) || !isFinite(r.actual_margin)) return;
+          Object.entries(fx).forEach(([src, eff]) => {
+            if (!isFinite(eff) || !eff) return;
+            const withIt = Math.abs(r.actual_margin + rk.model_spread);
+            const without = Math.abs(r.actual_margin + (rk.model_spread + eff));
+            const b = by[src] = by[src] || { n: 0, w: 0, wo: 0, better: 0 };
+            b.n++; b.w += withIt; b.wo += without; if (withIt < without) b.better++;
+          });
         });
-      } else {
-        subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No RLM signal' });
+        const names = { sp: 'College SP+', eff: 'NFL efficiency', pitchers: 'Starting pitchers', goalies: 'Goalies', qb: 'Quarterback changes' };
+        const list = Object.entries(by);
+        box.innerHTML = list.length
+          ? `<table class="tbl"><tr><th>Source</th><th class="n">Games</th><th class="n">Miss with</th><th class="n">Without</th><th class="n">Closer</th></tr>` +
+            list.map(([s, b]) => `<tr><td>${names[s] || s}</td><td class="n">${b.n}</td><td class="n ${b.w < b.wo ? 'pos' : 'neg'}">${(b.w / b.n).toFixed(2)}</td>` +
+              `<td class="n">${(b.wo / b.n).toFixed(2)}</td><td class="n">${(b.better / b.n * 100).toFixed(0)}%</td></tr>`).join('') + `</table>` +
+            `<p class="dim">Average points the ranking spread missed the final margin by, with and without the source. Lower with it means it's helping; it needs a few weeks of graded games to mean much.</p>`
+          : '<p class="dim">No graded games with outside data yet — it starts with picks made after this update.</p>';
+      } catch (e) { box.innerHTML = `<p class="dim">Couldn't load: ${esc(e.message)}</p>`; }
+    }
+
+    async function qbList() {
+      const box = document.getElementById('qbs');
+      if (!window.EDGE_QB) { box.innerHTML = '<p class="dim">qb-ratings.js is missing.</p>'; return; }
+      box.innerHTML = '<p class="dim">Loading box scores…</p>';
+      try {
+        const rowsRes = await (async () => {
+          const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+          const out = []; const since = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+          for (let off = 0; off < 30000; off += 1000) {
+            const res = await fetch(`${url}/rest/v1/player_game_stats?sport=eq.${sport}&pass_attempts=gt.0&game_date=gte.${since}` +
+              `&select=game_id,game_date,player_id,player_name,team_name,opponent,pass_attempts,passing_yards,passing_tds,interceptions` +
+              `&order=game_date.asc,game_id.asc&limit=1000&offset=${off}`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const page = await res.json(); out.push(...page); if (page.length < 1000) break;
+          }
+          return out;
+        })();
+        const model = EDGE_QB.build(sport, rowsRes);
+        const list = Object.values(model.players).filter(p => p.att >= 50).map(p => ({ ...p, r: EDGE_QB.ratingOf(model, p) }))
+          .sort((a, b) => b.r - a.r).slice(0, 60);
+        box.innerHTML = `<p class="dim">League average ${model.lg.toFixed(2)} adjusted yards per attempt.</p>` +
+          `<table class="tbl"><tr><th>Quarterback</th><th>Team</th><th class="n">Att</th><th class="n">Rating</th></tr>` +
+          list.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.team)}</td><td class="n">${p.att}</td><td class="n">${p.r.toFixed(2)}</td></tr>`).join('') + `</table>`;
+      } catch (e) { box.innerHTML = `<p class="dim">Couldn't load: ${esc(e.message)}</p>`; }
+    }
+
+    (async () => { table = await loadTable(); render(); })();
+
+  </script>
+  <script>
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
       }
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No public % data' });
-    }
-
-    return resolveFamily('market', subs, {
-      open_spread: open,
-      current_spread: current,
-      movement: (open != null && current != null) ? round(current - open, 2) : null,
-      sharp_pct: sharpPct ?? null,
-      public_pct: publicPct ?? null,
-    });
-  }
-
-  // ============================================================
-  // ── FAMILY 5 · LINE DYNAMICS ──
-  //
-  // Steam moves, open-to-close magnitude, and public extremes.
-  // The confidence values come from the magnitude of the move,
-  // not from hardcoded constants.
-  // ============================================================
-
-  function familyLineDynamics(prior, context) {
-    const market = prior.market || {};
-    const hist = context.lineHistory || {};
-    const open = market.open_spread;
-    const current = market.current_spread;
-    const hoursOut = context.hoursToGame ?? 999;
-
-    const subs = [];
-
-    // Steam — rapid movement timed close to kickoff.
-    if (open !== null && current !== null) {
-      const diff = Math.abs(current - open);
-      const direction = Math.sign(current - open);
-
-      if (diff >= 2 && hoursOut <= 48) {
-        subs.push({
-          vote: direction > 0 ? 'no' : 'yes',
-          confidence: 0.86,
-          edge: 0.10,
-          signal: direction > 0 ? -0.9 : 0.9,
-          reason: `Steam: ${diff.toFixed(1)}pt move ${hoursOut.toFixed(0)}hrs out`,
-        });
-      } else if (diff >= 1.5 && hoursOut <= 24) {
-        subs.push({
-          vote: direction > 0 ? 'no' : 'yes',
-          confidence: 0.78,
-          edge: 0.07,
-          signal: direction > 0 ? -0.75 : 0.75,
-          reason: `Late ${diff.toFixed(1)}pt move`,
-        });
-      } else if (diff >= 0.5) {
-        subs.push(signalFrom(-(current - open), 0.5, 2, 'O2C'));
-      } else {
-        subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'Flat line' });
-      }
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No line data' });
-    }
-
-    // Public extreme
-    const publicPct = hist.public_pct;
-    if (typeof publicPct === 'number' && publicPct >= 75) {
-      subs.push({
-        vote: 'no',
-        confidence: 0.66,
-        edge: 0.04,
-        signal: -0.5,
-        reason: `Public fade: ${publicPct}% on one side`,
-      });
-    } else if (typeof publicPct === 'number' && publicPct <= 25) {
-      subs.push({
-        vote: 'yes',
-        confidence: 0.66,
-        edge: 0.04,
-        signal: 0.5,
-        reason: `Public fade: only ${publicPct}% on home`,
-      });
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No public extreme' });
-    }
-
-    return resolveFamily('line_dynamics', subs, {
-      open,
-      current,
-      public_pct: publicPct ?? null,
-      hours_to_game: round(hoursOut, 1),
-    });
-  }
-
-  // ============================================================
-  // ── FAMILY 6 · FATIGUE ──
-  //
-  // Rest days, travel miles, timezone shift, road-trip length.
-  // ============================================================
-
-  function familyFatigue(prior, context) {
-    const hRest = context.homeRestDays ?? null;
-    const aRest = context.awayRestDays ?? null;
-    const travel = context.travelMiles ?? null;
-    const tz = context.timezoneShift ?? null;
-    const awayTrip = context.awayRoadTripLength ?? null;
-
-    const subs = [];
-
-    // Rest differential — unless the fitted ranking already priced it.
-    if (prior?.rest_in_fit) {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'Rest priced in the ranking' });
-    } else if (hRest !== null && aRest !== null) {
-      const diff = hRest - aRest;
-      subs.push(signalFrom(diff, 1, 3, 'Rest'));
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No rest data' });
-    }
-
-    // Travel distance
-    if (travel !== null) {
-      const penalty = travel > 2500 ? -1 : travel > 1500 ? -0.6 : travel > 800 ? -0.3 : 0;
-      subs.push({
-        vote: penalty < -0.2 ? 'yes' : 'neu',
-        confidence: penalty < -0.2 ? 0.65 : 0.5,
-        edge: Math.abs(penalty) / 20,
-        signal: -penalty,
-        reason: travel > 800 ? `Away travel: ${travel} miles` : 'Normal travel',
-      });
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No travel data' });
-    }
-
-    // Timezone shift
-    if (tz !== null && Math.abs(tz) >= 2) {
-      subs.push({
-        vote: 'yes',
-        confidence: Math.min(0.55 + Math.abs(tz) * 0.07, 0.80),
-        edge: 0.03,
-        signal: Math.min(Math.abs(tz) * 0.25, 0.7),
-        reason: `${Math.abs(tz)}hr timezone shift for away team`,
-      });
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No timezone shift' });
-    }
-
-    // Long road trip
-    if (awayTrip != null && awayTrip >= 3) {
-      subs.push({
-        vote: 'yes',
-        confidence: 0.60,
-        edge: 0.03,
-        signal: Math.min(0.4 + (awayTrip - 3) * 0.1, 0.7),
-        reason: `Away team on game ${awayTrip} of road trip`,
-      });
-    }
-
-    return resolveFamily('fatigue', subs, {
-      home_rest: hRest,
-      away_rest: aRest,
-      travel_miles: travel,
-      timezone_shift: tz,
-      road_trip: awayTrip,
-    });
-  }
-
-  // ============================================================
-  // ── FAMILY 7 · ENVIRONMENT ──
-  //
-  // Weather only. Indoor sports skip the family entirely.
-  // ============================================================
-
-  function familyEnvironment(prior, context) {
-    const weather = context.weather || {};
-    const sport = prior.sport;
-
-    if (['NBA', 'NHL', 'NCAAB', 'WNBA'].includes(sport)) {
-      return neutral('environment', 'Indoor sport — no weather');
-    }
-
-    const subs = [];
-
-    const wind = weather.wind_effect_mph ?? weather.wind_mph;
-    if (typeof wind === 'number' && wind >= 15) {
-      subs.push({
-        vote: 'no',
-        confidence: Math.min(0.60 + (wind - 15) * 0.02, 0.85),
-        edge: 0.05,
-        signal: -Math.min(0.3 + (wind - 15) * 0.05, 0.85),
-        reason: `Wind ${wind}mph — under lean`,
-      });
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'Wind normal' });
-    }
-
-    const temp = weather.temp_f;
-    if (typeof temp === 'number' && temp <= 25) {
-      subs.push({
-        vote: 'no',
-        confidence: 0.72,
-        edge: 0.06,
-        signal: -0.6,
-        reason: `Temp ${temp}°F — under lean`,
-      });
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'Temp normal' });
-    }
-
-    const precip = weather.precip_pct;
-    if (typeof precip === 'number' && precip >= 60) {
-      subs.push({
-        vote: 'no',
-        confidence: 0.64,
-        edge: 0.04,
-        signal: -0.5,
-        reason: `${precip}% ${weather.precip_type || 'precip'} — under lean`,
-      });
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No precip' });
-    }
-
-    return resolveFamily('environment', subs, {
-      wind_mph: wind ?? null,
-      temp_f: temp ?? null,
-      precip_pct: precip ?? null,
-      precip_type: weather.precip_type ?? null,
-    });
-  }
-
-  // ============================================================
-  // ── FAMILY 8 · TREND ──
-  //
-  // Three sources of trend information:
-  //   1. Live trends from the trends table (historical situations)
-  //   2. ATS form from team_ats
-  //   3. Head-to-head cover history from matchup_ats
-  //
-  // Every trend is shrunk toward neutral by its sample size so a
-  // 6-0 run on six occurrences doesn't outvote 21-9 on thirty.
-  // ============================================================
-
-  function familyTrend(prior, context) {
-    const h = prior.home_power;
-    const a = prior.away_power;
-    const hAts = context.homeAts || null;
-    const aAts = context.awayAts || null;
-    const h2h = context.h2h || null;
-
-    const subs = [];
-
-    // ── Live trends ──
-    const homeTrends = context.homeTrends || [];
-    const awayTrends = context.awayTrends || [];
-    if (homeTrends.length || awayTrends.length) {
-      const score = (list) => {
-        let total = 0, weight = 0;
-        list.filter(t => t.market === 'SU' || t.market === 'ATS').forEach(t => {
-          const n = t.sample || 0;
-          if (n < 3) return;
-          const shrunk = ((t.hit_rate || 0.5) * n + 0.5 * 8) / (n + 8);
-          const w = Math.min(n / 20, 1) * (t.market === 'ATS' ? 1 : 0.7);
-          total += (shrunk - 0.5) * w;
-          weight += w;
-        });
-        return weight > 0 ? { edge: total / weight, weight } : null;
-      };
-
-      const hScore = score(homeTrends);
-      const aScore = score(awayTrends);
-      if (hScore || aScore) {
-        const diff = (hScore ? hScore.edge : 0) - (aScore ? aScore.edge : 0);
-        const strength = Math.min(Math.abs(diff) * 4, 1);
-        const best = [...homeTrends, ...awayTrends]
-          .sort((x, y) => (y.current_streak || 0) - (x.current_streak || 0))[0];
-        subs.push({
-          vote: Math.abs(diff) < 0.02 ? 'neu' : diff > 0 ? 'yes' : 'no',
-          confidence: 0.5 + strength * 0.4,
-          edge: round(Math.abs(diff), 4),
-          signal: Math.sign(diff) * strength * 0.8,
-          reason: best
-            ? `${best.headline || 'Trend'} (${best.wins}-${best.losses}, n=${best.sample})`
-            : `${homeTrends.length + awayTrends.length} live trends`,
-        });
-      }
-    }
-
-    // ── ATS last-10 cover rate differential ──
-    if (hAts && aAts &&
-        hAts.last10_wins != null && hAts.last10_losses != null &&
-        aAts.last10_wins != null && aAts.last10_losses != null) {
-      const hTotal = hAts.last10_wins + hAts.last10_losses;
-      const aTotal = aAts.last10_wins + aAts.last10_losses;
-
-      if (hTotal >= MIN_ATS_SAMPLE && aTotal >= MIN_ATS_SAMPLE) {
-        const hRate = hAts.last10_wins / hTotal;
-        const aRate = aAts.last10_wins / aTotal;
-        const diff = (hRate - aRate) * 100;
-        subs.push(signalFrom(diff, 8, 20, 'ATS form'));
-      } else {
-        subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'ATS sample too small' });
-      }
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No ATS form data' });
-    }
-
-    // ── Momentum (last 10 vs season) ──
-    const hMom = momentumSignal(hAts);
-    const aMom = momentumSignal(aAts);
-    const momDiff = hMom - aMom;
-    subs.push(signalFrom(momDiff, 0.08, 0.20, 'Momentum'));
-
-    // ── Home / away ATS split ──
-    if (hAts && hAts.home_cover_pct != null &&
-        aAts && aAts.away_cover_pct != null) {
-      const diff = (hAts.home_cover_pct - aAts.away_cover_pct) * 100;
-      subs.push(signalFrom(diff, 10, 25, 'H/A split'));
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No H/A split data' });
-    }
-
-    // ── Head-to-head cover rate ──
-    if (h2h && h2h.meetings >= MIN_H2H_SAMPLE) {
-      const homeIsA = h2h.team_a === prior.home_team;
-      const hCover = homeIsA ? h2h.team_a_cover_pct : h2h.team_b_cover_pct;
-      const aCover = homeIsA ? h2h.team_b_cover_pct : h2h.team_a_cover_pct;
-      if (hCover != null && aCover != null) {
-        const diff = (hCover - aCover) * 100;
-        subs.push(signalFrom(diff, 12, 28, 'H2H'));
-      } else {
-        subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'H2H incomplete' });
-      }
-    } else {
-      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'Not enough H2H meetings' });
-    }
-
-    return resolveFamily('trend', subs, {
-      home_form_last10: hAts?.last10_cover_pct ?? null,
-      away_form_last10: aAts?.last10_cover_pct ?? null,
-      home_momentum: round(hMom, 3),
-      away_momentum: round(aMom, 3),
-      h2h_meetings: h2h?.meetings ?? 0,
-      live_trends: homeTrends.length + awayTrends.length,
-    });
-  }
-
-  function momentumSignal(ats) {
-    if (!ats) return 0;
-    if (typeof ats.trend_delta === 'number' && ats.trend_delta !== 0) return ats.trend_delta;
-    if (ats.last10_cover_pct != null && ats.season_cover_pct != null) {
-      return (ats.last10_cover_pct - ats.season_cover_pct) * 0.75;
-    }
-    return 0;
-  }
-
-  // ============================================================
-  // ── FAMILY 9 · INJURY ──
-  //
-  // Fragmentations from injury-fragmentation.js. Net deduction
-  // in effective points for each side.
-  // ============================================================
-
-  function familyInjury(prior, context) {
-    const hInj = context.homeInjuries || [];
-    const aInj = context.awayInjuries || [];
-
-    const hasFragmentation =
-      typeof context.homeOffDeduction === 'number' ||
-      typeof context.awayOffDeduction === 'number';
-
-    let hImpact, aImpact;
-
-    if (hasFragmentation) {
-      hImpact = (context.homeOffDeduction || 0) + (context.homeDefDeduction || 0);
-      aImpact = (context.awayOffDeduction || 0) + (context.awayDefDeduction || 0);
-    } else {
-      hImpact = fallbackInjuryImpact(hInj);
-      aImpact = fallbackInjuryImpact(aInj);
-    }
-
-    // Net edge favors home when the away team lost more production.
-    const diff = aImpact - hImpact;
-
-    if (hInj.length === 0 && aInj.length === 0) {
-      return neutral('injury', 'No injury data');
-    }
-
-    const sub = signalFrom(diff, 1.5, 5, 'Net injury');
-
-    return resolveFamily('injury', [sub], {
-      home_impact: round(hImpact, 2),
-      away_impact: round(aImpact, 2),
-      net_impact: round(diff, 2),
-      home_count: hInj.length,
-      away_count: aInj.length,
-      source: hasFragmentation ? 'roster' : 'fallback',
-    });
-  }
-
-  function fallbackInjuryImpact(injuries) {
-    const VORP = {
-      QB: 7, RB: 1.5, WR: 2, TE: 1,
-      LT: 3, C: 1.5, EDGE: 2.5, CB: 2.5,
-      STAR: 5, STARTER: 3, ROLE: 1,
-    };
-    return injuries.reduce((sum, inj) => {
-      const base = VORP[inj.position] || 1;
-      if (inj.status === 'out' || inj.status === 'doubtful') return sum + base;
-      if (inj.status === 'questionable') return sum + base * 0.5;
-      return sum;
-    }, 0);
-  }
-
-  // ============================================================
-  // ── RESOLVER ──
-  // Combines sub-signals into one family verdict. The `signal`
-  // field is a weighted average of sub-signals, clamped to
-  // [-1, +1]. Vote and confidence derive from signal.
-  // ============================================================
-
-  function resolveFamily(family, subs, data) {
-    let yesW = 0, noW = 0, totalW = 0;
-    let signalSum = 0, signalWeight = 0;
-    let edgeSum = 0;
-    const reasons = [];
-
-    subs.forEach(s => {
-      const w = s.confidence || 0.5;
-      totalW += w;
-
-      if (s.vote === 'yes') yesW += w;
-      else if (s.vote === 'no') noW += w;
-
-      // Numeric signal — the gradeable output.
-      if (typeof s.signal === 'number' && isFinite(s.signal)) {
-        signalSum += s.signal * w;
-        signalWeight += w;
-      }
-
-      edgeSum += s.edge || 0;
-      if (s.vote !== 'neu' && s.reason) reasons.push(s.reason);
-    });
-
-    if (totalW === 0) {
-      return neutral(family, 'No signals');
-    }
-
-    const net = (yesW - noW) / totalW;
-    const vote = Math.abs(net) < 0.1 ? 'neu' : net > 0 ? 'yes' : 'no';
-    const confidence = clamp(0.5 + Math.abs(net) * 0.5, 0.5, 1.0);
-    const edge = edgeSum / subs.length;
-    const signal = signalWeight > 0
-      ? clamp(signalSum / signalWeight, -1, 1)
-      : net;
-
-    return {
-      family,
-      signal: round(signal, 3),
-      vote,
-      confidence: round(confidence, 3),
-      edge: round(edge, 4),
-      reason: reasons.length ? reasons.join(' · ') : 'Neutral',
-      subs,
-      data,
-    };
-  }
-
-  // ============================================================
-  // ── HELPERS ──
-  // ============================================================
-
-  // Convert a signed value into a sub-signal object.
-  function signalFrom(value, lowThreshold, highThreshold, label) {
-    if (!isFinite(value)) {
-      return { vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: `${label}: no value` };
-    }
-    if (value >= highThreshold) {
-      const s = clamp(0.6 + (value - highThreshold) / (highThreshold * 2), 0.6, 0.9);
-      return {
-        vote: 'yes', confidence: s, edge: Math.min(Math.abs(value) / 100, 0.10),
-        signal: Math.min((value - highThreshold) / (highThreshold * 2) + 0.5, 1),
-        reason: `${label} +${round(value, 1)}`,
-      };
-    }
-    if (value <= -highThreshold) {
-      const s = clamp(0.6 + (Math.abs(value) - highThreshold) / (highThreshold * 2), 0.6, 0.9);
-      return {
-        vote: 'no', confidence: s, edge: Math.min(Math.abs(value) / 100, 0.10),
-        signal: -Math.min((Math.abs(value) - highThreshold) / (highThreshold * 2) + 0.5, 1),
-        reason: `${label} ${round(value, 1)}`,
-      };
-    }
-    if (value >= lowThreshold) {
-      return {
-        vote: 'yes', confidence: 0.55, edge: 0.01,
-        signal: 0.2,
-        reason: `Weak +${round(value, 1)} ${label}`,
-      };
-    }
-    if (value <= -lowThreshold) {
-      return {
-        vote: 'no', confidence: 0.55, edge: 0.01,
-        signal: -0.2,
-        reason: `Weak ${round(value, 1)} ${label}`,
-      };
-    }
-    return { vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: `${label} flat` };
-  }
-
-  function neutral(family, reason) {
-    return {
-      family,
-      signal: 0,
-      vote: 'neu',
-      confidence: 0.5,
-      edge: 0,
-      reason,
-      subs: [],
-      data: {},
-    };
-  }
-
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function round(v, d) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
-
-})();
-
-if (typeof window !== 'undefined') window.EDGE_ALGOS = EDGE_ALGOS;
+    })();
+  </script>
+</body>
+</html>
