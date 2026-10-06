@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20261005-02';
+  const BUILD = 'simgrade-20261006-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -229,6 +229,22 @@ const EDGE_SIM_GRADER = (() => {
           }
         }
         if (!fin) { note('no matching game on ESPN', b0); continue; }
+        // Postponed or canceled for over a day: every bet on it is void —
+        // stake back, no profit or loss.
+        if (fin.void) {
+          for (const b of byGame[gid]) {
+            try {
+              const r = await fetch(`${url}/rest/v1/bet_log?id=eq.${b.id}`, {
+                method: 'PATCH',
+                headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+                body: JSON.stringify({ result: 'P', pnl: 0, status: 'graded', graded_at: new Date().toISOString() }),
+              });
+              if (r.ok) direct++;
+            } catch {}
+          }
+          note('postponed or canceled — voided, stake returned', b0);
+          continue;
+        }
         if (!fin.completed || !isFinite(fin.home_score) || !isFinite(fin.away_score)) { note('ESPN does not show it as final yet', b0); continue; }
         const eid = idMap[gid] || fin.espn_id;
         idMap[gid] = eid;
