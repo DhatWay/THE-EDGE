@@ -220,8 +220,6 @@
     <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
     <a href="test-espn.html"><span class="ico">◈</span> ESPN</a>
     <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
-    <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
-    <a href="guide.html"><span class="ico">?</span> How to Use</a>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -277,6 +275,22 @@
           <button class="pipeline-btn secondary" onclick="setSportPreset('none')">None</button>
         </div>
         <div class="sport-summary" id="sportSummary"></div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="pipeline-head">
+          <div class="pipeline-title">⚡ Quick Update</div>
+        </div>
+        <div class="pipeline-desc">
+          The weekly update, in minutes: for the sports selected above, scores and lines from the last 10 days only →
+          ATS and head-to-head records rebuilt from your database → box scores for new games → team ratings →
+          player ratings → injuries → grade picks and bets. Run it after the last games, then run the pipeline when the openers post.
+          Full Data Refresh is for the monthly catch-up (history, rosters, calibration).
+        </div>
+        <div class="pipeline-actions single">
+          <button class="pipeline-btn blue" id="runQuickBtn" onclick="runQuickUpdate()">⚡ Run Quick Update</button>
+        </div>
+        <div class="pipeline-log" id="quickLog">Idle.</div>
       </div>
 
       <div class="pipeline-panel">
@@ -785,6 +799,39 @@
       log('✓ Full refresh complete');
       btn.disabled = false;
       showToast('✓ Full refresh complete', '');
+    }
+
+    // ── QUICK UPDATE ──
+    // Only what changed since last week. Each job also writes its own
+    // detail to its own panel below; this log shows the stages and time.
+    async function runQuickUpdate() {
+      const sports = jobSports();
+      if (!sports.length) { showToast('Select at least one sport above', 'error'); return; }
+      const btn = document.getElementById('runQuickBtn');
+      const logEl = document.getElementById('quickLog');
+      const t0 = Date.now();
+      const log = (m) => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+      const step = async (label, fn) => {
+        const t = Date.now();
+        log(label);
+        try { await fn(); log(`  done · ${Math.round((Date.now() - t) / 1000)}s`); }
+        catch (e) { log('  failed: ' + e.message); }
+      };
+      btn.disabled = true;
+      logEl.textContent = `Quick Update · ${sports.join(', ')}\n`;
+      await step('1/7 · Scores and lines, last 10 days', async () => {
+        if (!window.EDGE_ATS) throw new Error('ats-tracker.js not loaded');
+        await window.EDGE_ATS.buildAll({ sports, recentDays: 10, onProgress: m => { if (/games|resolv|rows|stored|recent/i.test(m)) log('  ' + m.trim()); } });
+      });
+      await step('2/7 · Box scores for new games', () => runBoxScoreFetch(true));
+      await step('3/7 · Team ratings', () => runPowerRatings(true));
+      await step('4/7 · Player ratings', () => runRosterEnrich(true));
+      await step('5/7 · Injuries', async () => { await refreshInjuries(); });
+      await step('6/7 · Grade picks', () => runShadowGrader(true));
+      await step('7/7 · Grade bets', () => runSimGrader(true));
+      log(`✓ Quick Update complete · ${Math.round((Date.now() - t0) / 60000 * 10) / 10} min`);
+      btn.disabled = false;
+      showToast('✓ Quick Update complete', '');
     }
 
     async function runPipeline() {
