@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261005-03';
+  const BUILD = 'orch-20261006-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -422,6 +422,29 @@ const EDGE_ORCHESTRATOR = (() => {
         return ev != null ? `value too small: ${(ev * 100).toFixed(1)}% per bet, lean starts at 1.8%${calNote}` : 'no edge';
       };
 
+      // ── Totals (over / under) for every game with a posted total ──
+      const totalsByGame = {};
+      priors.forEach(prior => {
+        const g = prior._raw_game || {};
+        const mt = Number(prior.market?.total ?? g.total);
+        const model = Number(prior.projection?.total);
+        if (!isFinite(mt) || !isFinite(model) || !window.EDGE_GOVERNOR?.rateTotal) return;
+        const sp = prior.sport;
+        // Weather can only lower an outdoor football total.
+        let weatherAdj = 0;
+        if (sp === 'NFL' || sp === 'NCAAF') {
+          const env = (algoResults.find(r => r.prior?.game_id === prior.game_id)?.families || []).find(f => f.family === 'environment');
+          if (env && Number(env.signal) < 0) weatherAdj = Number(env.signal) * 4;
+        }
+        const gh = Number(prior.home_power?.games_played), ga = Number(prior.away_power?.games_played);
+        const full = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 }[sp] || 10;
+        const certainty = (isFinite(gh) && isFinite(ga)) ? Math.max(0.25, Math.min(1, Math.min(gh, ga) / full)) : 1;
+        const r = EDGE_GOVERNOR.rateTotal({ sport: sp, modelTotal: model, marketTotal: mt,
+          overPrice: Number(g.over_price), underPrice: Number(g.under_price), weatherAdj, certainty });
+        if (r) totalsByGame[prior.game_id] = { ...r, certainty: Math.round(certainty * 100) / 100 };
+      });
+      summary.totals = Object.keys(totalsByGame).length;
+
       // Every game's result, picked or passed, for the board.
       summary.evaluations = finalResults.map(p => {
         const prior = priors.find(x => x.game_id === p.game_id) || {};
@@ -457,29 +480,6 @@ const EDGE_ORCHESTRATOR = (() => {
       try {
         localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations }));
       } catch {}
-
-      // ── Totals (over / under) for every game with a posted total ──
-      const totalsByGame = {};
-      priors.forEach(prior => {
-        const g = prior._raw_game || {};
-        const mt = Number(prior.market?.total ?? g.total);
-        const model = Number(prior.projection?.total);
-        if (!isFinite(mt) || !isFinite(model) || !window.EDGE_GOVERNOR?.rateTotal) return;
-        const sp = prior.sport;
-        // Weather can only lower an outdoor football total.
-        let weatherAdj = 0;
-        if (sp === 'NFL' || sp === 'NCAAF') {
-          const env = (algoResults.find(r => r.prior?.game_id === prior.game_id)?.families || []).find(f => f.family === 'environment');
-          if (env && Number(env.signal) < 0) weatherAdj = Number(env.signal) * 4;
-        }
-        const gh = Number(prior.home_power?.games_played), ga = Number(prior.away_power?.games_played);
-        const full = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 }[sp] || 10;
-        const certainty = (isFinite(gh) && isFinite(ga)) ? Math.max(0.25, Math.min(1, Math.min(gh, ga) / full)) : 1;
-        const r = EDGE_GOVERNOR.rateTotal({ sport: sp, modelTotal: model, marketTotal: mt,
-          overPrice: Number(g.over_price), underPrice: Number(g.under_price), weatherAdj, certainty });
-        if (r) totalsByGame[prior.game_id] = { ...r, certainty: Math.round(certainty * 100) / 100 };
-      });
-      summary.totals = Object.keys(totalsByGame).length;
 
       // Where the passed games stopped, in one line.
       const tally = {};
