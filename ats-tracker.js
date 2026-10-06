@@ -36,7 +36,7 @@
 
 const EDGE_ATS = (() => {
 
-  const BUILD = 'ats-20260927-01';
+  const BUILD = 'ats-20261006-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -132,7 +132,7 @@ const EDGE_ATS = (() => {
   // ============================================================
 
   async function buildAll(options = {}) {
-    const { sports = Object.keys(ESPN_MAP), onProgress = null } = options;
+    const { sports = Object.keys(ESPN_MAP), onProgress = null, recentDays = null } = options;
     const log = makeLogger(onProgress);
     const summary = {
       sports: {},
@@ -142,7 +142,7 @@ const EDGE_ATS = (() => {
     for (const sport of sports) {
       log(`── ${sport} ──`);
       try {
-        const result = await buildSport(sport, { onProgress });
+        const result = await buildSport(sport, { onProgress, recentDays });
         summary.sports[sport] = result;
         summary.totals.teams += result.teams_written || 0;
         summary.totals.matchups += result.matchups_written || 0;
@@ -176,10 +176,15 @@ const EDGE_ATS = (() => {
     const days = SPORT_HISTORY_DAYS[sport] || HISTORY_DAYS;
     const now = new Date();
     const start = new Date(now.getTime() - days * 86400000);
-    log(`  results ${start.toISOString().slice(0, 10)} → now`);
+    // Quick mode: only the last few days come from ESPN; the rest of
+    // the history window is read back from historical_odds to rebuild
+    // the ATS records, instead of re-downloading years of scoreboards.
+    const quick = isFinite(options.recentDays) && options.recentDays > 0;
+    const fetchStart = quick ? new Date(now.getTime() - options.recentDays * 86400000) : start;
+    log(`  results ${fetchStart.toISOString().slice(0, 10)} → now${quick ? ' (quick: recent games only)' : ''}`);
 
-    const events = await fetchRangeChunked(cfg.path, start, now, log, sport);
-    const games = events.map(e => parseEvent(sport, e)).filter(Boolean);
+    const events = await fetchRangeChunked(cfg.path, fetchStart, now, log, sport);
+    let games = events.map(e => parseEvent(sport, e)).filter(Boolean);
     games.sort((a, b) => new Date(a.date) - new Date(b.date));
     log(`  ${games.length} completed games`);
 
@@ -188,7 +193,7 @@ const EDGE_ATS = (() => {
     }
 
     log('  loading cached odds');
-    const oddsIndex = await loadCachedOdds(sport, url, key, canStoreOpen);
+    const oddsIndex = await loadCachedOdds(sport, url, key, canStoreOpen, quick);
     const withSpread = Object.values(oddsIndex).filter(r => r.spread != null).length;
     const withOpen   = Object.values(oddsIndex).filter(r => r.open_spread != null).length;
     log(`  ${withSpread} cached spreads · ${withOpen} cached opens`);
@@ -280,6 +285,20 @@ const EDGE_ATS = (() => {
       if (missing.length > toLookup.length) {
         log(`  ${missing.length - toLookup.length} still unresolved — run again to continue`);
       }
+    }
+
+    // Quick mode: every stored game in the history window joins the
+    // recent ones for the ATS records (the recent ESPN copy wins).
+    if (quick) {
+      const recentIds = new Set(games.map(g => g.id));
+      const stored = Object.values(oddsIndex)
+        .filter(r => r && r._row && r.home && r.away && r.game_date
+          && isFinite(r.home_score) && isFinite(r.away_score) && r.home_score !== null && r.away_score !== null
+          && new Date(r.game_date) >= start && !recentIds.has(String(r.game_id)))
+        .map(r => ({ id: String(r.game_id), date: r.game_date, home: r.home, away: r.away,
+                     homeScore: Number(r.home_score), awayScore: Number(r.away_score), neutral: false }));
+      games = stored.concat(games).sort((a, b) => new Date(a.date) - new Date(b.date));
+      log(`  ${stored.length} stored games + ${recentIds.size} recent for the ATS records`);
     }
 
     const priced = games.filter(g => oddsIndex[g.id]?.spread != null);
@@ -606,13 +625,14 @@ const EDGE_ATS = (() => {
     return ok;
   }
 
-  async function loadCachedOdds(sport, url, key, canReadOpen) {
+  async function loadCachedOdds(sport, url, key, canReadOpen, withGames = false) {
     const out = {};
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-    const cols = canReadOpen
+    let cols = canReadOpen
       ? 'game_id,spread,total,home_ml,away_ml,open_spread'
       : 'game_id,spread,total,home_ml,away_ml';
+    if (withGames) cols += ',home,away,home_score,away_score,game_date';
 
     // Paged: Supabase returns at most 1,000 rows per request. A
     // single read left every game past the first thousand looking
