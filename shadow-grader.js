@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20261005-01';
+  const BUILD = 'shadowgrade-20261006-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -405,9 +405,10 @@ const EDGE_SHADOW_GRADER = (() => {
     if (!ev) return null;
     const comp = ev.competitions[0];
     const h = comp.competitors.find(x => x.homeAway === 'home'), a = comp.competitors.find(x => x.homeAway === 'away');
+    const state = espnState(comp, ev, p.commence_time);
     return {
       espn_id: String(ev.id),
-      completed: !!(comp?.status?.type?.completed ?? ev?.status?.type?.completed),
+      completed: state === 'final', void: state === 'void',
       home_score: Number(h.score), away_score: Number(a.score),
     };
   }
@@ -423,7 +424,8 @@ const EDGE_SHADOW_GRADER = (() => {
       if (!comp) return null;
       const h = comp.competitors?.find(x => x.homeAway === 'home'), a = comp.competitors?.find(x => x.homeAway === 'away');
       if (!h || !a) return null;
-      return { espn_id: String(espnId), completed: !!comp?.status?.type?.completed,
+      const state = espnState(comp, null, comp?.date);
+      return { espn_id: String(espnId), completed: state === 'final', void: state === 'void',
                home_score: Number(h.score), away_score: Number(a.score) };
     } catch { return null; }
   }
@@ -449,6 +451,21 @@ const EDGE_SHADOW_GRADER = (() => {
     return { skipped: false, graded: graded + bets, picks: graded, bets };
   }
 
+  // ESPN status → 'final' | 'void' | 'open'. A game counts as final when
+  // ESPN marks it completed or past its "post" state; postponed and
+  // canceled games are void (stake back) once a day has passed, so a bet
+  // on them can't sit open forever.
+  function espnState(comp, ev, startIso) {
+    const t = comp?.status?.type || ev?.status?.type || {};
+    const name = String(t.name || '').toUpperCase();
+    if (t.completed === true || t.state === 'post' && !/POSTPONED|CANCELED|CANCELLED|SUSPENDED/.test(name)) return 'final';
+    if (/POSTPONED|CANCELED|CANCELLED/.test(name)) {
+      const start = new Date(startIso || ev?.date || 0).getTime();
+      return (start && Date.now() - start > 24 * 3600000) ? 'void' : 'open';
+    }
+    return 'open';
+  }
+
   async function gradeFromEspn(picks, log) {
     const updates = [], notFound = [];
     let fromUnresolved = 0, fromAwaiting = 0;
@@ -469,8 +486,17 @@ const EDGE_SHADOW_GRADER = (() => {
         });
         if (!ev) { notFound.push({ ...p, why: 'no matching game on ESPN that day' }); continue; }
         const comp = ev.competitions[0];
-        const done = comp?.status?.type?.completed ?? ev?.status?.type?.completed;
-        if (!done) { notFound.push({ ...p, why: 'ESPN does not show it as final yet' }); continue; }
+        const st = espnState(comp, ev, p.commence_time);
+        if (st === 'void') {
+          updates.push({ id: p.id, result: 'P', pnl: 0, actual_margin: null });
+          if (p._noId) fromUnresolved++; else fromAwaiting++;
+          continue;
+        }
+        if (st !== 'final') {
+          const nm = String(comp?.status?.type?.description || comp?.status?.type?.name || 'not final');
+          notFound.push({ ...p, why: `ESPN shows it as "${nm}"` });
+          continue;
+        }
         const h = comp.competitors.find(x => x.homeAway === 'home'), a = comp.competitors.find(x => x.homeAway === 'away');
         const score = { home_score: Number(h.score), away_score: Number(a.score) };
         if (!isFinite(score.home_score) || !isFinite(score.away_score)) { notFound.push({ ...p, why: 'no final score' }); continue; }
