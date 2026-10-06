@@ -451,8 +451,10 @@ const EDGE_ALGOS = (() => {
 
     const subs = [];
 
-    // Rest differential
-    if (hRest !== null && aRest !== null) {
+    // Rest differential — unless the fitted ranking already priced it.
+    if (prior?.rest_in_fit) {
+      subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'Rest priced in the ranking' });
+    } else if (hRest !== null && aRest !== null) {
       const diff = hRest - aRest;
       subs.push(signalFrom(diff, 1, 3, 'Rest'));
     } else {
