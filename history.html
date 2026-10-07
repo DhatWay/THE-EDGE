@@ -532,7 +532,9 @@
       const pipeline = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && (modeOk(p) || p.decision === 'MINE'));
       if (currentView === 'totals') return pipeline.filter(p => String(p.decision || '').startsWith('TOTAL_'));
       if (currentView === 'slate') return pipeline.filter(p => !String(p.decision || '').startsWith('TOTAL_') && p.decision !== 'MINE');
-      return pipeline.filter(p => BET_TIERS.has(p.decision));
+      // Model Picks: ATS and moneyline only — over/unders have their own
+      // Totals tab and stay out of this record.
+      return pipeline.filter(p => BET_TIERS.has(p.decision) && !String(p.decision || '').startsWith('TOTAL_'));
     }
 
     function setHistView(v) {
