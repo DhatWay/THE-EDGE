@@ -765,11 +765,12 @@
     // with picks — the Picks tab is 1U and 2U by default.
     let showLeans = localStorage.getItem('edge_picks_show_leans') === 'true';
     const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET']);
-    const LEAN_TIERS = new Set(['LEAN', 'TOTAL_LEAN']);
+    const LEAN_TIERS = new Set(['LEAN']);
     function isLineRow(p) { return String(p.decision || '').startsWith('LINE_'); }
     function isTotalRow(p) { return String(p.decision || '').startsWith('TOTAL_'); }
     function isMineRow(p) { return p.decision === 'MINE'; }
-    function isPickRow(p) { return BET_TIERS.has(p.decision) || isMineRow(p) || (showLeans && LEAN_TIERS.has(p.decision)); }
+    // Picks tab: ATS and moneyline only — over/unders live in the Totals tab.
+    function isPickRow(p) { return !isTotalRow(p) && (BET_TIERS.has(p.decision) || isMineRow(p) || (showLeans && LEAN_TIERS.has(p.decision))); }
     function toggleLeans(on) {
       showLeans = !!on;
       localStorage.setItem('edge_picks_show_leans', showLeans ? 'true' : 'false');
