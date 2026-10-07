@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261005-01';
+  const BUILD = 'pe-20261007-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -143,7 +143,7 @@ const EDGE_POWER = (() => {
   // mostly noise: in Week 3 the projection alone made the Chargers
   // 4.7-point favorites at Buffalo against a market of Bills -7.
   const PROJECTION_FULL_GAMES = {
-    NFL: 10, NCAAF: 10, NBA: 20, WNBA: 12, NCAAB: 14, MLB: 40, NHL: 20, MLS: 10,
+    NFL: 8, NCAAF: 6, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10,
   };
 
   // How far the offense/defense projection may sit from the composite
@@ -1042,12 +1042,7 @@ const EDGE_POWER = (() => {
     const compositeSpread = (homePts != null && awayPts != null)
       ? round(-((homePts - awayPts) + (core?.HOME_POINTS?.[sport] ?? 2)), 2)
       : null;
-    let projectionSpread = rawProjectionSpread;
-    if (projectionSpread != null && compositeSpread != null) {
-      const cap = PROJECTION_GAP_CAP[sport] ?? 7;
-      projectionSpread = round(clamp(projectionSpread, compositeSpread - cap, compositeSpread + cap), 2);
-      modelSpread = projectionSpread;
-    }
+    const projectionSpread = rawProjectionSpread;
 
     // Early in a season the projection rests on a handful of games.
     // It is blended with the composite spread in proportion to the
