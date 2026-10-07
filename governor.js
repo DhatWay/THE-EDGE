@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261005-01';
+  const BUILD = 'gov-20261007-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -198,13 +198,13 @@ const EDGE_GOVERNOR = (() => {
 
   // Until a sport's Slate Test sets it: tests so far show most of the
   // ranking's disagreement with the line is noise, so it starts low.
-  const DEFAULT_BLEND = { w_strength: 0.3, w_spots: 1.0 };
+  const DEFAULT_BLEND = { w_strength: 0.6, w_spots: 1.0 };
   const SPOT_PRIOR_GAMES = 60;      // a spot's record is blended with 60 games at the prior rate
   // The belief a spot starts with before it has a record: a modest
   // 53%, so a situation you encoded counts a little from day one, and
   // its own results take over as they come in (a spot that keeps
   // failing turns negative).
-  const SPOT_PRIOR_RATE = 0.51;
+  const SPOT_PRIOR_RATE = 0.53;
   // A spot only counts beyond that small belief when its record clears
   // luck: at least this many games, and a 95% range that excludes what
   // the market already expected. A fade needs the same proof.
@@ -222,7 +222,7 @@ const EDGE_GOVERNOR = (() => {
   const STRENGTH_FULL_GAMES = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 };
 
 
-  const SPOT_CAP = 0.25;            // spots together move log-odds at most this much (~±6 pts at 50%)
+  const SPOT_CAP = 0.35;            // spots together move log-odds at most this much (~±8.7 pts at 50%)
   const CONTEXT_CAP = 0.16;         // rest + injuries, at most ~±4 pts
   const STRENGTH_FAMILIES = new Set(['team_quality', 'offense_defense', 'coaching']);
 
@@ -297,37 +297,21 @@ const EDGE_GOVERNOR = (() => {
   }
 
   function spotEvidence(spots) {
-    const all = (spots || []).filter(x => x && (x.side === 'home' || x.side === 'away'));
-    // Rest, travel and injury are priced in step 4; counting them here
-    // too would count the same fact twice.
-    const list = all.filter(x => !CONTEXT_GROUPS.has(x.group));
-    if (!list.length) return { logit: 0, detail: [], skipped: all.length };
-    const scored = list.map(x => {
-      const w = Number(x.wins) || 0, l = Number(x.losses) || 0, n = w + l;
+    const list = (spots || []).filter(x => x && (x.side === 'home' || x.side === 'away'));
+    if (!list.length) return { logit: 0, detail: [] };
+    const detail = list.map(x => {
+      const w = Number(x.wins) || 0, l = Number(x.losses) || 0;
       // Measured against what the market already gave its side in the
       // games it fired (base) — spreads sit near 50%.
       const base = isFinite(x.base) ? clamp(x.base, 0.05, 0.95) : 0.5;
       const priorRate = sigmoid(logit(base) + logit(SPOT_PRIOR_RATE));
-      const [lo, hi] = wilson(w, n);
-      const proven = n >= SPOT_MIN_GAMES && (lo > base || hi < base);
-      const rate = proven ? (w + priorRate * SPOT_PRIOR_GAMES) / (n + SPOT_PRIOR_GAMES) : priorRate;
-      // Power-vs-line spots partly restate what strength measures, so
-      // they count at half.
-      const share = x.group === 'power_line' ? 0.5 : 1;
-      const edge = clamp((logit(rate) - logit(base)) * share, -SPOT_EACH_CAP, SPOT_EACH_CAP);
+      const rate = (w + priorRate * SPOT_PRIOR_GAMES) / (w + l + SPOT_PRIOR_GAMES);
+      const edge = logit(rate) - logit(base);
       return { id: x.id, label: x.label || x.id, side: x.side, group: x.group || x.id, record: `${w}-${l}`,
-               rate: round(rate, 4), base: round(base, 4), proven,
-               edge: round(x.side === 'home' ? edge : -edge, 4) };
+               rate: round(rate, 4), base: round(base, 4), edge: round(x.side === 'home' ? edge : -edge, 4) };
     });
-    // Related spots (one group) count once — the strongest.
-    const byGroup = {};
-    scored.forEach(d => {
-      const cur = byGroup[d.group];
-      if (!cur || Math.abs(d.edge) > Math.abs(cur.edge)) byGroup[d.group] = d;
-    });
-    const detail = Object.values(byGroup);
     const sum = detail.reduce((s, d) => s + d.edge, 0) / Math.sqrt(detail.length);
-    return { logit: clamp(sum, -SPOT_CAP, SPOT_CAP), detail, skipped: all.length - detail.length };
+    return { logit: clamp(sum, -SPOT_CAP, SPOT_CAP), detail };
   }
 
   function run(familyOutputs, prior, options = {}) {
@@ -367,14 +351,9 @@ const EDGE_GOVERNOR = (() => {
     // The Slate Test passes its own blend (the defaults) so a backtest
     // is never scored with weights learned from the same games.
     const blend = options.blend ? { ...options.blend, source: options.blend.source || 'given' } : blendFor(sport, betType);
-    // Strength counts in proportion to how many games the ratings rest
-    // on (an early-season college rating says little), and can never
-    // move the market's chance more than about 10 points.
-    const gh = Number(prior?.home_power?.games_played), ga = Number(prior?.away_power?.games_played);
-    const strengthCertainty = (isFinite(gh) && isFinite(ga))
-      ? clamp(Math.min(gh, ga) / (STRENGTH_FULL_GAMES[sport] || 10), 0.25, 1) : 1;
+    const strengthCertainty = 1;
     const strengthTerm = strengthHomeProb != null
-      ? clamp(blend.w_strength * strengthCertainty * (logit(strengthHomeProb) - logit(marketHomeProb)), -STRENGTH_CAP, STRENGTH_CAP) : 0;
+      ? blend.w_strength * (logit(strengthHomeProb) - logit(marketHomeProb)) : 0;
     const spotTerm = blend.w_spots * spots.logit;
     const posteriorHomeProb = sigmoid(logit(marketHomeProb) + strengthTerm + spotTerm + contextLogit);
 
