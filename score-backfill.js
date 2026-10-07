@@ -42,7 +42,7 @@
 
 const EDGE_SCORE_BACKFILL = (() => {
 
-  const BUILD = 'sb-20260927-01';
+  const BUILD = 'sb-20261007-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -129,9 +129,12 @@ const EDGE_SCORE_BACKFILL = (() => {
     // across all games regardless of which date bucket they
     // came from.
     const espnIndex = {};
+    let fetched = 0;
     await parallelMap(uniqueDates, FETCH_CONCURRENCY, async (date) => {
       const events = await fetchEspnDate(path, date);
       events.forEach(e => { espnIndex[e.id] = e; });
+      fetched++;
+      if (fetched % 20 === 0 || fetched === uniqueDates.length) log(`    ${fetched} of ${uniqueDates.length} scoreboards`);
     });
     log(`  ${Object.keys(espnIndex).length} ESPN events indexed`);
 
@@ -214,7 +217,13 @@ const EDGE_SCORE_BACKFILL = (() => {
   async function loadGames(sport, url, key, force) {
     const out = [];
     const pageSize = 1000;
-    const filter = force ? '' : '&home_score=is.null';
+    // Games already played only — future games on the schedule have no
+    // score to find, and asking ESPN for every future date is what made
+    // this step run on and on. Outside force mode, only the last 45
+    // days: an older game still unscored isn't going to be found now.
+    const nowIso = new Date().toISOString();
+    const since = new Date(Date.now() - 45 * 86400000).toISOString();
+    const filter = (force ? '' : `&home_score=is.null&game_date=gte.${since}`) + `&game_date=lt.${nowIso}`;
 
     for (let offset = 0; offset < 200000; offset += pageSize) {
       try {
@@ -252,7 +261,11 @@ const EDGE_SCORE_BACKFILL = (() => {
     let answered = false;
     for (let i = 0; i < shapes.length; i++) {
       try {
-        const res = await fetch(base + shapes[i], { cache: 'no-store' });
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+        let res;
+        try { res = await fetch(base + shapes[i], { cache: 'no-store', ...(ctrl ? { signal: ctrl.signal } : {}) }); }
+        finally { if (timer) clearTimeout(timer); }
         if (res.headers.get('x-edge-offline') === '1' || !res.ok) continue;
         answered = true;
         const events = (await res.json()).events || [];
