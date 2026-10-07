@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261006-01';
+  const BUILD = 'orch-20261007-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -1222,25 +1222,35 @@ const EDGE_ORCHESTRATOR = (() => {
     const existing = new Map();   // game_id → row id
     const betGames = new Set();
     const removedGames = new Set();   // picks you removed on the Picks page
-    let betsReadable = true;
+    const duplicateIds = [];
 
     for (let i = 0; i < allIds.length; i += 150) {
       const inList = allIds.slice(i, i + 150).map(id => `"${id}"`).join(',');
       try {
+        // Every saved row for these games, newest first, however old —
+        // the game id is what identifies a game. (Looking only at recent
+        // rows let an older one slip past and a second copy be saved.)
         const res = await fetch(
-          `${url}/rest/v1/shadow_picks?select=id,game_id,decision&game_id=in.(${inList})&created_at=gte.${windowStart.toISOString()}`,
+          `${url}/rest/v1/shadow_picks?select=id,game_id,decision,created_at&game_id=in.(${inList})&order=created_at.desc`,
           { headers });
         if (res.ok) (await res.json()).forEach(r => {
           if (/^(LINE|TOTAL)_/.test(String(r.decision || '')) || r.decision === 'MINE') return;
-          if (!existing.has(r.game_id)) existing.set(r.game_id, r.id);
-          if (r.decision === 'REMOVED') removedGames.add(r.game_id);
+          if (!existing.has(r.game_id)) {
+            existing.set(r.game_id, r.id);
+            if (r.decision === 'REMOVED') removedGames.add(r.game_id);
+          } else {
+            duplicateIds.push(r.id);        // a second copy of the same game
+          }
         });
       } catch (e) { logEdgeError('orch.persistCheck', e); }
+    }
+
+    // Extra copies of a game's pick are deleted; one row per game remains.
+    for (let i = 0; i < duplicateIds.length; i += 100) {
       try {
-        const res = await fetch(`${url}/rest/v1/bet_log?select=game_id&game_id=in.(${inList})`, { headers });
-        if (res.ok) (await res.json()).forEach(r => betGames.add(r.game_id));
-        else betsReadable = false;
-      } catch { betsReadable = false; }
+        await fetch(`${url}/rest/v1/shadow_picks?id=in.(${duplicateIds.slice(i, i + 100).join(',')})`,
+          { method: 'DELETE', headers: { ...headers, Prefer: 'return=minimal' } });
+      } catch (e) { logEdgeError('orch.dedupe', e); }
     }
 
     const priorByIdAll = new Map(priors.map(p => [p.game_id, p]));
@@ -1248,8 +1258,10 @@ const EDGE_ORCHESTRATOR = (() => {
       const t = new Date(priorByIdAll.get(gid)?.commence_time || 0).getTime();
       return isFinite(t) && t > 0 && t <= Date.now();
     };
-    // Without a readable bet_log, nothing already on file is touched.
-    const locked = (gid) => !betsReadable || betGames.has(gid) || removedGames.has(gid) || started(gid);
+    // Every run re-rates every game that hasn't started. A bet doesn't
+    // freeze the rating — the bet keeps its own line and price in your bet
+    // log. Only started games, and picks you removed, stay as they are.
+    const locked = (gid) => removedGames.has(gid) || started(gid);
 
     const pickIds = new Set(picks.map(p => p.game_id));
     const freshPicks = picks.filter(p => !existing.has(p.game_id));
