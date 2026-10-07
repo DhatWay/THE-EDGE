@@ -53,6 +53,7 @@ const SHELL_FILES = [
   './data.html',
   './slate.html',
   './test-espn.html',
+  './guide.html',
   './login.html',
 
   // Core rating and pipeline engines
