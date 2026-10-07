@@ -161,6 +161,16 @@
     .earlier-row { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
     .earlier-row b.pos { color: var(--green); } .earlier-row b.neg { color: var(--red); }
     .pf-sub { font-size: 10px; color: var(--text-dim); margin-top: 3px; letter-spacing: 0.3px; line-height: 1.4; }
+    .oc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .oc-table th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 4px 3px; border-bottom: 1px solid var(--border); }
+    .oc-table td { padding: 5px 3px; border-bottom: 1px solid var(--border); }
+    .oc-table .n { text-align: right; white-space: nowrap; }
+    .oc-table .pos { color: var(--green); } .oc-table .neg { color: var(--red); }
+    .oc-table tr.oc-mine td { color: var(--gold); }
+    .oc-table tr.oc-mine td.pos { color: var(--green); }
+    .oc-note { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+    .stake-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); }
+    .stake-row input { width: 90px; padding: 6px 8px; background: transparent; border: 1px solid var(--border); color: var(--text); font-size: 14px; }
     .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
       font-family: 'Barlow Condensed', sans-serif; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12px; cursor: pointer; }
     .view-tab.active { color: var(--gold); border-color: var(--gold); }
@@ -391,6 +401,7 @@
       Set your bankroll and unit size in Settings.
     </div>
 
+    <div class="stake-row">Bet amount for outcomes $<input id="previewStake" type="number" min="1" step="1" inputmode="decimal" onchange="setPreviewStake(this.value)" /></div>
     <div class="view-tabs">
       <button class="view-tab active" data-view="picks" onclick="setView('picks')">Picks</button>
       <button class="view-tab" data-view="slate" onclick="setView('slate')">Full Slate</button>
@@ -753,7 +764,7 @@
     // Leans live in Full Slate (and Totals) unless you choose to see them
     // with picks — the Picks tab is 1U and 2U by default.
     let showLeans = localStorage.getItem('edge_picks_show_leans') === 'true';
-    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'TOTAL_2U', 'TOTAL_1U']);
+    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET']);
     const LEAN_TIERS = new Set(['LEAN', 'TOTAL_LEAN']);
     function isLineRow(p) { return String(p.decision || '').startsWith('LINE_'); }
     function isTotalRow(p) { return String(p.decision || '').startsWith('TOTAL_'); }
@@ -863,6 +874,8 @@
     }
 
     function renderPicks() {
+      const ps = document.getElementById('previewStake');
+      if (ps && document.activeElement !== ps) ps.value = previewStake();
       const note = document.getElementById('bankrollNote');
       if (note) note.hidden = parseFloat(localStorage.getItem('edge_bankroll') || '0') > 0;
       const filtered = applyFilter(allPicks);
@@ -1040,6 +1053,7 @@
             <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
 
             ${bestLineHtml(p)}
+            ${buildOutcomes(p)}
             ${buildAnalytics(p)}
           </div>
 
@@ -1192,6 +1206,58 @@
       const esc2 = v => String(v).replace(/[<>&]/g, '');
       return `<details class="analytics"><summary>Analytics</summary><div class="analytics-body">` +
         rows.map(([k, v]) => `<div class="row"><span>${esc2(k)}</span><span>${esc2(v)}</span></div>`).join('') + `</div></details>`;
+    }
+
+    // ── BET OUTCOMES ──
+    // Every way to bet this game at your bet amount, before you bet it:
+    // both sides of the spread, both moneylines and the total, each with
+    // what it wins, what comes back, and what's lost if it misses. Prices
+    // come from the saved board (Live Matchups); the bet amount is set
+    // once at the top of the page.
+    function previewStake() {
+      const v = parseFloat(localStorage.getItem('edge_preview_stake') || '');
+      if (isFinite(v) && v > 0) return v;
+      const unit = parseFloat(localStorage.getItem(portfolio === 'sim' ? 'edge_sim_unit_size' : 'edge_unit_size') || '');
+      return isFinite(unit) && unit > 0 ? unit : 50;
+    }
+    function setPreviewStake(v) {
+      const n = parseFloat(v);
+      if (!isFinite(n) || n <= 0) return;
+      localStorage.setItem('edge_preview_stake', String(n));
+      renderPicks();
+    }
+    function buildOutcomes(p) {
+      let g = null;
+      try { g = (JSON.parse(localStorage.getItem('edge_todays_games') || '[]')).find(x => x.id === p.game_id) || null; } catch {}
+      const stake = previewStake();
+      const win = price => price > 0 ? stake * price / 100 : stake * 100 / Math.abs(price);
+      const fmtP = v => (v > 0 ? '+' : '') + v;
+      const fmtL = v => (v > 0 ? '+' : '') + v;
+      const $ = v => '$' + v.toFixed(2);
+      const home = p.home_team || 'Home', away = p.away_team || 'Away';
+      const hs = g ? (g.home_spread ?? g.spread) : p.market_spread;
+      const as = g ? (g.away_spread ?? (g.spread != null ? -g.spread : null)) : (p.market_spread != null ? -p.market_spread : null);
+      const rows = [];
+      const add = (label, price, mine) => {
+        if (price == null || !isFinite(price) || Math.abs(price) < 100) return;
+        const w = win(Number(price));
+        rows.push(`<tr${mine ? ' class="oc-mine"' : ''}><td>${label}</td><td class="n">${fmtP(Number(price))}</td>` +
+          `<td class="n pos">+${$(w)}</td><td class="n">${$(stake + w)}</td><td class="n neg">-${$(stake)}</td></tr>`);
+      };
+      const pickSide = p.direction;
+      if (hs != null) add(`${home} ${fmtL(hs)}`, g ? (g.home_spread_price ?? -110) : -110, pickSide === 'home');
+      if (as != null) add(`${away} ${fmtL(as)}`, g ? (g.away_spread_price ?? -110) : -110, pickSide === 'away');
+      if (g) {
+        add(`${home} moneyline`, g.ml, false);
+        add(`${away} moneyline`, g.away_ml, false);
+        if (g.total != null) { add(`Over ${g.total}`, g.over_price ?? -110, false); add(`Under ${g.total}`, g.under_price ?? -110, false); }
+      }
+      if (!rows.length) return '';
+      return `<details class="analytics outcomes"><summary>Bet outcomes at $${stake}</summary><div class="analytics-body">` +
+        `<table class="oc-table"><tr><th>Bet</th><th class="n">Price</th><th class="n">Wins</th><th class="n">Returns</th><th class="n">If it loses</th></tr>` +
+        rows.join('') + `</table>` +
+        (g ? '' : `<div class="oc-note">Only the spread is shown — open Live Matchups and Refresh to load this game's moneylines and total.</div>`) +
+        `</div></details>`;
     }
 
     function buildAnalytics(p) {
