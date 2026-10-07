@@ -24,6 +24,8 @@
   <script src="roster-engine.js"></script>
   <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
+  <script src="qb-ratings.js"></script>
+  <script src="my-picks.js"></script>
   <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
@@ -621,12 +623,55 @@
       }
     }
 
+    // ── RE-EVALUATE ONE GAME ──
+    // Clears what's saved for this game (its pick, its over/under, a
+    // removal) and rates it again from scratch with today's numbers. Your
+    // own picks, lines and placed bets aren't touched.
+    async function reevaluate(gameId) {
+      const board = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+      const game = board.find(g => g.id === gameId);
+      if (!game) { showToast('Not on the saved board — refresh Live Matchups first', 'red'); return; }
+      if (new Date(game.commence_time).getTime() <= Date.now()) { showToast('This game has started', 'red'); return; }
+      if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'red'); return; }
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      showToast('Re-evaluating…');
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?game_id=eq.${encodeURIComponent(gameId)}` +
+          `&decision=not.in.(MINE)&decision=not.like.LINE_*`,
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' } });
+        if (!res.ok) throw new Error('could not clear the saved pick (HTTP ' + res.status + ')');
+        await window.EDGE_ORCHESTRATOR.run({ games: [game], grade: false, minConfidence: parseFloat(localStorage.getItem('edge_min_conf') || '0') });
+        showToast('Re-evaluated', 'green');
+        await loadPicks();
+      } catch (e) { showToast('Re-evaluate failed: ' + e.message, 'red'); }
+    }
+
+    // ── FLIP ──
+    // Take the other side of a pick you disagree with: opens My Pick on
+    // the opposite side at the board's line and price. It's saved as your
+    // pick, graded on its own, and kept out of the model's record.
+    function flipPick(pickKey) {
+      const p = allPicks.find(x => (x.pick_id || x.game_id) === pickKey || x.game_id === pickKey);
+      if (!p || !window.EDGE_MYPICK) return;
+      const gs = p.governor_snapshot || {};
+      const isTotal = String(p.decision || '').startsWith('TOTAL_') || gs.bet_type === 'TOTAL';
+      const side = isTotal ? (p.direction === 'over' ? 'under' : 'over')
+        : gs.bet_type === 'ML' ? (p.direction === 'home' ? 'away_ml' : 'home_ml')
+        : (p.direction === 'home' ? 'away' : 'home');
+      EDGE_MYPICK.open(p.game_id, { home_team: p.home_team, away_team: p.away_team, sport: p.sport, commence_time: p.commence_time, side });
+    }
+
     // ── RUN PIPELINE ──
     async function runPipeline() {
       const btn = document.getElementById('runBtn');
       if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'red'); return; }
-      const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
-      if (!games.length) { showToast('No games — refresh Matchups first', 'red'); return; }
+      const board = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
+      // A sport chip selected on this page runs that sport only.
+      const SPORT_CHIPS = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'MLB', 'NHL', 'WNBA', 'MLS'];
+      const games = SPORT_CHIPS.includes(currentFilter)
+        ? board.filter(g => (g._sport || g.sport) === currentFilter)
+        : board;
+      if (!games.length) { showToast(SPORT_CHIPS.includes(currentFilter) ? `No ${currentFilter} games on the board — refresh Matchups` : 'No games — refresh Matchups first', 'red'); return; }
 
       btn.disabled = true;
       btn.textContent = 'RUNNING…';
@@ -1061,6 +1106,10 @@
           <div class="pick-actions">
             ${actions}
             <button class="pick-action-btn copy" onclick="copyPick('${pickKey}')">⧉ Copy</button>
+          </div>
+          <div class="pick-actions">
+            <button class="pick-action-btn" onclick="reevaluate('${p.game_id}')">↻ Re-evaluate</button>
+            <button class="pick-action-btn" onclick="flipPick('${pickKey}')">⇄ Flip</button>
           </div>
         </div>`;
     }
