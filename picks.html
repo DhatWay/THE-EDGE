@@ -411,6 +411,7 @@
       <button class="view-tab" data-view="lines" onclick="setView('lines')">My Lines</button>
     </div>
     <label class="leans-toggle" id="leansToggle"><input type="checkbox" id="showLeans" onchange="toggleLeans(this.checked)" /> Show leans with picks</label>
+    <label class="leans-toggle" id="totalsToggle" hidden><input type="checkbox" id="rateTotals" onchange="localStorage.setItem('edge_rate_totals', this.checked ? 'true' : 'false')" /> Rate over/unders when I run the pipeline (off = no over/under picks)</label>
 
     <div class="picks-tools">
       <button class="tool-btn" onclick="copyAllPicks()">⧉ Copy All</button>
@@ -830,6 +831,8 @@
       if (betAll) betAll.hidden = v !== 'picks';
       const lt = document.getElementById('leansToggle');
       if (lt) lt.hidden = v !== 'picks';
+      const tt = document.getElementById('totalsToggle');
+      if (tt) tt.hidden = v !== 'totals';
       renderPicks();
     }
 
@@ -1635,12 +1638,11 @@
     updateBankrolls();
     updateModeIndicator();
     { const sl = document.getElementById('showLeans'); if (sl) sl.checked = showLeans; }
+    { const rt = document.getElementById('rateTotals'); if (rt) rt.checked = localStorage.getItem('edge_rate_totals') === 'true'; }
     loadPicks();
-    // Finished picks and bets are graded when the page opens (at most
-    // every 30 minutes), then the list refreshes with the results.
-    if (window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.autoGrade) {
-      EDGE_SHADOW_GRADER.autoGrade().then(r => { if (r && r.graded) { loadPicks(); updateBankrolls(); } }).catch(() => {});
-    }
+    // No grading when the page opens: grading runs from Pick History's
+    // button (for the sport you select) and with each pipeline run (for
+    // the sports in that run).
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
