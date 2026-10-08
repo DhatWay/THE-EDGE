@@ -9,7 +9,7 @@
 // ============================================================
 
 const EDGE_MYPICK = (function () {
-  const BUILD = 'mypick-20261005-01';
+  const BUILD = 'mypick-20261007-01';
   const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const fmt = v => (v > 0 ? '+' : '') + v;
 
@@ -102,6 +102,7 @@ const EDGE_MYPICK = (function () {
       $('mpModel').textContent = note;
     };
     $('mpSide').addEventListener('change', fill);
+    if (hint.side && $('mpSide').querySelector(`option[value="${hint.side}"]`)) $('mpSide').value = hint.side;
     fill();
     $('mpCancel').onclick = () => veil.remove();
     veil.addEventListener('click', e => { if (e.target === veil) veil.remove(); });
