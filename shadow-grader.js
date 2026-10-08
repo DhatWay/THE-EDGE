@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20261006-01';
+  const BUILD = 'shadowgrade-20261007-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -123,6 +123,7 @@ const EDGE_SHADOW_GRADER = (() => {
       onProgress = null,
       dryRun = false,
       maxRows = 5000,
+      sports = null,           // e.g. ['NFL'] — only those sports are graded
     } = options;
     const log = (m) => { if (typeof onProgress === 'function') onProgress(m); };
 
@@ -154,7 +155,7 @@ const EDGE_SHADOW_GRADER = (() => {
 
     // ── 1. Load ungraded picks ──
     const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
-    const pending = await loadPending(since, maxRows, url, key);
+    const pending = await loadPending(since, maxRows, url, key, sports);
     log(`${pending.length} ungraded picks from the last ${LOOKBACK_DAYS} days`);
 
     if (!pending.length) {
@@ -519,15 +520,16 @@ const EDGE_SHADOW_GRADER = (() => {
     return { updates, notFound, fromUnresolved, fromAwaiting };
   }
 
-  async function loadPending(since, maxRows, url, key) {
+  async function loadPending(since, maxRows, url, key, sports = null) {
     const out = [];
     const pageSize = 1000;
+    const sportFilter = (Array.isArray(sports) && sports.length) ? `&sport=in.(${sports.join(',')})` : '';
 
     for (let offset = 0; offset < maxRows; offset += pageSize) {
       try {
         const res = await fetch(
           `${url}/rest/v1/shadow_picks?result=is.null` +
-          `&created_at=gte.${since}` +
+          `&created_at=gte.${since}${sportFilter}` +
           `&select=id,game_id,sport,direction,market_spread,units,decision,created_at,governor_snapshot,home_team,away_team,commence_time` +
           `&order=created_at.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
