@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261007-02';
+  const BUILD = 'orch-20261007-03';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -422,9 +422,24 @@ const EDGE_ORCHESTRATOR = (() => {
         return ev != null ? `value too small: ${(ev * 100).toFixed(1)}% per bet, lean starts at 1.8%${calNote}` : 'no edge';
       };
 
-      // ── Totals (over / under) for every game with a posted total ──
+      // ── Totals (over / under) — only when switched on ──
+      // Off unless "Rate over/unders" is ticked (Today's Picks › Totals).
+      // When off, over/under rows still waiting on games in this run are
+      // cleared, so nothing over/under shows as a pick.
+      const RATE_TOTALS = localStorage.getItem('edge_rate_totals') === 'true';
+      if (!RATE_TOTALS) {
+        try {
+          const url0 = localStorage.getItem('edge_supabase_url'), key0 = localStorage.getItem('edge_supabase_key');
+          const ids = gameList.map(g => g.id).filter(Boolean);
+          for (let i = 0; i < ids.length && url0 && key0; i += 150) {
+            const inList = ids.slice(i, i + 150).map(id => `"${id}"`).join(',');
+            await fetch(`${url0}/rest/v1/shadow_picks?game_id=in.(${inList})&decision=like.TOTAL_*&result=is.null`,
+              { method: 'DELETE', headers: { apikey: key0, Authorization: `Bearer ${key0}`, Prefer: 'return=minimal' } });
+          }
+        } catch (e) { logEdgeError('orch.clearTotals', e); }
+      }
       const totalsByGame = {};
-      priors.forEach(prior => {
+      if (RATE_TOTALS) priors.forEach(prior => {
         const g = prior._raw_game || {};
         const mt = Number(prior.market?.total ?? g.total);
         const model = Number(prior.projection?.total);
@@ -537,7 +552,9 @@ const EDGE_ORCHESTRATOR = (() => {
       if (grade && window.EDGE_SHADOW_GRADER) {
         log('Grading ungraded picks');
         try {
-          const g = await window.EDGE_SHADOW_GRADER.run({ onProgress: log });
+          // Only the sports in this run are graded.
+          const runSports = [...new Set((typeof gameList !== 'undefined' ? gameList : (games || [])).map(g => g._sport || g.sport).filter(Boolean))];
+          const g = await window.EDGE_SHADOW_GRADER.run({ onProgress: log, sports: runSports.length ? runSports : null });
           if (g.ok) {
             log(`  ${g.graded} graded · ${g.unresolved} unresolved · ${g.pending_no_score} awaiting score`);
             summary.graded = g.graded || 0;
@@ -548,7 +565,7 @@ const EDGE_ORCHESTRATOR = (() => {
           if (window.EDGE_SIM_GRADER && localStorage.getItem('edge_sim_auto_grade') !== 'false') {
             summary.bets_graded = 0;
             for (const m of ['sim', 'real']) {
-              const b = await window.EDGE_SIM_GRADER.run({ mode: m, onProgress: log });
+              const b = await window.EDGE_SIM_GRADER.run({ mode: m, onProgress: log, sports: runSports.length ? runSports : null });
               if (b && b.ok) summary.bets_graded += b.graded || 0;
             }
           }
