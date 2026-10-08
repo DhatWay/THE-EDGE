@@ -362,8 +362,12 @@
       <button class="fchip" data-filter="VETOED">Vetoed</button>
       <button class="fchip" data-filter="NFL">NFL</button>
       <button class="fchip" data-filter="NBA">NBA</button>
+      <button class="fchip" data-filter="NCAAF">NCAAF</button>
+      <button class="fchip" data-filter="NCAAB">NCAAB</button>
+      <button class="fchip" data-filter="WNBA">WNBA</button>
       <button class="fchip" data-filter="MLB">MLB</button>
       <button class="fchip" data-filter="NHL">NHL</button>
+      <button class="fchip" data-filter="MLS">MLS</button>
     </div>
 
     <div class="date-row">
@@ -529,7 +533,17 @@
     function picksForMode() {
       if (currentView === 'bets') return allBets;
       if (currentView === 'lines') return allPicks.filter(p => String(p.decision || '').startsWith('LINE_'));
-      const pipeline = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && (modeOk(p) || p.decision === 'MINE'));
+      const pipeline0 = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && (modeOk(p) || p.decision === 'MINE'));
+      // One row per game and kind (side, over/under, your pick): older
+      // runs could leave a second copy of the same game.
+      const seenKey = new Set();
+      const pipeline = pipeline0.slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).filter(p => {
+        const kind = String(p.decision || '').startsWith('TOTAL_') ? 'total' : p.decision === 'MINE' ? 'mine:' + (p.pick_id || p.id) : 'side';
+        const k = `${p.game_id}|${kind}`;
+        if (seenKey.has(k)) return false;
+        seenKey.add(k);
+        return true;
+      });
       if (currentView === 'totals') return pipeline.filter(p => String(p.decision || '').startsWith('TOTAL_'));
       if (currentView === 'slate') return pipeline.filter(p => !String(p.decision || '').startsWith('TOTAL_') && p.decision !== 'MINE');
       // Model Picks: ATS and moneyline only — over/unders have their own
