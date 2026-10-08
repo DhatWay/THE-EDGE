@@ -530,10 +530,14 @@
     //   Full Slate — every game the pipeline rated, passes included
     //   My Lines   — lines entered from other books
     //   My Bets    — what you actually bet (both portfolios)
-    function picksForMode() {
+    function picksForMode() { return rowsForView(modeOk); }
+
+    // This tab's rows, with the given mode test (the summary boxes pass
+    // one that keeps every mode, then split them themselves).
+    function rowsForView(modeTest) {
       if (currentView === 'bets') return allBets;
       if (currentView === 'lines') return allPicks.filter(p => String(p.decision || '').startsWith('LINE_'));
-      const pipeline0 = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && (modeOk(p) || p.decision === 'MINE'));
+      const pipeline0 = allPicks.filter(p => !String(p.decision || '').startsWith('LINE_') && (modeTest(p) || p.decision === 'MINE'));
       // One row per game and kind (side, over/under, your pick): older
       // runs could leave a second copy of the same game.
       const seenKey = new Set();
@@ -631,15 +635,19 @@
         // Run the pick grader with its log kept, so every game still
         // pending says why (not final yet, not found on ESPN, a save
         // refused), then the bet grader for both portfolios.
-        const r = await EDGE_SHADOW_GRADER.run({ onProgress: m => notes.push(m) });
+        // Only the sport selected in the chips (all sports on "All").
+        const SPORTS = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'WNBA', 'MLB', 'NHL', 'MLS'];
+        const sports = SPORTS.includes(currentFilter) ? [currentFilter] : null;
+        notes.push(`Grading ${sports ? sports[0] + ' only' : 'all sports'}`);
+        const r = await EDGE_SHADOW_GRADER.run({ onProgress: m => notes.push(m), sports });
         let bets = 0;
         if (window.EDGE_SIM_GRADER) {
           for (const m of ['sim', 'real']) {
-            try { const b = await EDGE_SIM_GRADER.run({ mode: m, onProgress: x => notes.push(x) }); bets += (b && b.graded) || 0; } catch {}
+            try { const b = await EDGE_SIM_GRADER.run({ mode: m, onProgress: x => notes.push(x), sports }); bets += (b && b.graded) || 0; } catch {}
           }
         }
         localStorage.setItem('edge_last_autograde', String(Date.now()));
-        const why = notes.filter(n => /still ungraded|failed|refused|HTTP|error|missing|unresolved|awaiting/i.test(n)).slice(0, 8);
+        const why = notes.filter(n => /^Grading |still ungraded|failed|refused|HTTP|error|missing|unresolved|awaiting/i.test(n)).slice(0, 9);
         st.innerHTML = `Graded ${r && r.ok ? (r.graded || 0) : 0} picks · ${bets} bets` +
           (r && !r.ok ? ` · grader: ${r.error || 'failed'}` : '') +
           (why.length ? `<div class="grade-why">${why.map(n => n.trim().replace(/[<>&]/g, '')).join('<br>')}</div>` : '');
@@ -719,8 +727,11 @@
         ? (roi > 0 ? '+' : '') + roi.toFixed(1) + '%'
         : '—';
 
-      const mathPicks = allPicks.filter(p => p.decision_mode === 'math_only');
-      const aiPicks   = allPicks.filter(p => p.decision_mode === 'ai_assisted');
+      // Same rows as the record and month breakdown (this tab's picks),
+      // split by mode — not every row ever saved.
+      const viewAll = rowsForView(() => true);
+      const mathPicks = viewAll.filter(p => p.decision_mode === 'math_only');
+      const aiPicks   = viewAll.filter(p => p.decision_mode === 'ai_assisted' || p.decision_mode === 'ai_lead');
 
       const mathW = mathPicks.filter(p => p.result === 'W').length;
       const mathL = mathPicks.filter(p => p.result === 'L').length;
@@ -868,11 +879,8 @@
     }
 
     loadPicks();
-    // Finished picks are graded when the page opens (at most every 30
-    // minutes), then the record refreshes.
-    if (window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.autoGrade) {
-      EDGE_SHADOW_GRADER.autoGrade().then(r => { if (r && r.graded) loadPicks(); }).catch(() => {});
-    }
+    // No grading when the page opens — tap Grade finished games (it grades
+    // the sport selected in the chips).
   </script>
 
   <div class="offline-bar" id="offlineBar">Offline — showing last saved data</div>
