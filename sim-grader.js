@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20261006-01';
+  const BUILD = 'simgrade-20261007-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -106,7 +106,9 @@ const EDGE_SIM_GRADER = (() => {
       mode = 'sim',
       onProgress = null,
       dryRun = false,
+      sports = null,           // e.g. ['NFL'] — only those sports are graded
     } = options;
+    const sportFilter = (Array.isArray(sports) && sports.length) ? `&sport=in.(${sports.join(',')})` : '';
     const log = (m) => { if (typeof onProgress === 'function') onProgress(m); };
 
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
@@ -138,7 +140,7 @@ const EDGE_SIM_GRADER = (() => {
 
     // ── 1. Load pending bets ──
     const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
-    const pending = await loadPending(mode, since, url, key);
+    const pending = await loadPending(mode, since, url, key, sportFilter);
     log(`${pending.length} pending ${mode} bets from the last ${LOOKBACK_DAYS} days`);
 
     if (!pending.length) {
@@ -376,7 +378,7 @@ const EDGE_SIM_GRADER = (() => {
     return out;
   }
 
-  async function loadPending(mode, since, url, key) {
+  async function loadPending(mode, since, url, key, sportFilter = '') {
     const out = [];
     const pageSize = 1000;
 
@@ -384,7 +386,7 @@ const EDGE_SIM_GRADER = (() => {
       try {
         const res = await fetch(
           `${url}/rest/v1/bet_log?mode=eq.${encodeURIComponent(mode)}` +
-          `&status=eq.pending&created_at=gte.${since}` +
+          `&status=eq.pending&created_at=gte.${since}${sportFilter}` +
           `&select=*&order=created_at.desc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
