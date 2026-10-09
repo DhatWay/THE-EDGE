@@ -54,7 +54,7 @@
 
 const EDGE_ROSTER_ENRICH = (() => {
 
-  const BUILD = 'enrich-20261006-01';
+  const BUILD = 'enrich-20261009-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -188,7 +188,7 @@ const EDGE_ROSTER_ENRICH = (() => {
   const CENTER = 62;
   const SPREAD = 11;
   const RATING_MIN = 42;
-  const RATING_MAX = 95;
+  const RATING_MAX = 99;
   const MIN_GAMES = 4;
   const MIN_GROUP_SIZE = 8;
   const WRITE_CONCURRENCY = 8;
@@ -296,6 +296,35 @@ const EDGE_ROSTER_ENRICH = (() => {
     // ── 3. Normalise per position group ──
     const norms = buildNormalisers(metrics, agg, players);
 
+    // ── 3b. Starters by usage (football skill positions) ──
+    // With no depth chart, starters were guessed from experience, which
+    // missed young stars (Jeremiah Smith marked a backup). Now, at each
+    // position on each team, the players with the most per-game volume
+    // start: 1 QB (passing yards), 1 RB (rushing yards), 3 WR and 1 TE
+    // (receptions). Players with no stats keep the roster's guess.
+    const STARTERS_BY_GROUP = { QB: 1, RB: 1, WR: 3, TE: 1 };
+    const VOLUME_COL = { QB: 'passing_yards', RB: 'rushing_yards', WR: 'receptions', TE: 'receptions' };
+    const usageStarter = new Map();          // players.id → true/false
+    if (sport === 'NFL' || sport === 'NCAAF') {
+      const byTeamGroup = {};
+      players.forEach(p => {
+        const col = VOLUME_COL[p.position_group];
+        const st = agg[String(p.player_id)];
+        if (!col || !st || !isFinite(st[col]) || !p.team_name) return;
+        const k = `${p.team_name}|${p.position_group}`;
+        (byTeamGroup[k] = byTeamGroup[k] || []).push({ id: p.id, v: st[col] });
+      });
+      Object.entries(byTeamGroup).forEach(([k, list]) => {
+        const n = STARTERS_BY_GROUP[k.split('|')[1]] || 1;
+        list.sort((a, b) => b.v - a.v).forEach((x, i) => usageStarter.set(x.id, i < n));
+      });
+      log(`  starters set by usage for ${usageStarter.size} skill players`);
+    }
+
+    // Above two standard deviations the scale is compressed, so the very
+    // best players spread out up to 99 instead of all landing on the cap.
+    const scaled = z => z <= 2 ? z : 2 + (z - 2) * 0.5;
+
     // ── 4. Score ──
     const updates = [];
     let matched = 0;
@@ -330,8 +359,9 @@ const EDGE_ROSTER_ENRICH = (() => {
       }
 
       matched++;
-      const starterBonus = p.is_starter ? 1.5 : 0;
-      const rating = clamp(round(CENTER + z * SPREAD + starterBonus, 1),
+      const isStarter = usageStarter.has(p.id) ? usageStarter.get(p.id) : !!p.is_starter;
+      const starterBonus = isStarter ? 1.5 : 0;
+      const rating = clamp(round(CENTER + scaled(z) * SPREAD + starterBonus, 1),
                            RATING_MIN, RATING_MAX);
 
       // Skip writes that would not move the rating. Keeps
@@ -339,6 +369,7 @@ const EDGE_ROSTER_ENRICH = (() => {
       // hundreds of no-op PATCHes per run.
       if (typeof p.rating === 'number'
           && Math.abs(p.rating - rating) < 0.05
+          && isStarter === !!p.is_starter
           && typeof p.offensive_contribution === 'number'
           && typeof p.defensive_contribution === 'number') {
         return;
@@ -346,7 +377,7 @@ const EDGE_ROSTER_ENRICH = (() => {
 
       const { off, def } = contributionFor(p.position_group, rating);
       updates.push({
-        id: p.id, rating,
+        id: p.id, rating, is_starter: isStarter,
         offensive_contribution: off,
         defensive_contribution: def,
       });
@@ -382,6 +413,7 @@ const EDGE_ROSTER_ENRICH = (() => {
           },
           body: JSON.stringify({
             rating: u.rating,
+            is_starter: u.is_starter,
             offensive_contribution: u.offensive_contribution,
             defensive_contribution: u.defensive_contribution,
             updated_at: new Date().toISOString(),
@@ -422,7 +454,7 @@ const EDGE_ROSTER_ENRICH = (() => {
       try {
         const res = await fetch(
           `${url}/rest/v1/players?sport=eq.${sport}` +
-          `&select=id,player_id,name,position,position_group,rating,is_starter,offensive_contribution,defensive_contribution` +
+          `&select=id,player_id,name,team_name,position,position_group,rating,is_starter,offensive_contribution,defensive_contribution` +
           `&order=id.asc&limit=${pageSize}&offset=${offset}`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
