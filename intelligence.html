@@ -1334,7 +1334,11 @@
         <tr>
           <td>${p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</td>
           <td>${esc(p.sport)}</td>
-          <td>${esc(p.decision)}</td>
+          <td>${esc((() => {
+            const tierU = p.decision === 'BET_2U' ? 2 : p.decision === 'BET_1U' ? 1 : null;
+            const u = Math.round((Number(p.units) || 0) * 100) / 100;
+            return tierU && u && u !== tierU ? `BET ${u}U (${tierU}U value)` : p.decision;
+          })())}</td>
           <td>${esc(p.away_team)} @ ${esc(p.home_team)}</td>
           <td>${esc(p.side_team)}</td>
           <td>${n(p.confidence)}%</td>
@@ -1344,7 +1348,13 @@
           <td>${p.pnl != null ? n(p.pnl) + 'u' : '—'}</td>
         </tr>`).join('');
 
-      const atsRows = allAts.slice(0, 100).map(r => `
+      // At least 4 games against the spread this season — a 1-0 team at
+      // 100% (often a small-division school in one game) says nothing.
+      const atsRows = allAts
+        .filter(r => ((r.season_wins || 0) + (r.season_losses || 0)) >= 4)
+        .sort((a, b) => (b.season_cover_pct || 0) - (a.season_cover_pct || 0)
+          || ((b.season_wins || 0) + (b.season_losses || 0)) - ((a.season_wins || 0) + (a.season_losses || 0)))
+        .slice(0, 100).map(r => `
         <tr>
           <td>${esc(r.sport)}</td>
           <td>${esc(r.team_name)}</td>
@@ -1403,7 +1413,7 @@
   <div class="card"><div class="k">ROI</div><div class="v">${n(s.roi)}%</div></div>
 </div>
 
-<h2>Team ATS Form (Top 100)</h2>
+<h2>Team ATS Form (Top 100 · at least 4 games)</h2>
 <table><thead><tr><th>Sport</th><th>Team</th><th>Season</th><th>Cover %</th><th>Last 10</th><th>L10 %</th><th>Trend</th></tr></thead>
 <tbody>${atsRows || '<tr><td colspan="7">No ATS data</td></tr>'}</tbody></table>
 
