@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261007-01';
+  const BUILD = 'gov-20261009-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -351,9 +351,17 @@ const EDGE_GOVERNOR = (() => {
     // The Slate Test passes its own blend (the defaults) so a backtest
     // is never scored with weights learned from the same games.
     const blend = options.blend ? { ...options.blend, source: options.blend.source || 'given' } : blendFor(sport, betType);
-    const strengthCertainty = 1;
+    // Early-season caution — your switch on Today's Picks, off unless you
+    // turn it on. When on, the ranking's pull counts in proportion to how
+    // many games the less-played team has (NFL/NCAAF full at 8, NHL at
+    // 20, …), never below a quarter. Off, it counts in full from game 1.
+    let caution = false;
+    try { caution = localStorage.getItem('edge_early_caution') === 'true'; } catch {}
+    const gh = Number(prior?.home_power?.games_played), ga = Number(prior?.away_power?.games_played);
+    const strengthCertainty = (caution && isFinite(gh) && isFinite(ga))
+      ? clamp(Math.min(gh, ga) / (STRENGTH_FULL_GAMES[sport] || 10), 0.25, 1) : 1;
     const strengthTerm = strengthHomeProb != null
-      ? blend.w_strength * (logit(strengthHomeProb) - logit(marketHomeProb)) : 0;
+      ? blend.w_strength * strengthCertainty * (logit(strengthHomeProb) - logit(marketHomeProb)) : 0;
     const spotTerm = blend.w_spots * spots.logit;
     const posteriorHomeProb = sigmoid(logit(marketHomeProb) + strengthTerm + spotTerm + contextLogit);
 
