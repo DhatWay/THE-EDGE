@@ -411,6 +411,7 @@
       <button class="view-tab" data-view="lines" onclick="setView('lines')">My Lines</button>
     </div>
     <label class="leans-toggle" id="leansToggle"><input type="checkbox" id="showLeans" onchange="toggleLeans(this.checked)" /> Show leans with picks</label>
+    <label class="leans-toggle" id="cautionToggle"><input type="checkbox" id="earlyCaution" onchange="localStorage.setItem('edge_early_caution', this.checked ? 'true' : 'false')" /> Early-season caution — ratings count less until teams have played enough games (applies on the next run)</label>
     <label class="leans-toggle" id="totalsToggle" hidden><input type="checkbox" id="rateTotals" onchange="localStorage.setItem('edge_rate_totals', this.checked ? 'true' : 'false')" /> Rate over/unders when I run the pipeline (off = no over/under picks)</label>
 
     <div class="picks-tools">
@@ -831,6 +832,8 @@
       if (betAll) betAll.hidden = v !== 'picks';
       const lt = document.getElementById('leansToggle');
       if (lt) lt.hidden = v !== 'picks';
+      const ct = document.getElementById('cautionToggle');
+      if (ct) ct.hidden = v !== 'picks';
       const tt = document.getElementById('totalsToggle');
       if (tt) tt.hidden = v !== 'totals';
       renderPicks();
@@ -965,10 +968,15 @@
                         : totalTier ? `TOTAL · ${totalTier === 'PASS' ? 'NO EDGE' : totalTier}`
                         : lineTier ? `LINE · ${lineTier === 'PASS' ? 'NO EDGE' : lineTier.replace('_', ' ')}`
                         : isVetoed ? 'VETOED'
-                        : p.decision === 'BET_2U' ? 'BET 2U'
-                        : p.decision === 'BET_1U' ? 'BET 1U'
-                        : p.decision === 'BET' ? (p.units >= 2 ? 'BET 2U' : 'BET 1U')
-                        : p.decision === 'LEAN' ? 'LEAN'
+                        // The tag shows what's actually bet. The value tier
+                        // (2U, 1U) is the size the edge alone would earn;
+                        // early-season ratings and an untested sport scale
+                        // the stake down, and the tag used to hide that.
+                        : (p.decision === 'BET_2U' || p.decision === 'BET_1U' || p.decision === 'BET')
+                          ? (() => { const tierU = p.decision === 'BET_2U' ? 2 : p.decision === 'BET_1U' ? 1 : (p.units >= 2 ? 2 : 1);
+                                     const u = Math.round((Number(p.units) || 0) * 100) / 100;
+                                     return (u && u !== tierU) ? `BET ${u}U · ${tierU}U VALUE` : `BET ${tierU}U`; })()
+                        : p.decision === 'LEAN' ? (Number(p.units) ? `LEAN ${Math.round(Number(p.units) * 100) / 100}U` : 'LEAN')
                         : p.decision === 'CAPPED' ? 'CAPPED'
                         : 'NO EDGE';
 
@@ -1639,6 +1647,7 @@
     updateModeIndicator();
     { const sl = document.getElementById('showLeans'); if (sl) sl.checked = showLeans; }
     { const rt = document.getElementById('rateTotals'); if (rt) rt.checked = localStorage.getItem('edge_rate_totals') === 'true'; }
+    { const ec = document.getElementById('earlyCaution'); if (ec) ec.checked = localStorage.getItem('edge_early_caution') === 'true'; }
     loadPicks();
     // No grading when the page opens: grading runs from Pick History's
     // button (for the sport you select) and with each pipeline run (for
