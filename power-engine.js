@@ -58,13 +58,16 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261007-01';
+  const BUILD = 'pe-20261010-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
   // no injury history to fit it from — sized to how far lines usually
   // move. Its main job is to stop a false edge: without it the model
   // rates a team with its healthy QB after the line has moved.
+  // Games of home (or road) results a team's own split needs before it
+  // counts as much as the league's — used by matchupHomeAdvantage.
+  const SPLIT_SHRINK = { NFL: 8, NCAAF: 6, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 };
   const QB_OUT_POINTS = { NFL: 4.5, NCAAF: 3.5 };
   // Most a quarterback change can move a spread.
   const QB_CAP = { NFL: 10, NCAAF: 12 };
@@ -194,6 +197,9 @@ const EDGE_POWER = (() => {
   const ALL_STAR_NAMES = /\b(AFC|NFC|American League|National League|East All-?Stars?|West All-?Stars?|Pro Bowl|All[- ]?Stars?)\b/i;
 
   return {
+    computeHomeRoadEdges,
+    matchupHomeAdvantage,
+    SPLIT_SHRINK,
     computeGamePrior,
     computeAllTeamRatings,
     computeTeamRating,
@@ -417,6 +423,21 @@ const EDGE_POWER = (() => {
           const coach = buildCoaching(sport, teamName, state);
           if (coach) results.coaching[`${sport}:${teamName}`] = coach;
         }
+
+        // Home and road edges for every rated team, from this season's
+        // games against the teams' composite ratings — saved with the
+        // ratings (raw_stats) so each matchup's home advantage is worked
+        // out from the two teams' own results.
+        try {
+          const cpBy = {};
+          Object.entries(blended || {}).forEach(([t, b]) => { if (b && isFinite(b.composite_points)) cpBy[t] = b.composite_points; });
+          const splits = computeHomeRoadEdges(chronological, cpBy);
+          Object.entries(splits.teams).forEach(([t, sp]) => {
+            const row = results.teams[`${sport}:${t}`];
+            if (row) row.raw_stats = { ...(row.raw_stats || {}), ...sp };
+          });
+          emit(`${sport}: home/road splits for ${Object.keys(splits.teams).length} teams · league home edge ${splits.league_hfa} pts over ${splits.games} games`);
+        } catch (e) { emit(`${sport}: home/road splits skipped — ${e.message}`); }
 
         // Set _coach_adj on every team now that coaching is
         // built. computeGamePrior reads it to shift the model
@@ -1003,6 +1024,55 @@ const EDGE_POWER = (() => {
     };
   }
 
+  // ── HOME / ROAD SPLITS ──
+  // Each team's home edge and road edge, in points, from its own games:
+  // for every game, how much better the home side did than the two
+  // teams' overall ratings said (margin − (home rating − away rating)).
+  // A team's home edge is the average of that over its home games; its
+  // road edge is the average of the opposite over its road games. The
+  // league average is the league's home advantage. Neutral-site games
+  // are left out.
+  function computeHomeRoadEdges(games, ratingByTeam) {
+    const H = {}, A = {};
+    let sum = 0, n = 0;
+    (games || []).forEach(g => {
+      if (g.neutral) return;
+      const rh = ratingByTeam[g.home], ra = ratingByTeam[g.away];
+      const hs = Number(g.homeScore ?? g.home_score), as = Number(g.awayScore ?? g.away_score);
+      if (!isFinite(rh) || !isFinite(ra) || !isFinite(hs) || !isFinite(as)) return;
+      const r = (hs - as) - (rh - ra);
+      (H[g.home] = H[g.home] || { s: 0, n: 0 }); H[g.home].s += r; H[g.home].n++;
+      (A[g.away] = A[g.away] || { s: 0, n: 0 }); A[g.away].s -= r; A[g.away].n++;
+      sum += r; n++;
+    });
+    const league = n ? sum / n : 0;
+    const out = {};
+    new Set([...Object.keys(H), ...Object.keys(A)]).forEach(t => {
+      out[t] = {
+        home_edge: H[t] ? round(H[t].s / H[t].n, 3) : null, home_n: H[t] ? H[t].n : 0,
+        road_edge: A[t] ? round(A[t].s / A[t].n, 3) : null, road_n: A[t] ? A[t].n : 0,
+        league_hfa: round(league, 3),
+      };
+    });
+    return { teams: out, league_hfa: round(league, 3), games: n };
+  }
+
+  // The home advantage for one matchup, in points (home view): the home
+  // team's home edge and the away team's road edge, each blended with
+  // the league's by how many such games it rests on, then averaged —
+  // a strong home team against a strong road team largely cancels.
+  function matchupHomeAdvantage(sport, homeStats, awayStats) {
+    const hs = homeStats?.raw_stats || homeStats || {}, as = awayStats?.raw_stats || awayStats || {};
+    const lg = isFinite(hs.league_hfa) ? hs.league_hfa : isFinite(as.league_hfa) ? as.league_hfa : null;
+    if (lg == null) return null;
+    const k = SPLIT_SHRINK[sport] ?? 10;
+    const he = isFinite(hs.home_edge) ? hs.home_edge : lg, hn = hs.home_n || 0;
+    const re = isFinite(as.road_edge) ? as.road_edge : -lg, rn = as.road_n || 0;
+    const homeEdge = (hn * he + k * lg) / (hn + k);
+    const roadEdge = (rn * re + k * -lg) / (rn + k);
+    return round((homeEdge - roadEdge) / 2, 2);
+  }
+
   async function computeGamePrior(game, options = {}) {
     const { homeStats, awayStats, market, adjustments = {}, rest = {}, external = null } = options;
     if (!homeStats || !awayStats) throw new Error('computeGamePrior requires homeStats and awayStats');
@@ -1026,12 +1096,15 @@ const EDGE_POWER = (() => {
       : null;
 
     const calib = getCalibration(sport);
+    // Home advantage from the two teams' home and road results; the
+    // flat league number only when there are no splits yet.
+    const splitHfa = game.neutral === true ? 0 : matchupHomeAdvantage(sport, homeStats, awayStats);
 
     if (core && homeAD && awayAD && options.league) {
       projection = core.projectScore(sport, homeAD, awayAD, options.league, {
         neutral: game.neutral === true,
         interactions: options.interactions || null,
-        homeAdvantage: calib?.home_advantage ?? null,
+        homeAdvantage: splitHfa ?? calib?.home_advantage ?? null,
       });
       if (projection) modelSpread = projection.model_spread;
     }
@@ -1040,7 +1113,7 @@ const EDGE_POWER = (() => {
     const homePts = homeStats.composite_points;
     const awayPts = awayStats.composite_points;
     const compositeSpread = (homePts != null && awayPts != null)
-      ? round(-((homePts - awayPts) + (core?.HOME_POINTS?.[sport] ?? 2)), 2)
+      ? round(-((homePts - awayPts) + (game.neutral === true ? 0 : (splitHfa ?? core?.HOME_POINTS?.[sport] ?? 2))), 2)
       : null;
     const projectionSpread = rawProjectionSpread;
 
@@ -1211,6 +1284,7 @@ const EDGE_POWER = (() => {
       fit: modelSource === 'fitted' ? { n: fit.n, rmse: fit.rmse, window: fit.window || null } : null,
       qb: { home_out: !!adjustments.qb_home_out, away_out: !!adjustments.qb_away_out, points: qbDelta, source: qbSource,
             home: qbr?.home || null, away: qbr?.away || null },
+      home_split: splitHfa != null ? { matchup_hfa: splitHfa, home_edge: (homeStats.raw_stats || {}).home_edge ?? null, home_n: (homeStats.raw_stats || {}).home_n ?? 0, road_edge: (awayStats.raw_stats || {}).road_edge ?? null, road_n: (awayStats.raw_stats || {}).road_n ?? 0, league_hfa: (homeStats.raw_stats || {}).league_hfa ?? null } : null,
       rest_in_fit: restInFit,
       external_effect: Object.keys(extEffect).length ? extEffect : null,
       external: extInfo,
