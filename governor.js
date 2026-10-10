@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261009-01';
+  const BUILD = 'gov-20261010-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -231,6 +231,12 @@ const EDGE_GOVERNOR = (() => {
 
   // Blend weights for a sport (and bet type), from the Slate Test.
   function blendFor(sport, betType) {
+    // Learned strength weights apply only when switched on (Today's
+    // Picks); otherwise every sport uses the same default, so no sport
+    // plays by different rules because one test happened to be run.
+    let useLearned = false;
+    try { useLearned = localStorage.getItem('edge_use_learned') === 'true'; } catch {}
+    if (!useLearned) return { ...DEFAULT_BLEND, source: 'default' };
     try {
       const t = readCalibrationTable();
       const key = betType === 'ML' ? `${sport}_ML` : sport;
