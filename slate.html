@@ -2054,7 +2054,13 @@ function fitAndSaveBlend(sport, rows) {
 // (model - market), scaled by how settled the ratings were, fit on the
 // first 70% of games and kept only if it misses less on the last 30%.
 function fitAndSaveTotalWeight(sport, rows) {
-  if (rows.length < 150) return { saved: false, reason: `needs 150 games with a total, has ${rows.length}`, games: rows.length, rows };
+  // The misses are reported even when there are too few games to fit a
+  // weight (a short window used to leave them out, and the report then
+  // stopped with "Cannot read properties of undefined (reading 'toFixed')").
+  const missModel = rows.length ? rows.reduce((s, r) => s + Math.abs(r.tot_actual - r.tot_model), 0) / rows.length : null;
+  const missMarket = rows.length ? rows.reduce((s, r) => s + Math.abs(r.tot_actual - r.tot_market), 0) / rows.length : null;
+  if (rows.length < 150) return { saved: false, reason: `needs 150 games with a total, has ${rows.length}`, games: rows.length, rows,
+                                  model_mae: missModel, market_mae: missMarket };
   const cut = Math.floor(rows.length * 0.7);
   const fitW = set => {
     let sxy = 0, sxx = 0;
@@ -2087,8 +2093,8 @@ function renderTotals() {
   const stake = stakeAmount(), pnl = w * stake * (100 / 110) - l * stake;
   let html = `<div class="section"><div class="sec-title">TOTALS <em>· OVER / UNDER</em></div>`;
   html += `<div class="row head"><span>Measure</span><span>N</span><span>Value</span><span></span><span></span></div>`;
-  html += `<div class="row"><span class="name">Projected total misses by</span><span class="num neu">${rows.length}</span><span class="num neu">${r.model_mae.toFixed(2)}</span><span></span><span></span></div>`;
-  html += `<div class="row"><span class="name">Market total misses by</span><span class="num neu">${rows.length}</span><span class="num neu">${r.market_mae.toFixed(2)}</span><span></span><span></span></div>`;
+  html += `<div class="row"><span class="name">Projected total misses by</span><span class="num neu">${rows.length}</span><span class="num neu">${r.model_mae != null ? r.model_mae.toFixed(2) : '—'}</span><span></span><span></span></div>`;
+  html += `<div class="row"><span class="name">Market total misses by</span><span class="num neu">${rows.length}</span><span class="num neu">${r.market_mae != null ? r.market_mae.toFixed(2) : '—'}</span><span></span><span></span></div>`;
   html += `<div class="row"><span class="name">Totals picks (default weight)</span><span class="num neu">${picks.length}</span>`
         + `<span class="num ${w > l ? 'pos' : 'neg'}">${w}-${l}-${p}</span><span class="num ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '$' : '-$'}${Math.abs(pnl).toFixed(0)}</span><span></span></div>`;
   html += `<div class="note">Weight on the model's total: ${r.w ?? '—'} (default 0.3) · held-out miss ${r.test_fit != null ? r.test_fit.toFixed(2) : '—'} learned vs ${r.test_default != null ? r.test_default.toFixed(2) : '—'} default vs ${r.test_market != null ? r.test_market.toFixed(2) : '—'} market alone. `
