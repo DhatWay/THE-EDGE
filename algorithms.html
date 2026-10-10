@@ -384,19 +384,17 @@
     }
     const lg = p => Math.log(p / (1 - p)), sg = x => 1 / (1 + Math.exp(-x));
     // Same rule the governor uses for a spot's pull.
+    // Same rule as live picks: the record pulled toward a starting
+    // belief (3 points over the market) by 60 games, counted from game 1.
     function spotPull(r, group) {
-      if (['rest', 'travel', 'injury', 'weather'].includes(group)) return { text: 'in rest/injury step', proven: false };
       const n = (r.wins || 0) + (r.losses || 0);
       const base = n && r.mkt_sum ? r.mkt_sum / n : 0.5;
-      const prior = sg(lg(base) + lg(0.51));
-      const [lo, hi] = wilson(r.wins || 0, n);
-      const proven = n >= 30 && (lo > base || hi < base);
-      const rate = proven ? ((r.wins || 0) + prior * 60) / (n + 60) : prior;
-      let edge = Math.max(-0.15, Math.min(0.15, lg(rate) - lg(base)));
-      if (group === 'power_line') edge *= 0.5;
-      const pts = edge * 25;
-      return { text: `${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts${proven ? ' · proven' : ' · not proven'}`, proven };
+      const priorRate = base + 0.03;
+      const rate = ((r.wins || 0) + priorRate * 60) / (n + 60);
+      const pts = (rate - base) * 100;
+      return { text: `${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts`, proven: n >= 60 };
     }
+
 
     function card(title, inner) { return `<div class="card"><h3>${title}</h3>${inner}</div>`; }
     function kv(k, v) { return `<div class="kv"><span>${esc(k)}</span><span>${v}</span></div>`; }
