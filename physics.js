@@ -47,7 +47,7 @@
 
 const EDGE_PHYSICS = (() => {
 
-  const BUILD = 'phys-20261002-01';
+  const BUILD = 'phys-20261010-01';
 
   // Fractional Kelly per sport. Kelly is aggressive; taking a
   // fraction of it is standard practice. These are the default
@@ -286,6 +286,10 @@ const EDGE_PHYSICS = (() => {
         tier_cap: tierCap,
         bankroll_cap: round(bankrollCap, 2),
         governor_ceiling: governorCeiling,
+        // What scaled the stake, so each pick can say it plainly.
+        rating_certainty: round(certainty, 2),
+        sport_proof: proof.factor,
+        sport_proof_label: proof.label,
       },
       capCheck,
     });
@@ -429,6 +433,7 @@ const EDGE_PHYSICS = (() => {
           fit: prior?.fit ?? null,
           qb: prior?.qb ?? null,
           external_effect: prior?.external_effect ?? null,
+          home_split: prior?.home_split ?? null,
           rest_in_fit: !!prior?.rest_in_fit,
           external: prior?.external ?? null,
           rest_days: prior?.rest_days ?? null,
