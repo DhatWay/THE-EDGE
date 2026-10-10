@@ -411,6 +411,7 @@
       <button class="view-tab" data-view="lines" onclick="setView('lines')">My Lines</button>
     </div>
     <label class="leans-toggle" id="leansToggle"><input type="checkbox" id="showLeans" onchange="toggleLeans(this.checked)" /> Show leans with picks</label>
+    <label class="leans-toggle" id="learnedToggle"><input type="checkbox" id="useLearned" onchange="localStorage.setItem('edge_use_learned', this.checked ? 'true' : 'false')" /> Use strength weights learned by Slate Tests (off = every sport uses the same 0.6; applies on the next run)</label>
     <label class="leans-toggle" id="cautionToggle"><input type="checkbox" id="earlyCaution" onchange="localStorage.setItem('edge_early_caution', this.checked ? 'true' : 'false')" /> Early-season caution — ratings count less until teams have played enough games (applies on the next run)</label>
     <label class="leans-toggle" id="totalsToggle" hidden><input type="checkbox" id="rateTotals" onchange="localStorage.setItem('edge_rate_totals', this.checked ? 'true' : 'false')" /> Rate over/unders when I run the pipeline (off = no over/under picks)</label>
 
@@ -834,6 +835,8 @@
       if (lt) lt.hidden = v !== 'picks';
       const ct = document.getElementById('cautionToggle');
       if (ct) ct.hidden = v !== 'picks';
+      const lt2 = document.getElementById('learnedToggle');
+      if (lt2) lt2.hidden = v !== 'picks';
       const tt = document.getElementById('totalsToggle');
       if (tt) tt.hidden = v !== 'totals';
       renderPicks();
@@ -1151,7 +1154,14 @@
       const home = p.home_team || 'Home';
       const rows = [
         ['Value tier', `${({ BET_2U: '2-unit value', BET_1U: '1-unit value', LEAN: 'lean' })[p.decision] || p.decision || '—'} · ${p.side_team || p.direction || '—'}`],
-        ['Bet size', `${p.units || 0}u (sized by edge, how settled the ratings are, and how proven the sport is)`],
+        ['Bet size', (() => {
+          // Every factor that set the stake, in plain terms.
+          const sz = (p.governor_snapshot || {}).sizing_details || (p.governor_snapshot || {}).sizing || {};
+          const parts = [];
+          if (isFinite(sz.sport_proof) && sz.sport_proof < 1) parts.push(`× ${Math.round(sz.sport_proof * 100)}% — ${p.sport} ${sz.sport_proof_label === 'behind' ? 'tested behind the market' : sz.sport_proof_label === 'close' ? 'tested about even with the market' : 'not tested yet'} (Settings › Size bets by backtest proof)`);
+          if (isFinite(sz.rating_certainty) && sz.rating_certainty < 1) parts.push(`× ${Math.round(sz.rating_certainty * 100)}% — early-season ratings`);
+          return `${p.units || 0}u${parts.length ? ' · ' + parts.join(' · ') : ' (full size for its edge)'}`;
+        })()],
         ['Market spread (home)', fmtSp(p.market_spread ?? r.market_spread)],
         ['Ranking spread (home)', fmtSp(r.model_spread)],
         ['Offense/defense projection', fmtSp(r.projection_spread)],
@@ -1190,6 +1200,13 @@
       }
       // Quarterbacks: who's expected to start against the one the team's
       // ratings were built on, and what the gap is worth.
+      // Home field for this matchup, from the two teams' own results.
+      if (r.home_split && isFinite(r.home_split.matchup_hfa)) {
+        const hs = r.home_split, f1 = v => (v > 0 ? '+' : '') + Number(v).toFixed(1);
+        rows.push(['Home field (this matchup)', `${f1(hs.matchup_hfa)} pts to ${p.home_team || 'home'} · ` +
+          `${p.home_team || 'home'} at home ${hs.home_edge != null ? f1(hs.home_edge) : '—'} (${hs.home_n || 0} games) · ` +
+          `${p.away_team || 'away'} on the road ${hs.road_edge != null ? f1(hs.road_edge) : '—'} (${hs.road_n || 0} games) · league ${hs.league_hfa != null ? f1(hs.league_hfa) : '—'}`]);
+      }
       if (r.qb && (r.qb.home || r.qb.away)) {
         const side = (v, team) => v ? `${team}: ${v.expected}${v.expected !== v.usual ? ` for ${v.usual} (${v.delta > 0 ? '+' : ''}${v.delta} pts)` : ' (usual starter)'}` : null;
         rows.push(['Quarterbacks', [side(r.qb.home, p.home_team || 'home'), side(r.qb.away, p.away_team || 'away')].filter(Boolean).join(' · ')]);
@@ -1648,6 +1665,7 @@
     { const sl = document.getElementById('showLeans'); if (sl) sl.checked = showLeans; }
     { const rt = document.getElementById('rateTotals'); if (rt) rt.checked = localStorage.getItem('edge_rate_totals') === 'true'; }
     { const ec = document.getElementById('earlyCaution'); if (ec) ec.checked = localStorage.getItem('edge_early_caution') === 'true'; }
+    { const ul = document.getElementById('useLearned'); if (ul) ul.checked = localStorage.getItem('edge_use_learned') === 'true'; }
     loadPicks();
     // No grading when the page opens: grading runs from Pick History's
     // button (for the sport you select) and with each pipeline run (for
