@@ -707,10 +707,10 @@ async function run() {
     // Calibration measures the chances the live setup gives — learned
     // strength weight and spot records — so it is only saved from a run
     // scored with them. A run on defaults would calibrate a different model.
-    const calibrateOk = !!(learnedForRun && learnedForRun.blend);
-    if (!calibrateOk && evalRows.length) {
-      log('  calibration not saved — tick "Use what earlier tests learned" (after testing an earlier season) so it measures the live setup');
-    }
+    // Calibration is saved from every run: the test now decides picks
+    // with the same rules live picks use, so what it measures is what
+    // live picks say.
+    const calibrateOk = true;
     if (calibrateOk && evalRows.some(r => r.bet_type !== 'ML')) {
       const saved = await writeBacktestCalibration(sport, fromDate, toDate, evalRows.filter(r => r.bet_type !== 'ML'));
       log(saved.ok
@@ -1083,6 +1083,18 @@ function buildPowerFromHistory(sport, history, coaching, seed, minHistory = MIN_
       _coach: coach,
     };
   });
+
+  // Home and road edges from these games (all before the step), the
+  // same way the live ratings save them.
+  if (P && P.computeHomeRoadEdges) {
+    const cpBy = {};
+    Object.values(teams).forEach(t => { if (isFinite(t.composite_points)) cpBy[t.team_name] = t.composite_points; });
+    const splits = P.computeHomeRoadEdges(games, cpBy);
+    Object.entries(splits.teams).forEach(([t, sp]) => {
+      const row = teams[`${sport}:${t}`];
+      if (row) row.raw_stats = { ...(row.raw_stats || {}), ...sp };
+    });
+  }
 
   // League baseline as the orchestrator builds it live: the mean
   // attack rate of the rated teams.
@@ -2204,26 +2216,26 @@ function renderSpotsAndBlend() {
       Object.entries(rec).sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses)).forEach(([id, v]) => {
         const n = v.wins + v.losses, rate = n ? v.wins / n : 0;
         const base = (n && v.mkt_sum) ? v.mkt_sum / n : 0.5;          // the market's chance for that side
-        // Same rule as live picks: a spot counts beyond its small starting
-        // belief only when its record clears luck (30+ games, and a 95%
-        // range that excludes the market's own chance for that side).
+        // Same rule as live picks: the spot's record, pulled toward its
+        // starting belief by 60 games — every spot counts from the first
+        // game, more as its record grows. No proof threshold, no per-spot
+        // limit; all spots together are capped in the governor.
         const priorRate = base + (prior - 0.5);
-        const proven = n >= 30 && (wilsonLow(v.wins, n, 2.576) > base || wilsonHigh(v.wins, n, 2.576) < base);
-        const shrunk = proven ? (v.wins + priorRate * k) / (n + k) : priorRate;
-        // Same per-spot limit as live picks (about 3.7 points).
-        const pts = Math.max(-3.7, Math.min(3.7, (shrunk - base) * 100));
-        const ctx = ['rest', 'travel', 'injury', 'weather'].includes(v.group);
+        const shrunk = (v.wins + priorRate * k) / (n + k);
+        const pts = (shrunk - base) * 100;
+        const proven = false;
+        const ctx = false;
         html += `<div class="row"><span class="name">${v.label || id}</span><span class="num neu">${n}</span>`
               + `<span class="num neu">${v.wins}-${v.losses}</span>`
               + `<span class="num ${rate >= 0.55 ? 'pos' : rate < 0.5 ? 'neg' : 'neu'}">${(rate * 100).toFixed(1)}%</span>`
               + `<span class="num ${ctx ? 'neu' : pts >= 0 ? 'pos' : 'neg'}">${ctx ? 'in rest/injury step'
-                  : (pts >= 0 ? '+' : '') + pts.toFixed(1) + ' pts' + (proven ? ' · proven' : ' · not proven')}</span></div>`;
+                  : (pts >= 0 ? '+' : '') + pts.toFixed(1) + ' pts'}</span></div>`;
       });
     });
     html += `<div class="note">Each spot's record from the side it pointed to, every game counted once, using only games before each step. `
-          + `"Counts as" is its pull on the chance in live picks (at most about 3.7 points each). Until its record clears luck at 99% it counts only its small starting belief `
-          + `(${((prior - 0.5) * 100).toFixed(0)} point over what the market gave that side); once proven, its record takes over — and a proven losing record counts against its side. `
-          + `Related spots count once, and rest, travel and injury spots are left to the rest/injury step.</div></div>`;
+          + `"Counts as" is its pull on the chance in live picks: its record, pulled toward a starting belief of `
+          + `${((prior - 0.5) * 100).toFixed(0)} points over what the market gave that side by ${k} games, so it counts from the first game and more as its record grows. `
+          + `All the spots in a game together move the chance at most about 9 points. This is the rule live picks use.</div></div>`;
   }
   return html;
 }
