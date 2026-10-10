@@ -461,8 +461,11 @@ const EDGE_ALGOS = (() => {
       subs.push({ vote: 'neu', confidence: 0.5, edge: 0, signal: 0, reason: 'No rest data' });
     }
 
-    // Travel distance
-    if (travel !== null) {
+    // Travel distance and time zones — shown, no longer counted. They
+    // only ever pointed at the home team, and the line already carries
+    // home field; each team's own home and road results (the ranking's
+    // home/road splits) now measure what travel costs.
+    if (false && travel !== null) {
       const penalty = travel > 2500 ? -1 : travel > 1500 ? -0.6 : travel > 800 ? -0.3 : 0;
       subs.push({
         vote: penalty < -0.2 ? 'yes' : 'neu',
@@ -476,7 +479,7 @@ const EDGE_ALGOS = (() => {
     }
 
     // Timezone shift
-    if (tz !== null && Math.abs(tz) >= 2) {
+    if (false && tz !== null && Math.abs(tz) >= 2) {
       subs.push({
         vote: 'yes',
         confidence: Math.min(0.55 + Math.abs(tz) * 0.07, 0.80),
