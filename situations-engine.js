@@ -31,7 +31,7 @@
 
 const EDGE_SITUATIONS = (() => {
 
-  const BUILD = 'se-20261003-01';
+  const BUILD = 'se-20261010-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -58,6 +58,7 @@ const EDGE_SITUATIONS = (() => {
     power_gap_high:                   { group: 'power_line', sports: FOOTBALL },
     top_off_vs_bottom_def_small_line: { group: 'power_line', sports: FOOTBALL },
     elite_defense_home_dog:           { group: 'power_line', sports: FOOTBALL },
+    elite_defense_road_dog:           { group: 'power_line', sports: FOOTBALL },
     public_road_fav:                  { group: 'power_line', sports: FOOTBALL },
     divisional_home_dog_6plus:        { group: 'divisional', sports: FOOTBALL },
     hot_ats_team:                     { group: 'ats_form',   sports: POINT_SPREAD },
@@ -71,6 +72,7 @@ const EDGE_SITUATIONS = (() => {
     home_off_bye:                     { group: 'rest',       sports: FOOTBALL },
     away_off_bye:                     { group: 'rest',       sports: FOOTBALL },
     away_short_week:                  { group: 'rest',       sports: FOOTBALL },
+    home_short_week:                  { group: 'rest',       sports: FOOTBALL },
     rest_disparity_4plus:             { group: 'rest',       sports: FOOTBALL },
     cross_country_travel:             { group: 'travel' },
     timezone_shift_3plus:             { group: 'travel' },
@@ -210,6 +212,19 @@ const EDGE_SITUATIONS = (() => {
         return g.spread > 0 && g.spread <= 10;
       },
     },
+    {
+      // The same spot from the road — every home-only rule has its match,
+      // so the rules don't lean toward home teams by how many there are.
+      id: 'elite_defense_road_dog',
+      label: 'Top-10 defense as a road dog — low-scoring spot',
+      side: 'away',
+      requires: ['power', 'line'],
+      test: (g, c) => {
+        if (g.spread == null) return false;
+        if (!c.isTop(c.sport, 'defense', c.awayName, 10)) return false;
+        return g.spread < 0 && g.spread >= -10;
+      },
+    },
 
     // ── ATS FORM ──
 
@@ -335,6 +350,13 @@ const EDGE_SITUATIONS = (() => {
       test: (g, c) => c.awayRestDays != null && c.awayRestDays <= 4,
     },
     {
+      id: 'home_short_week',
+      label: 'Home team on short rest (Thursday)',
+      side: 'away',
+      requires: ['rest'],
+      test: (g, c) => c.homeRestDays != null && c.homeRestDays <= 4,
+    },
+    {
       id: 'rest_disparity_4plus',
       label: 'Rest advantage of 4+ days',
       side: 'rested',
@@ -355,14 +377,16 @@ const EDGE_SITUATIONS = (() => {
       label: 'Away team cross-country (>2500 miles)',
       side: 'home',
       requires: ['travel'],
-      test: (g, c) => c.travelMiles != null && c.travelMiles > 2500,
+      // Off: travel only ever pointed at home teams; the home/road splits
+      // measure it from each team's own results now.
+      test: () => false,
     },
     {
       id: 'timezone_shift_3plus',
       label: 'Away team 3+ timezone shift',
       side: 'home',
       requires: ['travel'],
-      test: (g, c) => c.timezoneShift != null && Math.abs(c.timezoneShift) >= 3,
+      test: () => false,
     },
 
     // ── MARKET ──
