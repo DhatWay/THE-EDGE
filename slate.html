@@ -658,7 +658,19 @@ async function run() {
         const cover = margin + g.spread;
         const covered = Math.abs(cover) < 0.01 ? 'push' : cover > 0 ? 'home' : 'away';
         const ev = evalById.get(g.game_id) || null;
+        // Over/under and moneyline results, where the game has them.
+        const combined = g.home_score + g.away_score;
+        const tot = Number(g.total);
+        const ou = isFinite(tot) && g.total != null
+          ? (Math.abs(combined - tot) < 0.01 ? 'push' : combined > tot ? 'over' : 'under') : null;
+        const mlWinner = margin > 0 ? 'home' : margin < 0 ? 'away' : null;
+        const hm = Number(g.home_ml), am = Number(g.away_ml);
+        const hasMl = g.home_ml != null && g.away_ml != null && isFinite(hm) && isFinite(am);
+        const mlFav = hasMl ? (hm < am ? 'home' : am < hm ? 'away' : null) : null;
         return {
+          total: isFinite(tot) && g.total != null ? tot : null, combined, ou,
+          ml_winner: mlWinner, ml_price: hasMl && mlWinner ? (mlWinner === 'home' ? hm : am) : null,
+          ml_fav: mlFav,
           home: g.home, away: g.away, spread: g.spread,
           score: `${g.away_score}-${g.home_score}`,
           margin, cover: Math.round(cover * 10) / 10, covered,
@@ -2400,9 +2412,9 @@ function renderAccuracyAndCalibration() {
 
 function renderWeeklyBoard() {
   if (!weeklyBoard.length) return '';
-  let html = `<div class="section"><div class="sec-title">WEEKLY <em>ATS BOARD</em></div>`;
-  html += `<div class="note">Every game with a closing line and final score, week by week — which side covered, `
-        + `how close to the number it landed, and what the model said.</div>`;
+  let html = `<div class="section"><div class="sec-title">WEEKLY <em>RESULTS BOARD</em></div>`;
+  html += `<div class="note">Every game with a closing line and final score, week by week — which side covered and by how much, `
+        + `whether the total went over or under, who won outright and at what price, and what the model said.</div>`;
   weeklyBoard.forEach(week => {
     const g = week.games;
     if (!g.length) return;
@@ -2422,10 +2434,13 @@ function renderWeeklyBoard() {
     const modelPnl = judged.reduce((s, x) => s + (x.model_side === x.covered ? win : -stake), 0);
     const pickPnl = picks.reduce((s, x) => s + (x.pick.result === 'W' ? win : x.pick.result === 'L' ? -stake : 0), 0);
     const m$ = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(0);
+    const overs = g.filter(x => x.ou === 'over').length, unders = g.filter(x => x.ou === 'under').length;
+    const mlFavWins = g.filter(x => x.ml_fav && x.ml_winner === x.ml_fav).length;
+    const mlDogWins = g.filter(x => x.ml_fav && x.ml_winner && x.ml_winner !== x.ml_fav).length;
     html += `<details class="week"><summary><b>${week.label}</b> · ${g.length} games · ${decided} decided (${decided * 2} sides) · `
           + `${pushes} push${pushes === 1 ? '' : 'es'} · home ${home} / away ${away} · fav ${fav} / dog ${dog} · `
           + `${tight} within 3 · model side ${modelRight}/${judged.length} (${m$(modelPnl)}) · picks ${pw}-${pl}-${pp} (${m$(pickPnl)}) · `
-          + `most possible ${m$(decided * win)}</summary>`;
+          + `most possible ${m$(decided * win)} · over ${overs} / under ${unders} · moneyline fav ${mlFavWins} / dog ${mlDogWins}</summary>`;
     g.forEach(x => {
       const sp = (x.spread > 0 ? '+' : '') + x.spread;
       const cov = x.covered === 'push' ? 'PUSH' : `${x.covered === 'home' ? x.home : x.away} covered by ${Math.abs(x.cover)}`;
@@ -2434,7 +2449,11 @@ function renderWeeklyBoard() {
           + (x.covered === 'push' ? '' : (x.model_side === x.covered ? ' ✓' : ' ✗'))
         : 'model —';
       const pk = x.pick ? ` · PICK ${x.pick.result}` : '';
-      html += `<div class="wk-row">${x.away} @ ${x.home} ${x.score} · home ${sp} · ${cov} · ${model}${pk}</div>`;
+      const ouTxt = x.ou ? ` · total ${x.total}: ${x.ou === 'push' ? 'PUSH' : x.ou.toUpperCase()} (${x.combined})` : '';
+      const mlTxt = x.ml_winner
+        ? ` · moneyline: ${x.ml_winner === 'home' ? x.home : x.away} won${x.ml_price != null ? ' (' + (x.ml_price > 0 ? '+' : '') + x.ml_price + ')' : ''}`
+        : (x.margin === 0 ? ' · moneyline: tie' : '');
+      html += `<div class="wk-row">${x.away} @ ${x.home} ${x.score} · home ${sp} · ${cov} · ${model}${pk}${ouTxt}${mlTxt}</div>`;
     });
     html += `</details>`;
   });
