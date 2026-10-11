@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261011-01';
+  const BUILD = 'orch-20261011-02';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -1256,6 +1256,46 @@ const EDGE_ORCHESTRATOR = (() => {
           }
         });
       } catch (e) { logEdgeError('orch.persistCheck', e); }
+    }
+
+    // The same game can arrive under a different game id. Saved rows are
+    // also matched by sport, teams and date; a match counts as the game's
+    // row (and takes the current id when it's updated), and any further
+    // copies are deleted.
+    const matchKey = (sport, home, away, when) => {
+      const n = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const d = when ? new Date(when).toISOString().slice(0, 10) : '';
+      return `${sport}|${n(home)}|${n(away)}|${d}`;
+    };
+    const runPriors = priors.filter(p => allIds.includes(p.game_id) && p.commence_time);
+    if (runPriors.length) {
+      const times = runPriors.map(p => new Date(p.commence_time).getTime());
+      const from = new Date(Math.min(...times) - 2 * 86400000).toISOString();
+      const to = new Date(Math.max(...times) + 2 * 86400000).toISOString();
+      const sports = [...new Set(runPriors.map(p => p.sport).filter(Boolean))];
+      try {
+        const res = await fetch(`${url}/rest/v1/shadow_picks?select=id,game_id,decision,created_at,sport,home_team,away_team,commence_time` +
+          `&sport=in.(${sports.join(',')})&commence_time=gte.${from}&commence_time=lte.${to}&order=created_at.desc&limit=5000`, { headers });
+        if (res.ok) {
+          const byKey = new Map();
+          (await res.json()).forEach(r => {
+            if (/^(LINE|TOTAL)_/.test(String(r.decision || '')) || r.decision === 'MINE') return;
+            const k = matchKey(r.sport, r.home_team, r.away_team, r.commence_time);
+            (byKey.get(k) || byKey.set(k, []).get(k)).push(r);
+          });
+          runPriors.forEach(p => {
+            const rows = byKey.get(matchKey(p.sport, p.home_team, p.away_team, p.commence_time)) || [];
+            const keepId = existing.get(p.game_id) || (rows[0] && rows[0].id);
+            if (!keepId) return;
+            if (!existing.has(p.game_id)) {
+              existing.set(p.game_id, keepId);
+              const kept = rows.find(r => r.id === keepId);
+              if (kept && kept.decision === 'REMOVED') removedGames.add(p.game_id);
+            }
+            rows.forEach(r => { if (r.id !== keepId && !duplicateIds.includes(r.id)) duplicateIds.push(r.id); });
+          });
+        }
+      } catch (e) { logEdgeError('orch.persistMatch', e); }
     }
 
     // Extra copies of a game's pick are deleted; one row per game remains.
