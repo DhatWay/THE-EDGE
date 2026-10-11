@@ -9,7 +9,7 @@
 // ============================================================
 
 const EDGE_MYPICK = (function () {
-  const BUILD = 'mypick-20261007-01';
+  const BUILD = 'mypick-20261011-01';
   const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const fmt = v => (v > 0 ? '+' : '') + v;
 
@@ -80,7 +80,9 @@ const EDGE_MYPICK = (function () {
         <div class="mp-row"><label>Price</label><input id="mpPrice" type="number" step="1" inputmode="numeric" /></div>
         <div class="mp-row"><label>Units</label><input id="mpUnits" type="number" step="0.25" min="0.25" value="1" inputmode="decimal" /></div>
         <div class="mp-note" id="mpModel"></div>
+        <div class="mp-row"><label>Bet amount</label><input id="mpAmount" type="number" step="1" min="1" inputmode="decimal" /></div>
         <div class="mp-btns"><button class="mp-cancel" id="mpCancel">Cancel</button><button class="mp-save" id="mpSave">Save pick</button></div>
+        <div class="mp-btns"><button class="mp-save" id="mpSaveBet">Save &amp; bet</button></div>
         <div class="mp-note" id="mpMsg"></div>
       </div>`;
     document.body.appendChild(veil);
@@ -101,12 +103,19 @@ const EDGE_MYPICK = (function () {
       }
       $('mpModel').textContent = note;
     };
+    // Bet amount: Settings › Bet amount ($50 unless changed); editable here.
+    const flatSetting = localStorage.getItem('edge_flat_bet');
+    const portfolio = localStorage.getItem('edge_active_portfolio') || 'sim';
+    $('mpAmount').value = flatSetting === 'units' ? '50' : (parseFloat(flatSetting || '50') || 50);
+    const syncBetBtn = () => { $('mpSaveBet').textContent = `Save & bet $${$('mpAmount').value || 50} (${portfolio.toUpperCase()})`; };
+    $('mpAmount').addEventListener('input', syncBetBtn);
+    syncBetBtn();
     $('mpSide').addEventListener('change', fill);
     if (hint.side && $('mpSide').querySelector(`option[value="${hint.side}"]`)) $('mpSide').value = hint.side;
     fill();
     $('mpCancel').onclick = () => veil.remove();
     veil.addEventListener('click', e => { if (e.target === veil) veil.remove(); });
-    $('mpSave').onclick = async () => {
+    const save = async (andBet) => {
       const side = $('mpSide').value;
       const isMl = side.endsWith('_ml'), isTotal = side === 'over' || side === 'under';
       const line = parseFloat($('mpLine').value), price = parseFloat($('mpPrice').value), units = parseFloat($('mpUnits').value);
@@ -142,7 +151,7 @@ const EDGE_MYPICK = (function () {
         },
         created_at: new Date().toISOString(),
       };
-      $('mpSave').disabled = true;
+      $('mpSave').disabled = true; $('mpSaveBet').disabled = true;
       try {
         const res = await fetch(`${url}/rest/v1/shadow_picks`, {
           method: 'POST',
@@ -150,13 +159,43 @@ const EDGE_MYPICK = (function () {
           body: JSON.stringify(row),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
-        $('mpMsg').textContent = 'Saved — it\u2019s on Today\u2019s Picks with a MY PICK tag.';
-        setTimeout(() => veil.remove(), 1200);
+        if (andBet) {
+          // The bet, logged the same way the Bet buttons log one.
+          const amount = parseFloat($('mpAmount').value);
+          if (!isFinite(amount) || amount <= 0) throw new Error('enter a bet amount');
+          const unitSize = parseFloat(localStorage.getItem(portfolio === 'real' ? 'edge_unit_size' : 'edge_sim_unit_size') || (portfolio === 'real' ? '50' : '100')) || amount;
+          const d = new Date();
+          const bet = {
+            mode: portfolio,
+            date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+            time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            sport, matchup: `${away} vs ${home}`,
+            pick_label: isTotal ? `${team} ${line}` : team,
+            pick_type: isTotal ? 'TOTAL' : isMl ? 'ML' : 'ATS',
+            line: isTotal ? String(line) : isMl ? '' : String(homeLine),
+            odds: price, confidence: row.confidence, edge: row.edge,
+            units: Math.round((amount / unitSize) * 100) / 100, amount,
+            status: 'pending', game_id: gameId, reason: 'My pick',
+          };
+          const br = await fetch(`${url}/rest/v1/bet_log`, {
+            method: 'POST',
+            headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+            body: JSON.stringify(bet),
+          });
+          if (!br.ok) throw new Error('pick saved, but the bet was not (HTTP ' + br.status + ')');
+          localStorage.setItem(`edge_bet_${portfolio}_${row.pick_id}`, 'true');
+          $('mpMsg').textContent = `Saved and bet $${amount} (${portfolio}) — it\u2019s on Today\u2019s Picks and in Pending.`;
+        } else {
+          $('mpMsg').textContent = 'Saved — it\u2019s on Today\u2019s Picks with a MY PICK tag.';
+        }
+        setTimeout(() => veil.remove(), 1400);
       } catch (e) {
         $('mpMsg').textContent = 'Not saved: ' + e.message;
-        $('mpSave').disabled = false;
+        $('mpSave').disabled = false; $('mpSaveBet').disabled = false;
       }
     };
+    $('mpSave').onclick = () => save(false);
+    $('mpSaveBet').onclick = () => save(true);
   }
 
   return { BUILD, open };
