@@ -632,10 +632,19 @@
       list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · ${pendingBets.length}</div><div class="pending-list">` + pendingBets.map(b => {
         const pk = allPicks.find(p => p.game_id === b.game_id);
         const when = pk?.commence_time ? new Date(pk.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-        const line = b.pick_type === 'ML' ? 'ML' : (b.line !== '' && b.line != null ? (Number(b.line) > 0 ? '+' : '') + b.line : '');
+        const label = String(b.pick_label || '');
+        let line = '';
+        if (b.pick_type === 'ML') line = 'ML';
+        else if (b.pick_type !== 'TOTAL' && !/[+-]?\d/.test(label) && b.line !== '' && b.line != null) {
+          // The stored line is the home team's; the away side is its opposite.
+          const parts = String(b.matchup || '').split(/\s+(?:vs\.?|@|at)\s+/i);
+          const isAway = parts.length === 2 && label.toLowerCase().startsWith(parts[0].trim().toLowerCase());
+          const v = isAway ? -Number(b.line) : Number(b.line);
+          line = isFinite(v) ? (v > 0 ? '+' : '') + v : '';
+        }
         const amt = Number(b.amount) || 0;
         return `<div class="pending-row">
-          <div><div class="pr-pick">${String(b.pick_label || '').replace(/[<>&]/g, '')} ${b.pick_type === 'TOTAL' ? '' : line} <span class="pr-mode ${b.mode === 'real' ? 'real' : 'sim'}">${(b.mode || 'sim').toUpperCase()}</span></div>
+          <div><div class="pr-pick">${label.replace(/[<>&]/g, '')} ${line} <span class="pr-mode ${b.mode === 'real' ? 'real' : 'sim'}">${(b.mode || 'sim').toUpperCase()}</span></div>
             <div class="pr-meta">${b.sport || ''} · ${String(b.matchup || '').replace(/[<>&]/g, '')}${when ? ' · ' + when : ''} · ${b.odds > 0 ? '+' : ''}${b.odds ?? -110}</div></div>
           <div class="pr-right"><div class="pr-amt">${$(amt)}</div><div class="pr-meta">to win ${$(win(amt, b.odds))}</div>
             <button class="pr-undo" onclick="undoPendingBet('${b.id}')">Remove</button></div>
@@ -1552,15 +1561,17 @@
     async function betAllPicks() {
       const list = applyFilter(allPicks).filter(p =>
         p.decision && !['PASS', 'CAPPED', 'VETOED'].includes(p.decision) &&
-        localStorage.getItem(`edge_bet_${portfolio}_${p.pick_id || p.game_id || p.id}`) !== 'true');
+        localStorage.getItem(`edge_bet_${portfolio}_${p.pick_id || p.game_id || p.id}`) !== 'true' &&
+        !betForCard(p, portfolio));          // already bet (per your bet log) — skipped
       if (!list.length) { showToast('Every shown pick is already placed', ''); return; }
-      const units = list.reduce((s, p) => s + (p.units || 1), 0);
+      const flat = flatBetAmount();
       const label = portfolio === 'real' ? 'real' : 'sim';
-      if (!confirm(`Place ${list.length} ${label} bets, ${units} units total?`)) return;
+      const total = flat != null ? `$${(flat * list.length).toFixed(0)} total` : `${list.reduce((s, p) => s + (p.units || 1), 0)} units total`;
+      if (!confirm(`Place ${list.length} ${label} bets, ${total}?`)) return;
       const btn = document.getElementById('betAllBtn');
       if (btn) btn.disabled = true;
       try {
-        for (const p of list) await placeBet(portfolio, p.pick_id || p.game_id || p.id);
+        for (const p of list) await placeBet(portfolio, p.pick_id || p.game_id || p.id, null, true);
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -1640,9 +1651,12 @@
       placeBet(mode, pickId, v);
     }
 
-    async function placeBet(mode, pickId, amountOverride = null) {
+    async function placeBet(mode, pickId, amountOverride = null, skipDupCheck = false) {
       const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
       if (!pick) return;
+      const already = betForCard(pick, mode);
+      if (already && !skipDupCheck &&
+          !confirm(`You already have a $${Number(already.amount || 0).toFixed(0)} ${mode} bet on this pick. Place another?`)) return;
 
       // Flat amount for every bet (Settings › Bet amount, $50 unless you
       // change it); "units × unit size" only when that box is empty.
