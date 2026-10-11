@@ -31,6 +31,7 @@
   <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
   <script src="external-data.js"></script>
+  <script src="game-id-map.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
   <style>
@@ -166,7 +167,9 @@
     .src-tag { display: inline-block; font-size: 9px; letter-spacing: 1.5px; padding: 1px 6px; margin-right: 6px; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; }
     .src-tag.mine { border-color: var(--gold); color: var(--gold); }
     .src-tag.bet { border-color: var(--green); color: var(--green); margin-left: 6px; }
-    .pending-list { border: 1px solid var(--border); }
+    .pending-list { border: 1px solid var(--border); margin-bottom: 14px; }
+    .pending-head { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; font-size: 12px; color: var(--gold); margin: 10px 0 6px; }
+    .pending-grade { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; }
     .pending-row { display: flex; justify-content: space-between; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
     .pr-pick { font-size: 15px; color: var(--text); font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.5px; }
     .pr-meta { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
@@ -551,6 +554,47 @@
       return list.find(b => (b.mode || 'sim') === mode && (!side || side.includes(String(b.pick_label || '').toLowerCase()) || String(b.pick_label || '').toLowerCase().includes(side.split(' ')[0])));
     }
 
+    // ── AWAITING RESULTS ──
+    // Picks (the model's and yours) for games that have started or
+    // finished in the last two weeks and aren't graded yet. They stay here,
+    // in Pending, until grading moves them to Pick History.
+    let awaiting = [];
+    async function loadAwaiting(url, key) {
+      awaiting = [];
+      try {
+        const now = new Date().toISOString(), since = new Date(Date.now() - 14 * 86400000).toISOString();
+        const res = await fetch(`${url}/rest/v1/shadow_picks?select=id,game_id,sport,home_team,away_team,side_team,decision,units,commence_time,created_at` +
+          `&result=is.null&commence_time=lt.${now}&commence_time=gte.${since}&order=commence_time.desc&limit=1000`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) return;
+        const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const seen = new Set();
+        awaiting = (await res.json()).filter(p => {
+          const d = String(p.decision || '');
+          if (d === 'REMOVED' || d === 'PASS' || d.endsWith('_PASS') || d === 'WITHDRAWN') return false;
+          if (d.startsWith('TOTAL_') && localStorage.getItem('edge_rate_totals') !== 'true') return false;
+          const k = `${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}|${String(p.commence_time).slice(0, 10)}|${d.startsWith('TOTAL_') ? 't' : d === 'MINE' || d.startsWith('LINE_') ? 'm' + p.id : 's'}`;
+          if (seen.has(k)) return false; seen.add(k); return true;
+        });
+      } catch (e) { logEdgeError('picks.loadAwaiting', e); }
+    }
+
+    // Grades finished games now — the sport selected in the chips above,
+    // or every sport on "All".
+    async function gradePending() {
+      const st = document.getElementById('pendingGradeStatus');
+      if (st) st.textContent = 'Grading…';
+      const SPORTS = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'WNBA', 'MLB', 'NHL', 'MLS'];
+      const sports = SPORTS.includes(currentFilter) ? [currentFilter] : null;
+      let picks = 0, bets = 0, err = '';
+      try {
+        if (window.EDGE_SHADOW_GRADER) { const r = await EDGE_SHADOW_GRADER.run({ sports }); picks = (r && r.graded) || 0; if (r && !r.ok) err = r.error || ''; }
+        if (window.EDGE_SIM_GRADER) for (const m of ['sim', 'real']) { const b = await EDGE_SIM_GRADER.run({ mode: m, sports }); bets += (b && b.graded) || 0; }
+      } catch (e) { err = e.message; }
+      if (st) st.textContent = `${sports ? sports[0] : 'All sports'}: graded ${picks} picks · ${bets} bets${err ? ' · ' + err : ''}`;
+      await loadPicks(); updateBankrolls();
+    }
+
     async function undoPendingBet(id) {
       const b = pendingBets.find(x => String(x.id) === String(id));
       if (!b) return;
@@ -569,14 +613,23 @@
 
     function renderPending() {
       const list = document.getElementById('picksList');
+      const gradeBar = `<div class="pending-grade"><button class="pr-undo" onclick="gradePending()">↻ Grade finished games</button>
+        <span id="pendingGradeStatus" class="pr-meta"></span></div>`;
+      const nmA = (p) => `${p.away_team || '?'} @ ${p.home_team || '?'}`;
+      const awaitingHtml = awaiting.length
+        ? `<div class="pending-head">AWAITING RESULTS · ${awaiting.length}</div><div class="pending-list">` + awaiting.map(p =>
+            `<div class="pending-row"><div><div class="pr-pick">${String(p.side_team || p.decision || '').replace(/[<>&]/g, '')}
+              <span class="pr-mode ${p.decision === 'MINE' || String(p.decision).startsWith('LINE_') ? 'real' : 'sim'}">${p.decision === 'MINE' || String(p.decision).startsWith('LINE_') ? 'MINE' : 'MODEL'}</span></div>
+              <div class="pr-meta">${p.sport || ''} · ${nmA(p).replace(/[<>&]/g, '')} · ${new Date(p.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div></div>
+              <div class="pr-right pr-meta">waiting for the final</div></div>`).join('') + `</div>`
+        : '';
       if (!pendingBets.length) {
-        list.innerHTML = `<div class="empty-state"><div class="empty-icon">✓</div><div class="empty-title">NO PENDING BETS</div>
-          <div class="empty-sub">Bets you place show here until their game is graded, then move to Pick History.</div></div>`;
+        list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · 0</div><div class="empty-sub" style="padding:8px 0 14px">No open bets.</div>` + awaitingHtml;
         return;
       }
       const $ = v => '$' + Number(v || 0).toFixed(2);
       const win = (amt, odds) => { const o = Number(odds) || -110; return o > 0 ? amt * o / 100 : amt * 100 / Math.abs(o); };
-      list.innerHTML = `<div class="pending-list">` + pendingBets.map(b => {
+      list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · ${pendingBets.length}</div><div class="pending-list">` + pendingBets.map(b => {
         const pk = allPicks.find(p => p.game_id === b.game_id);
         const when = pk?.commence_time ? new Date(pk.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
         const line = b.pick_type === 'ML' ? 'ML' : (b.line !== '' && b.line != null ? (Number(b.line) > 0 ? '+' : '') + b.line : '');
@@ -587,7 +640,7 @@
           <div class="pr-right"><div class="pr-amt">${$(amt)}</div><div class="pr-meta">to win ${$(win(amt, b.odds))}</div>
             <button class="pr-undo" onclick="undoPendingBet('${b.id}')">Remove</button></div>
         </div>`;
-      }).join('') + `</div>`;
+      }).join('') + `</div>` + awaitingHtml;
     }
 
     async function loadPicks() {
@@ -610,8 +663,21 @@
         );
         if (!res.ok) throw new Error('HTTP ' + res.status);
         // Picks you removed stay removed — the pipeline won't re-add them.
-        allPicks = (await res.json()).filter(p => p.decision !== 'REMOVED');
+        // One card per game (by sport, teams and date) and kind: copies
+        // saved under a different game id are the same game.
+        const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const seenGame = new Set();
+        allPicks = (await res.json()).filter(p => p.decision !== 'REMOVED')
+          .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+          .filter(p => {
+            const kind = isTotalRow(p) ? 'total' : (isMineRow(p) || isLineRow(p)) ? 'mine:' + (p.pick_id || p.id) : 'side';
+            const day = p.commence_time ? new Date(p.commence_time).toISOString().slice(0, 10) : String(p.game_id);
+            const k = `${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}|${day}|${kind}`;
+            if (seenGame.has(k)) return false;
+            seenGame.add(k); return true;
+          });
         await loadBets(url, key);
+        await loadAwaiting(url, key);
       } catch (e) {
         logEdgeError('picks.loadFromSupabase', e);
         allPicks = loadCachedPicks();
