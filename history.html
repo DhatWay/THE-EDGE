@@ -318,7 +318,7 @@
       <button class="view-tab active" data-view="picks" onclick="setHistView('picks')">Model Picks</button>
       <button class="view-tab" data-view="slate" onclick="setHistView('slate')">Full Slate</button>
       <button class="view-tab" data-view="totals" onclick="setHistView('totals')">Totals</button>
-      <button class="view-tab" data-view="lines" onclick="setHistView('lines')">My Lines</button>
+      <button class="view-tab" data-view="lines" onclick="setHistView('lines')">My Picks</button>
       <button class="view-tab" data-view="bets" onclick="setHistView('bets')">My Bets</button>
     </div>
     <div class="grade-row">
@@ -417,7 +417,7 @@
     let currentMode = 'all';
     let currentView = 'picks';
     let allBets = [];
-    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED', 'TOTAL_2U', 'TOTAL_1U', 'TOTAL_LEAN', 'MINE']);
+    const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED', 'TOTAL_2U', 'TOTAL_1U', 'TOTAL_LEAN']);
     let sortKey = 'created_at';
     let sortDir = -1;
     let allPicks = [];
@@ -514,8 +514,11 @@
     // live on Today's Picks (Picks and Pending tabs).
     function rowsForView(modeTest) {
       if (currentView === 'bets') return allBets.filter(b => !!b.result);
-      if (currentView === 'lines') return allPicks.filter(p => String(p.decision || '').startsWith('LINE_') && !!p.result);
-      const pipeline0 = allPicks.filter(p => !!p.result && !String(p.decision || '').startsWith('LINE_') && (modeTest(p) || p.decision === 'MINE'));
+      // My Picks: your own picks (★ My Pick, ⇄ Flip) and lines (＋ Line).
+      if (currentView === 'lines') return allPicks.filter(p => (String(p.decision || '').startsWith('LINE_') || p.decision === 'MINE') && !!p.result);
+      // Model Picks and the rest: the model's own picks only, so the record
+      // and the Deterministic box count exactly the same games.
+      const pipeline0 = allPicks.filter(p => !!p.result && !String(p.decision || '').startsWith('LINE_') && p.decision !== 'MINE' && modeTest(p));
       // One row per game and kind (side, over/under, your pick): older
       // runs could leave a second copy of the same game.
       const seenKey = new Set();
