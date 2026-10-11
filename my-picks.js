@@ -9,7 +9,7 @@
 // ============================================================
 
 const EDGE_MYPICK = (function () {
-  const BUILD = 'mypick-20261011-02';
+  const BUILD = 'mypick-20261011-03';
   const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const fmt = v => (v > 0 ? '+' : '') + v;
 
@@ -168,6 +168,19 @@ const EDGE_MYPICK = (function () {
           // The bet, logged the same way the Bet buttons log one.
           const amount = parseFloat($('mpAmount').value);
           if (!isFinite(amount) || amount <= 0) throw new Error('enter a bet amount');
+          // A second bet on the same pick asks first.
+          const label = isTotal ? `${team} ${line}` : team;
+          try {
+            const chk = await fetch(`${url}/rest/v1/bet_log?select=id,amount&status=eq.pending&mode=eq.${portfolio}` +
+              `&game_id=eq.${encodeURIComponent(gameId)}&pick_label=eq.${encodeURIComponent(label)}`,
+              { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+            const have = chk.ok ? await chk.json() : [];
+            if (have.length && !confirm(`You already have a $${Number(have[0].amount || 0).toFixed(0)} ${portfolio} bet on ${label}. Place another?`)) {
+              $('mpMsg').textContent = 'Pick saved — no new bet placed.';
+              setTimeout(() => veil.remove(), 1400);
+              return;
+            }
+          } catch {}
           const unitSize = parseFloat(localStorage.getItem(portfolio === 'real' ? 'edge_unit_size' : 'edge_sim_unit_size') || (portfolio === 'real' ? '50' : '100')) || amount;
           const d = new Date();
           const bet = {
