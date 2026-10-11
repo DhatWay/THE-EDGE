@@ -143,6 +143,12 @@
     .reset-box p { margin: 6px 0 8px; line-height: 1.5; }
     .money-box { border: 1px solid var(--border); padding: 8px 10px; margin: 0 0 10px; }
     .money-row { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--text-dim); padding: 4px 0; }
+    .overall-box { border: 1px solid var(--border); padding: 10px 12px; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); }
+    .overall-box .ov-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+    .overall-box .ov-lbl { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; color: var(--gold); font-size: 12px; }
+    .overall-box .ov-rec { font-family: 'Bebas Neue', sans-serif; font-size: 24px; color: var(--text); letter-spacing: 1px; }
+    .overall-box .ov-sub { margin-top: 4px; }
+    .overall-box .pos { color: var(--green); } .overall-box .neg { color: var(--red); }
     .money-row b { color: var(--text); }
     .money-row .pos { color: var(--green); } .money-row .neg { color: var(--red); }
     .grade-btn { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold);
@@ -273,6 +279,7 @@
     </div>
 
     <div class="money-box" id="moneyBox" hidden></div>
+    <div class="overall-box" id="overallBox"></div>
 
     <div class="record-grid">
       <div class="rec-cell">
@@ -688,8 +695,41 @@
     }
 
 
+    // ── OVERALL: the model's picks + your own picks ──
+    // Model: its graded picks, one per game. Mine: your graded ★ My Picks,
+    // ⇄ Flips and ＋ Lines. Each record is also shown on its own.
+    function recordOf(rows) {
+      const w = rows.filter(p => p.result === 'W').length, l = rows.filter(p => p.result === 'L').length, pu = rows.filter(p => p.result === 'P').length;
+      const units = rows.reduce((s, p) => s + (p.units || 0), 0), pnl = rows.reduce((s, p) => s + (p.pnl || 0), 0);
+      return { w, l, pu, pnl, roi: units > 0 ? pnl / units * 100 : null, pct: (w + l) ? w / (w + l) * 100 : null };
+    }
+    function renderOverall() {
+      const box = document.getElementById('overallBox');
+      if (!box) return;
+      const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const seen = new Set();
+      const model = allPicks
+        .filter(p => p.result && BET_TIERS.has(p.decision) && !String(p.decision || '').startsWith('TOTAL_'))
+        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+        .filter(p => {
+          const day = p.commence_time ? new Date(p.commence_time).toISOString().slice(0, 10) : String(p.game_id);
+          const k = `${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}|${day}`;
+          if (seen.has(k)) return false; seen.add(k); return true;
+        });
+      const mine = allPicks.filter(p => p.result && (p.decision === 'MINE' || String(p.decision || '').startsWith('LINE_')));
+      const all = recordOf(model.concat(mine)), m = recordOf(model), y = recordOf(mine);
+      const rec = r => `${r.w}-${r.l}-${r.pu}`;
+      const pct = r => r.pct != null ? r.pct.toFixed(1) + '%' : '—';
+      const u = r => `<span class="${r.pnl >= 0 ? 'pos' : 'neg'}">${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(1)}u</span>`;
+      box.innerHTML = `<div class="ov-main"><span class="ov-lbl">OVERALL · MODEL + MINE</span>
+          <span class="ov-rec">${rec(all)}</span><span>${pct(all)}</span><span>${u(all)}</span>
+          <span>ROI ${all.roi != null ? (all.roi > 0 ? '+' : '') + all.roi.toFixed(1) + '%' : '—'}</span></div>
+        <div class="ov-sub">Model ${rec(m)} (${pct(m)}, ${u(m)}) · Mine ${rec(y)} (${pct(y)}, ${u(y)})</div>`;
+    }
+
     function renderSummary() {
       renderMoney();
+      renderOverall();
       const picks = picksForMode();
       const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
       const wins   = picks.filter(p => p.result === 'W').length;
