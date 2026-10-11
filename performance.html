@@ -427,8 +427,18 @@
         // Bets only: rated games with no edge, totals ratings and lines
         // entered from other books are left out of the performance record.
         const BET_TIERS = new Set(['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED']);
+        // One row per game (sport, teams and date), newest kept — the same
+        // games Pick History counts, so both pages show the same record.
+        const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const seenGame = new Set();
         allPicks = (await fetchAllPicks(`${sbUrl}/rest/v1/shadow_picks?select=*&order=created_at.desc`, sbKey))
-          .filter(p => BET_TIERS.has(p.decision));
+          .filter(p => BET_TIERS.has(p.decision))
+          .filter(p => {
+            const day = p.commence_time ? new Date(p.commence_time).toISOString().slice(0, 10) : String(p.game_id);
+            const k = `${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}|${day}`;
+            if (seenGame.has(k)) return false;
+            seenGame.add(k); return true;
+          });
       } catch (e) { logEdgeError('performance.loadPerformance', e); }
 
       renderAll();
@@ -458,9 +468,9 @@
       document.getElementById('aiRec').textContent   = (aiW + aiL) > 0 ? `${aiW}-${aiL}` : '—';
 
       const mathPnl = mathPicks.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
-      const mathU   = mathPicks.reduce((s, p) => s + (p.units || 0), 0);
+      const mathU   = mathPicks.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
       const aiPnl   = aiPicks.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
-      const aiU     = aiPicks.reduce((s, p) => s + (p.units || 0), 0);
+      const aiU     = aiPicks.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
 
       document.getElementById('mathRoi').textContent = mathU > 0
         ? 'ROI ' + (mathPnl / mathU * 100).toFixed(1) + '%'
@@ -476,7 +486,7 @@
       const wins = picks.filter(p => p.result === 'W').length;
       const losses = picks.filter(p => p.result === 'L').length;
 
-      const totalUnits = picks.reduce((s, p) => s + (p.units || 0), 0);
+      const totalUnits = settled.reduce((s, p) => s + (p.units || 0), 0);
       const netPnl = settled.reduce((s, p) => s + (p.pnl || 0), 0);
       const roi = totalUnits > 0 ? (netPnl / totalUnits) * 100 : null;
       const winPct = (wins + losses) > 0 ? (wins / (wins + losses)) * 100 : null;
@@ -576,13 +586,13 @@
         return;
       }
 
-      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','MLS'];
+      const sports = ['NFL','NBA','MLB','NHL','NCAAF','NCAAB','WNBA','MLS'];
       const data = sports.map(s => {
         const sp = picks.filter(p => p.sport === s);
         const w = sp.filter(p => p.result === 'W').length;
         const l = sp.filter(p => p.result === 'L').length;
         const pnl = sp.reduce((sum, p) => sum + (p.pnl || 0), 0);
-        const units = sp.reduce((sum, p) => sum + (p.units || 0), 0);
+        const units = sp.filter(p => p.result).reduce((sum, p) => sum + (p.units || 0), 0);
         const roi = units > 0 ? (pnl / units) * 100 : null;
         return { s, w, l, pnl, roi, total: sp.length };
       }).filter(d => d.total > 0);
