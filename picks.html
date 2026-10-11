@@ -1108,12 +1108,13 @@
           ? `
             <button class="pick-action-btn done bet-placed" disabled>✓ BET PLACED</button>
             <button class="pick-action-btn skip" onclick="undoBet('real','${pickKey}')">Undo</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Remove</button>
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `
           : `
             <button class="pick-action-btn approve" onclick="placeBet('real','${pickKey}')">✓ Bet ${betLabel(p, 'real')}</button>
             <button class="pick-action-btn" onclick="betCustom('real','${pickKey}')">$ Other</button>
-            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Skip</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Remove</button>
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `;
       } else {
@@ -1121,12 +1122,13 @@
           ? `
             <button class="pick-action-btn done sim-placed" disabled>✓ SIM BET PLACED</button>
             <button class="pick-action-btn skip" onclick="undoBet('sim','${pickKey}')">Undo</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Remove</button>
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `
           : `
             <button class="pick-action-btn simbet" onclick="placeBet('sim','${pickKey}')">▶ Bet Sim ${betLabel(p, 'sim')}</button>
             <button class="pick-action-btn" onclick="betCustom('sim','${pickKey}')">$ Other</button>
-            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Skip</button>
+            <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Remove</button>
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `;
       }
@@ -1616,6 +1618,7 @@
         showToast(`Sim bet placed · $${stakeDollars.toFixed(0)}`, 'blue');
       }
 
+      await refreshBets();
       updateBankrolls();
       renderPicks();
     }
@@ -1632,11 +1635,7 @@
         showToast('Game has started — bet is locked', 'red'); return;
       }
       try {
-        const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
-        const res = await fetch(
-          `${url}/rest/v1/bet_log?game_id=eq.${encodeURIComponent(pick.game_id)}&mode=eq.${mode}&status=eq.pending`,
-          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        await deleteBetsFor(pick, mode);
       } catch (e) {
         showToast('Undo failed: ' + e.message, 'red'); return;
       }
@@ -1658,9 +1657,29 @@
         localStorage.removeItem(`edge_bet_sim_${pickId}`);
       }
 
+      await refreshBets();
       updateBankrolls();
       renderPicks();
       showToast('Bet undone', '');
+    }
+
+    // Deletes the pending bets of one portfolio on this pick's game, and
+    // says exactly what the database answered if it refuses.
+    async function deleteBetsFor(pick, mode) {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      const res = await fetch(
+        `${url}/rest/v1/bet_log?game_id=eq.${encodeURIComponent(pick.game_id)}&mode=eq.${mode}&status=eq.pending`,
+        { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=representation' } });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
+      const gone = await res.json().catch(() => []);
+      const pk = pick.pick_id || pick.game_id || pick.id;
+      localStorage.removeItem(`edge_bet_${mode}_${pk}`);
+      return Array.isArray(gone) ? gone.length : 0;
+    }
+
+    async function refreshBets() {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (url && key) await loadBets(url, key);
     }
 
     // Remove a pick before it is locked. It is marked REMOVED in the
@@ -1670,24 +1689,28 @@
     async function skipPick(pickId) {
       const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
       if (!pick) return;
-      if (localStorage.getItem(`edge_bet_sim_${pickId}`) === 'true' || localStorage.getItem(`edge_bet_real_${pickId}`) === 'true') {
-        showToast('Undo the bet on this pick first', 'red'); return;
-      }
       if (pick.commence_time && new Date(pick.commence_time) <= new Date()) {
         showToast('Game has started — pick is locked', 'red'); return;
       }
-      if (!confirm(`Remove ${pick.side_team || 'this pick'}? The pipeline won't add it again.`)) return;
+      const withBet = ['sim', 'real'].filter(m => localStorage.getItem(`edge_bet_${m}_${pickId}`) === 'true' || !!betForCard(pick, m));
+      const msg = withBet.length
+        ? `Remove ${pick.side_team || 'this pick'} and its ${withBet.join(' and ')} bet? The pipeline won't add it again.`
+        : `Remove ${pick.side_team || 'this pick'}? The pipeline won't add it again.`;
+      if (!confirm(msg)) return;
       const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
       try {
+        for (const m of withBet) await deleteBetsFor(pick, m);
         const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${pick.id}`, {
           method: 'PATCH',
           headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
           body: JSON.stringify({ decision: 'REMOVED', units: 0 }),
         });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
         allPicks = allPicks.filter(p => p !== pick);
+        await refreshBets();
+        updateBankrolls();
         renderPicks();
-        showToast('Pick removed', '');
+        showToast(withBet.length ? 'Pick and bet removed' : 'Pick removed', '');
       } catch (e) {
         showToast('Remove failed: ' + e.message, 'red');
       }
