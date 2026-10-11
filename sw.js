@@ -29,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v2';
+const VERSION = 'edge-v40';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -38,7 +38,6 @@ const SHELL_FILES = [
   './index.html',
   './matchups.html',
   './picks.html',
-  './parlay.html',
   './analysis.html',
   './algorithms.html',
   './power.html',
@@ -52,7 +51,6 @@ const SHELL_FILES = [
   './diagnostic.html',
   './data.html',
   './slate.html',
-  './test-espn.html',
   './login.html',
 
   // Core rating and pipeline engines
@@ -98,7 +96,6 @@ const SHELL_FILES = [
   // Orchestration
   './orchestrator.js',
   './learning.js',
-  './parlay.js',
   './auth.js',
 
   './manifest.json',
