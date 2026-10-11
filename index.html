@@ -12,30 +12,8 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <script src="power-engine.js"></script>
-  <script src="algorithms.js"></script>
-  <script src="governor.js"></script>
-  <script src="physics.js"></script>
-  <script src="claude.js"></script>
-  <script src="team-aliases.js"></script>
-  <script src="context-builder.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
-  <script src="injury-fragmentation.js"></script>
-  <script src="ats-tracker.js"></script>
-  <script src="orchestrator.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
-  <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="game-id-map.js"></script>
-  <script src="shadow-grader.js"></script>
-  <script src="sim-grader.js"></script>
-  <script src="backfill.js"></script>
+  <script src="bankroll.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -250,7 +228,6 @@
     <a href="index.html" class="active"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
-    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -334,15 +311,12 @@
 
     <div class="section">
       <div class="sec-head">
-        <div class="sec-title">LATEST <em>TOP PICK</em></div>
-        <a href="picks.html" class="sec-link">All Picks →</a>
+        <div class="sec-title">TODAY'S <em>PICKS</em></div>
+        <a href="picks.html" class="sec-link">Open →</a>
       </div>
-      <div id="topPickContainer">
-        <div class="pending-box">
-          <div class="pending-icon">◎</div>
-          <div class="pending-text">No picks generated yet</div>
-          <div class="pending-text" style="margin-top:6px;font-size:10px;">Run pipeline in Matchups or Admin</div>
-        </div>
+      <div class="pending-box" onclick="location.href='picks.html'" style="cursor:pointer">
+        <div class="pending-icon">◎</div>
+        <div class="pending-text">Every pick — the model's and yours — and every pending bet is on Today's Picks</div>
       </div>
     </div>
 
@@ -353,9 +327,9 @@
       </div>
 
       <div class="bank-card">
-        <div class="stat-lbl">Current Bankroll</div>
+        <div class="stat-lbl">Balance — real / sim</div>
         <div class="bank-amount" id="bankrollDisplay">$0.00</div>
-        <div class="stat-hint">Set your bankroll in Settings</div>
+        <div class="stat-hint" id="bankrollHint">Starting amounts are set in Settings</div>
 
         <div class="cap-row">
           <span>Daily Cap Used</span>
@@ -422,35 +396,6 @@
           <div class="tile-ico">⬡</div>
           <div><div class="tile-lbl">Intelligence</div><div class="tile-sub">Raw Data</div></div>
         </a>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="sec-head">
-        <div class="sec-title">RECENT <em>PICKS</em></div>
-        <a href="history.html" class="sec-link">Full Log →</a>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Sport</th>
-              <th>Matchup</th>
-              <th>Side</th>
-              <th>Conf</th>
-              <th>Result</th>
-              <th>P&amp;L</th>
-            </tr>
-          </thead>
-          <tbody id="recentPicksBody">
-            <tr>
-              <td colspan="6" style="text-align:center;padding:28px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;letter-spacing:2px;font-size:12px;text-transform:uppercase;">
-                No picks logged yet
-              </td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -527,7 +472,14 @@
       const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
       const weeklyUsed = parseFloat(localStorage.getItem('edge_weekly_used') || '0');
 
+      // Balances from the same calculation as Today's Picks, Betting and
+      // History: start + settled profit − stakes still riding.
       document.getElementById('bankrollDisplay').textContent = '$' + bankroll.toFixed(2);
+      if (window.EDGE_BANKROLL) EDGE_BANKROLL.compute().then(m => {
+        document.getElementById('bankrollDisplay').textContent = `${EDGE_BANKROLL.money(m.real.balance)} / ${EDGE_BANKROLL.money(m.sim.balance)}`;
+        const h = document.getElementById('bankrollHint');
+        if (h) h.textContent = `Sim: ${EDGE_BANKROLL.breakdown(m.sim)}`;
+      }).catch(() => {});
       document.getElementById('dailyUsed').textContent = '$' + dailyUsed.toFixed(0) + ' / $' + dailyCap.toFixed(0);
       document.getElementById('weeklyUsed').textContent = '$' + weeklyUsed.toFixed(0) + ' / $' + weeklyCap.toFixed(0);
 
@@ -597,13 +549,7 @@
       const latest = picks[0];
       renderConsensus(latest);
 
-      const actionable = picks.filter(p =>
-        p.decision !== 'PASS' && p.decision !== 'CAPPED' && p.decision !== 'VETOED' && p.units > 0
-      );
-      const topPick = actionable.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
-      renderTopPick(topPick);
-
-      renderRecent(picks.slice(0, 8));
+      // (Top pick and recent picks now live on Today's Picks only.)
     }
 
     function setStat(id, val, cls) {
@@ -643,79 +589,6 @@
       dots.innerHTML = bd.map(b => {
         const cls = b.vote === 'yes' ? 'yes' : b.vote === 'no' ? 'no' : 'neu';
         return `<div class="cdot ${cls}"></div>`;
-      }).join('');
-    }
-
-    function renderTopPick(pick) {
-      const container = document.getElementById('topPickContainer');
-      if (!pick) {
-        container.innerHTML = `
-          <div class="pending-box">
-            <div class="pending-icon">◎</div>
-            <div class="pending-text">No actionable picks yet</div>
-            <div class="pending-text" style="margin-top:6px;font-size:10px;">Run pipeline to generate picks</div>
-          </div>`;
-        return;
-      }
-
-      const conf = Math.round(pick.confidence || 0);
-      const isAi = pick.decision_mode === 'ai_assisted';
-      const matchup = `${pick.away_team || 'Away'} @ ${pick.home_team || 'Home'}`;
-      const side = pick.side_team || (pick.direction === 'home' ? pick.home_team : pick.away_team) || '—';
-      const reason = (pick.reasons || []).slice(0, 2).join(' · ') || 'No reason logged';
-
-      const circ = 2 * Math.PI * 22;
-      const dash = (conf / 100) * circ;
-
-      container.innerHTML = `
-        <div class="pick-card">
-          <div class="pick-sport">${pick.sport || '—'} · ${isAi ? 'AI-REVIEWED' : 'DETERMINISTIC'}</div>
-          <div class="pick-matchup">${matchup}</div>
-          <div class="pick-side">▶ ${side}</div>
-          <div class="pick-tags">
-            <span class="pick-tag gold">${pick.decision || '—'}</span>
-            <span class="pick-tag">${pick.units || 0}u</span>
-            <span class="pick-tag">Edge ${((pick.edge || 0) * 100).toFixed(2)}%</span>
-            ${isAi ? '<span class="pick-tag ai">CLAUDE</span>' : ''}
-          </div>
-          <div class="pick-conf-row">
-            <div class="ring-wrap">
-              <svg viewBox="0 0 58 58" width="58" height="58">
-                <circle cx="29" cy="29" r="22" fill="none" stroke="#1C1C1C" stroke-width="5"/>
-                <circle cx="29" cy="29" r="22" fill="none" stroke="#C9A84C" stroke-width="5"
-                  stroke-dasharray="${dash.toFixed(1)} ${(circ - dash).toFixed(1)}" stroke-linecap="round"/>
-              </svg>
-              <div class="ring-label">${conf}%</div>
-            </div>
-            <div class="pick-reason">${reason}</div>
-          </div>
-        </div>`;
-    }
-
-    function renderRecent(picks) {
-      const body = document.getElementById('recentPicksBody');
-      if (!picks.length) {
-        body.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--text-dim);font-family:'Barlow Condensed',sans-serif;letter-spacing:2px;font-size:12px;text-transform:uppercase;">No picks logged yet</td></tr>`;
-        return;
-      }
-      body.innerHTML = picks.map(p => {
-        const resCls = p.result === 'W' ? 'w' : p.result === 'L' ? 'l' : p.result === 'P' ? 'p' : 'pending';
-        const resStr = p.result || 'PENDING';
-        const pnlVal = p.pnl;
-        const pnlCls = pnlVal > 0 ? 'pos' : pnlVal < 0 ? 'neg' : 'neu';
-        const pnlStr = pnlVal != null ? (pnlVal > 0 ? '+' : '') + pnlVal.toFixed(1) + 'u' : '—';
-        const matchup = `${p.away_team || '?'} @ ${p.home_team || '?'}`;
-        const side = p.side_team || (p.direction === 'home' ? p.home_team : p.away_team) || '—';
-        const conf = Math.round(p.confidence || 0);
-        return `
-          <tr>
-            <td><span class="sport-badge">${p.sport || '—'}</span></td>
-            <td><div class="matchup-bold">${matchup}</div></td>
-            <td>${side}</td>
-            <td>${conf}%</td>
-            <td><span class="res ${resCls}">${resStr}</span></td>
-            <td><span class="pnl ${pnlCls}">${pnlStr}</span></td>
-          </tr>`;
       }).join('');
     }
 
