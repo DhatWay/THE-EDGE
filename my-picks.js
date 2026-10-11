@@ -9,7 +9,7 @@
 // ============================================================
 
 const EDGE_MYPICK = (function () {
-  const BUILD = 'mypick-20261011-01';
+  const BUILD = 'mypick-20261011-02';
   const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const fmt = v => (v > 0 ? '+' : '') + v;
 
@@ -153,6 +153,11 @@ const EDGE_MYPICK = (function () {
       };
       $('mpSave').disabled = true; $('mpSaveBet').disabled = true;
       try {
+        // Saving the same pick again replaces it instead of failing with
+        // "duplicate key".
+        await fetch(`${url}/rest/v1/shadow_picks?pick_id=eq.${encodeURIComponent(row.pick_id)}`, {
+          method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' },
+        }).catch(() => {});
         const res = await fetch(`${url}/rest/v1/shadow_picks`, {
           method: 'POST',
           headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
