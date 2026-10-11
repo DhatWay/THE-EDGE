@@ -652,8 +652,20 @@
           fetch(`${url}/rest/v1/matchup_ats?select=*&order=meetings.desc&limit=500`, { headers }),
         ]);
 
-        // Bets only (rated passes and entered lines are left out).
-        allPicks   = picksRes.ok   ? (await picksRes.json()).filter(p => ['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED'].includes(p.decision)) : [];
+        // The model's picks only (rated passes, over/unders, your own picks
+        // and lines are left out), one row per game by sport, teams and
+        // date, newest kept — the same rows Pick History and Performance
+        // count, so all three pages show the same record.
+        const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const seenGame = new Set();
+        allPicks   = picksRes.ok   ? (await picksRes.json())
+          .filter(p => ['BET_2U', 'BET_1U', 'BET', 'LEAN', 'VETOED', 'CAPPED'].includes(p.decision))
+          .filter(p => {
+            const day = p.commence_time ? new Date(p.commence_time).toISOString().slice(0, 10) : String(p.game_id);
+            const k = `${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}|${day}`;
+            if (seenGame.has(k)) return false;
+            seenGame.add(k); return true;
+          }) : [];
         allPower   = powerRes.ok   ? await powerRes.json()   : [];
         allWeights = weightsRes.ok ? await weightsRes.json() : [];
         allPlayers = playersRes.ok ? await playersRes.json() : [];
@@ -686,7 +698,7 @@
       const w = picks.filter(p => p.result === 'W').length;
       const l = picks.filter(p => p.result === 'L').length;
       const pu = picks.filter(p => p.result === 'P').length;
-      const units = picks.reduce((s, p) => s + (p.units || 0), 0);
+      const units = settled.reduce((s, p) => s + (p.units || 0), 0);
       const pnl = settled.reduce((s, p) => s + (p.pnl || 0), 0);
       const roi = units > 0 ? (pnl / units) * 100 : null;
 
@@ -707,9 +719,9 @@
       const math = picks.filter(p => p.decision_mode === 'math_only');
       const ai = picks.filter(p => p.decision_mode === 'ai_assisted');
 
-      const mathU = math.reduce((s, p) => s + (p.units || 0), 0);
+      const mathU = math.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
       const mathP = math.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
-      const aiU = ai.reduce((s, p) => s + (p.units || 0), 0);
+      const aiU = ai.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
       const aiP = ai.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
 
       setText('ovMathCount', math.length);
@@ -863,7 +875,7 @@
         const w = sp.filter(p => p.result === 'W').length;
         const l = sp.filter(p => p.result === 'L').length;
         const pu = sp.filter(p => p.result === 'P').length;
-        const units = sp.reduce((sum, p) => sum + (p.units || 0), 0);
+        const units = sp.filter(p => p.result).reduce((sum, p) => sum + (p.units || 0), 0);
         const pnl = sp.filter(p => p.result).reduce((sum, p) => sum + (p.pnl || 0), 0);
         const roi = units > 0 ? (pnl / units) * 100 : 0;
         const winPct = (w + l) > 0 ? (w / (w + l)) * 100 : 0;
@@ -1108,9 +1120,9 @@
       document.getElementById('mcMathRecord').textContent = (mathW + mathL) > 0 ? `${mathW}-${mathL}` : '—';
       document.getElementById('mcAiRecord').textContent   = (aiW + aiL) > 0 ? `${aiW}-${aiL}` : '—';
 
-      const mathU = math.reduce((s, p) => s + (p.units || 0), 0);
+      const mathU = math.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
       const mathP = math.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
-      const aiU = ai.reduce((s, p) => s + (p.units || 0), 0);
+      const aiU = ai.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
       const aiP = ai.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
 
       document.getElementById('mcMathSub').textContent = mathU > 0
@@ -1132,7 +1144,7 @@
         const matches = allPicks.filter(p => p.result && b.test(p.confidence || 0));
         const w = matches.filter(p => p.result === 'W').length;
         const l = matches.filter(p => p.result === 'L').length;
-        const units = matches.reduce((s, p) => s + (p.units || 0), 0);
+        const units = matches.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
         const pnl = matches.reduce((s, p) => s + (p.pnl || 0), 0);
         const roi = units > 0 ? (pnl / units) * 100 : 0;
         const cls = roi > 0 ? 'green' : roi < 0 ? 'red' : '';
@@ -1150,7 +1162,7 @@
         const settled = matches.filter(p => p.result);
         const w = matches.filter(p => p.result === 'W').length;
         const l = matches.filter(p => p.result === 'L').length;
-        const units = matches.reduce((s, p) => s + (p.units || 0), 0);
+        const units = matches.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
         const pnl = settled.reduce((s, p) => s + (p.pnl || 0), 0);
         const roi = units > 0 ? (pnl / units) * 100 : 0;
         const cls = roi > 0 ? 'green' : roi < 0 ? 'red' : '';
@@ -1213,7 +1225,8 @@
       const w = picks.filter(p => p.result === 'W').length;
       const l = picks.filter(p => p.result === 'L').length;
       const pu = picks.filter(p => p.result === 'P').length;
-      const units = picks.reduce((s, p) => s + (p.units || 0), 0);
+      // Units risked on settled picks — the ROI base everywhere in the app.
+      const units = picks.filter(p => p.result).reduce((s, p) => s + (p.units || 0), 0);
       const pnl = picks.filter(p => p.result).reduce((s, p) => s + (p.pnl || 0), 0);
       const confs = picks.map(p => p.confidence).filter(c => typeof c === 'number');
       return {
