@@ -408,6 +408,11 @@
         <div class="field-lbl" id="unitSizeLbl">Unit Size (flat $) <span class="field-hint">per bet</span></div>
         <input type="number" class="field-input" id="unitSize" placeholder="50" min="1" oninput="markUnsaved()" />
       </div>
+
+      <div class="field">
+        <div class="field-lbl">Bet amount <span class="field-hint">every bet, sim and real — leave empty to size by units × unit size</span></div>
+        <input type="number" class="field-input" id="flatBet" placeholder="50" min="1" oninput="markUnsaved()" />
+      </div>
     </div>
 
     <div class="section">
@@ -974,6 +979,8 @@
       set('edge_min_conf',       document.getElementById('minConf').value);
       set('edge_auto_threshold', document.getElementById('autoThreshold').value);
 
+      // Flat bet amount: an empty box means size by units × unit size.
+      localStorage.setItem('edge_flat_bet', (document.getElementById('flatBet').value || '').trim() || 'units');
       set('edge_sim_bankroll',   document.getElementById('simBankroll').value);
       set('edge_sim_unit_size',  document.getElementById('simUnitSize').value);
       set('edge_sim_daily_cap',  document.getElementById('simDailyCap').value);
@@ -1091,6 +1098,8 @@
       const simDailyCap = document.getElementById('simDailyCap');
       const simAutoGrade = document.getElementById('simAutoGrade');
       if (simBankroll)   simBankroll.value = get('edge_sim_bankroll', '10000');
+      const flatBet = document.getElementById('flatBet');
+      if (flatBet) { const fb = localStorage.getItem('edge_flat_bet'); flatBet.value = fb === 'units' ? '' : (fb || '50'); }
       if (simUnitSize)   simUnitSize.value = get('edge_sim_unit_size', '100');
       if (simDailyCap)   simDailyCap.value = get('edge_sim_daily_cap', '500');
       if (simAutoGrade)  simAutoGrade.checked = localStorage.getItem('edge_sim_auto_grade') !== 'false';
