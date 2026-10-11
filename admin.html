@@ -14,10 +14,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="edge-time.js"></script>
   <script src="power-engine.js"></script>
-  <script src="algorithms.js"></script>
   <script src="governor.js"></script>
-  <script src="physics.js"></script>
-  <script src="claude.js"></script>
   <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
   <script src="trends-engine.js"></script>
@@ -27,14 +24,10 @@
   <script src="injury-fragmentation.js"></script>
   <script src="ats-tracker.js"></script>
   <script src="box-score-fetcher.js"></script>
-  <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
   <script src="score-backfill.js"></script>
-  <script src="situation-results.js"></script>
-  <script src="situations-engine.js"></script>
   <script src="backfill.js"></script>
   <script src="game-id-map.js"></script>
   <script src="external-data.js"></script>
@@ -202,7 +195,6 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
-    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -218,7 +210,6 @@
     <a href="betting.html"><span class="ico">●</span> Betting Control</a>
     <a href="settings.html"><span class="ico">◈</span> Settings</a>
     <a href="admin.html" class="active"><span class="ico">⬡</span> Admin</a>
-    <a href="test-espn.html"><span class="ico">◈</span> ESPN</a>
     <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
   </div>
 
@@ -233,22 +224,6 @@
 
     <div class="section">
       <div class="sec-title">PIPELINE <em>CONTROL</em></div>
-
-      <div class="pipeline-panel">
-        <div class="pipeline-head">
-          <div class="pipeline-title">Full Engine</div>
-          <div class="pipeline-mode math" id="pipelineMode">DETERMINISTIC</div>
-        </div>
-        <div class="pipeline-desc">
-          Runs power ratings → algorithms → governor → physics. In AI-assisted mode, also sends actionable picks to Claude for review. Optionally grades yesterday's ungraded picks at the end.
-        </div>
-        <div class="pipeline-actions">
-          <button class="pipeline-btn" id="runPipelineBtn" onclick="runPipeline()">▶ Run Pipeline</button>
-          <button class="pipeline-btn secondary" onclick="toggleDecisionMode()">Toggle Mode</button>
-        </div>
-        <div class="pipeline-log" id="pipelineLog">Idle. Ready to run.</div>
-        <div class="pipeline-status" id="pipelineStatus"></div>
-      </div>
 
       <div class="pipeline-panel">
         <div class="pipeline-head">
@@ -725,26 +700,6 @@
       setTimeout(() => t.className = 'toast', 2500);
     }
 
-    function updatePipelineMode() {
-      const mode = localStorage.getItem('edge_decision_mode') || 'math_only';
-      const el = document.getElementById('pipelineMode');
-      if (mode === 'ai_assisted') {
-        el.textContent = 'AI-ASSISTED';
-        el.className = 'pipeline-mode ai';
-      } else {
-        el.textContent = 'DETERMINISTIC';
-        el.className = 'pipeline-mode math';
-      }
-    }
-
-    function toggleDecisionMode() {
-      const current = localStorage.getItem('edge_decision_mode') || 'math_only';
-      const next = current === 'math_only' ? 'ai_assisted' : 'math_only';
-      localStorage.setItem('edge_decision_mode', next);
-      updatePipelineMode();
-      showToast('Decision mode: ' + (next === 'ai_assisted' ? 'AI-Assisted' : 'Deterministic'), next === 'ai_assisted' ? 'blue' : '');
-    }
-
     // ============================================================
     // FULL REFRESH
     // ============================================================
@@ -832,46 +787,6 @@
       log(`✓ Quick Update complete · ${Math.round((Date.now() - t0) / 60000 * 10) / 10} min`);
       btn.disabled = false;
       showToast('✓ Quick Update complete', '');
-    }
-
-    async function runPipeline() {
-      const btn = document.getElementById('runPipelineBtn');
-      const logEl = document.getElementById('pipelineLog');
-      const statusEl = document.getElementById('pipelineStatus');
-
-      if (!window.EDGE_ORCHESTRATOR) { showToast('Orchestrator not loaded', 'error'); return; }
-
-      const games = JSON.parse(localStorage.getItem('edge_todays_games') || '[]');
-      if (!games.length) { showToast('No games loaded — refresh Matchups first', 'error'); return; }
-
-      btn.disabled = true;
-      logEl.textContent = 'Starting…\n';
-      statusEl.textContent = '';
-
-      try {
-        const result = await window.EDGE_ORCHESTRATOR.run({
-          games,
-          grade: true,
-          onProgress: (msg) => {
-            logEl.textContent += msg + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
-          },
-        });
-
-        if (result.errors.length) {
-          logEl.textContent += '\nERRORS:\n' + result.errors.join('\n');
-          statusEl.textContent = 'Failed';
-          showToast('Pipeline error', 'error');
-          return;
-        }
-
-        const pickCount = result.picks.length;
-        statusEl.textContent = `${pickCount} picks · ${result.duration_ms}ms · mode: ${result.mode}`;
-        logEl.textContent += `\n✓ Done · ${pickCount} picks · ${result.duration_ms}ms`;
-        showToast(`✓ Pipeline: ${pickCount} picks`, '');
-      } finally {
-        btn.disabled = false;
-      }
     }
 
     async function runLearning() {
@@ -1989,7 +1904,6 @@
       document.getElementById('resultDate').value = (window.EDGE_TIME ? EDGE_TIME.localDay() : (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date()));
       loadSavedIndicators();
       checkConnections();
-      updatePipelineMode();
 
       const lastRun = localStorage.getItem('edge_learning_last_run');
       document.getElementById('lastLearningRun').textContent = lastRun ? new Date(lastRun).toLocaleString() : 'never';
