@@ -15,6 +15,7 @@
   <script src="edge-time.js"></script>
   <script src="team-aliases.js"></script>
   <script src="auth.js"></script>
+  <script src="game-id-map.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
   <script src="bankroll.js"></script>
@@ -520,7 +521,11 @@
       const seenKey = new Set();
       const pipeline = pipeline0.slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).filter(p => {
         const kind = String(p.decision || '').startsWith('TOTAL_') ? 'total' : p.decision === 'MINE' ? 'mine:' + (p.pick_id || p.id) : 'side';
-        const k = `${p.game_id}|${kind}`;
+        // The game by sport, teams and date — copies saved under a
+        // different game id are still the same game.
+        const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const day = p.commence_time ? new Date(p.commence_time).toISOString().slice(0, 10) : String(p.game_id);
+        const k = `${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}|${day}|${kind}`;
         if (seenKey.has(k)) return false;
         seenKey.add(k);
         return true;
