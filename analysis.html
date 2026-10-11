@@ -18,25 +18,16 @@
   <script src="physics.js"></script>
   <script src="claude.js"></script>
   <script src="team-aliases.js"></script>
+  <script src="edge-time.js"></script>
+  <script src="qb-ratings.js"></script>
+  <script src="external-data.js"></script>
   <script src="my-picks.js"></script>
   <script src="context-builder.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
-  <script src="ats-tracker.js"></script>
-  <script src="orchestrator.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
   <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="game-id-map.js"></script>
-  <script src="shadow-grader.js"></script>
-  <script src="sim-grader.js"></script>
-  <script src="backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -244,7 +235,6 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
-    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html" class="active"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -261,7 +251,6 @@
     <a href="admin.html"><span class="ico">⬡</span> Admin</a>
     <a href="diagnostic.html"><span class="ico">⚙</span> Diagnostic</a>
     <a href="slate.html"><span class="ico">⧗</span> Slate Test</a>
-    <a href="test-espn.html"><span class="ico">⌬</span> ESPN Test</a>
   </div>
 
   <main>
@@ -495,18 +484,42 @@
         context.hoursToGame = Math.max(0, (new Date(fullGame.commence_time) - Date.now()) / 3600000);
       }
 
+      // The same inputs the pipeline gives the ranking — quarterback
+      // ratings, outside data (pitchers, goalies, SP+, NFL efficiency) and
+      // rest — so a game's numbers here match its numbers on Today's Picks.
+      let qbAdj = null, externalAdj = null;
+      if (window.EDGE_QB && ['NFL', 'NCAAF'].includes(fullGame.sport)) {
+        try {
+          const injMap = {};
+          if (context.homeInjuries || context.awayInjuries) injMap[fullGame.id] = { home: context.homeInjuries || [], away: context.awayInjuries || [] };
+          const q = await EDGE_QB.forGames([fullGame], injMap, () => {});
+          qbAdj = q?.[fullGame.id] || null;
+        } catch (e) { logEdgeError('analysis.qb', e); }
+      }
+      if (window.EDGE_EXTERNAL && EDGE_EXTERNAL.loadForSlate) {
+        try {
+          const ext = await EDGE_EXTERNAL.loadForSlate([fullGame], {}, () => {});
+          externalAdj = ext?.byGame?.[fullGame.id] || ext?.[fullGame.id] || null;
+        } catch (e) { logEdgeError('analysis.external', e); }
+      }
+
       let prior;
       try {
         prior = await EDGE_POWER.computeGamePrior(fullGame, {
           homeStats: homePower,
           awayStats: awayPower,
           league: powerIndex.league?.[fullGame.sport] || null,
+          adjustments: { qb: qbAdj },
+          external: externalAdj,
+          rest: { home: context.homeRestDays ?? null, away: context.awayRestDays ?? null },
           market: {
             open_spread: fullGame.open_spread ?? fullGame.spread ?? null,
             current_spread: fullGame.spread ?? null,
             total: fullGame.total ?? null,
             home_ml: fullGame.ml ?? null,
             away_ml: fullGame.away_ml ?? null,
+            home_spread_price: fullGame.home_spread_price ?? null,
+            away_spread_price: fullGame.away_spread_price ?? null,
           },
         });
       } catch (e) {
