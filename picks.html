@@ -1700,11 +1700,23 @@
       const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
       try {
         for (const m of withBet) await deleteBetsFor(pick, m);
-        const res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${pick.id}`, {
-          method: 'PATCH',
-          headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-          body: JSON.stringify({ decision: 'REMOVED', units: 0 }),
-        });
+        const hdr = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+        const del = () => fetch(`${url}/rest/v1/shadow_picks?id=eq.${pick.id}`, { method: 'DELETE', headers: hdr });
+        let res;
+        if (isMineRow(pick) || isLineRow(pick) || isTotalRow(pick)) {
+          // Your own picks and lines, and over/unders, are simply deleted.
+          // (Marking them REMOVED turned them into a second model pick for
+          // the game, which the one-pick-per-game rule refuses with a
+          // "duplicate key" error.)
+          res = await del();
+        } else {
+          // A model pick is marked REMOVED so the pipeline won't add it
+          // back; if the database refuses, it's deleted instead.
+          res = await fetch(`${url}/rest/v1/shadow_picks?id=eq.${pick.id}`, {
+            method: 'PATCH', headers: hdr, body: JSON.stringify({ decision: 'REMOVED', units: 0 }),
+          });
+          if (!res.ok) res = await del();
+        }
         if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
         allPicks = allPicks.filter(p => p !== pick);
         await refreshBets();
