@@ -21,26 +21,18 @@
   <script src="claude.js"></script>
   <script src="team-aliases.js"></script>
   <script src="context-builder.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
   <script src="injury-fragmentation.js"></script>
   <script src="qb-ratings.js"></script>
   <script src="my-picks.js"></script>
-  <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="parlay.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
   <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="game-id-map.js"></script>
   <script src="external-data.js"></script>
   <script src="shadow-grader.js"></script>
   <script src="sim-grader.js"></script>
-  <script src="backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -171,6 +163,18 @@
     .oc-table tr.oc-mine td { color: var(--gold); }
     .oc-table tr.oc-mine td.pos { color: var(--green); }
     .oc-note { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+    .src-tag { display: inline-block; font-size: 9px; letter-spacing: 1.5px; padding: 1px 6px; margin-right: 6px; border: 1px solid var(--border); color: var(--text-dim); font-family: 'Barlow Condensed', sans-serif; }
+    .src-tag.mine { border-color: var(--gold); color: var(--gold); }
+    .src-tag.bet { border-color: var(--green); color: var(--green); margin-left: 6px; }
+    .pending-list { border: 1px solid var(--border); }
+    .pending-row { display: flex; justify-content: space-between; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
+    .pr-pick { font-size: 15px; color: var(--text); font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.5px; }
+    .pr-meta { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+    .pr-right { text-align: right; white-space: nowrap; }
+    .pr-amt { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); }
+    .pr-mode { font-size: 9px; letter-spacing: 1px; padding: 1px 5px; border: 1px solid var(--border); margin-left: 4px; }
+    .pr-mode.real { color: var(--green); border-color: var(--green); } .pr-mode.sim { color: var(--blue, #6aa7ff); border-color: var(--blue, #6aa7ff); }
+    .pr-undo { margin-top: 6px; background: none; border: 1px solid var(--border); color: var(--text-dim); font-size: 11px; padding: 4px 8px; cursor: pointer; }
     .stake-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 12px; color: var(--text-dim); }
     .stake-row input { width: 90px; padding: 6px 8px; background: transparent; border: 1px solid var(--border); color: var(--text); font-size: 14px; }
     .view-tab { flex: 1; padding: 9px 6px; background: var(--bg2, #111); border: 1px solid var(--border); color: var(--text-dim);
@@ -304,7 +308,6 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html" class="active"><span class="ico">✓</span> Today's Picks</a>
-    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="builder.html"><span class="ico">⊕</span> Parlay &amp; Teaser Builder</a>
     <a href="guide.html"><span class="ico">?</span> How to Use</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
@@ -406,9 +409,9 @@
     <div class="stake-row">Bet amount for outcomes $<input id="previewStake" type="number" min="1" step="1" inputmode="decimal" onchange="setPreviewStake(this.value)" /></div>
     <div class="view-tabs">
       <button class="view-tab active" data-view="picks" onclick="setView('picks')">Picks</button>
+      <button class="view-tab" data-view="pending" onclick="setView('pending')">Pending</button>
       <button class="view-tab" data-view="slate" onclick="setView('slate')">Full Slate</button>
       <button class="view-tab" data-view="totals" onclick="setView('totals')">Totals</button>
-      <button class="view-tab" data-view="lines" onclick="setView('lines')">My Lines</button>
     </div>
     <label class="leans-toggle" id="leansToggle"><input type="checkbox" id="showLeans" onchange="toggleLeans(this.checked)" /> Show leans with picks</label>
     <label class="leans-toggle" id="learnedToggle"><input type="checkbox" id="useLearned" onchange="localStorage.setItem('edge_use_learned', this.checked ? 'true' : 'false')" /> Use strength weights learned by Slate Tests (off = every sport uses the same 0.6; applies on the next run)</label>
@@ -526,6 +529,67 @@
     // its game had not been played. Filtering by commence_time
     // in the next seven days shows every pending pick for every
     // upcoming game.
+    // ── BETS ──
+    // Pending bets (the Pending tab — the one place they're listed) and the
+    // bets on the games shown, so each card's BET PLACED comes from your bet
+    // log rather than this phone's memory.
+    let pendingBets = [], betsByGame = {};
+    async function loadBets(url, key) {
+      pendingBets = []; betsByGame = {};
+      try {
+        const res = await fetch(`${url}/rest/v1/bet_log?status=eq.pending&order=created_at.desc&limit=1000`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (res.ok) pendingBets = await res.json();
+        pendingBets.forEach(b => { (betsByGame[b.game_id] = betsByGame[b.game_id] || []).push(b); });
+      } catch (e) { logEdgeError('picks.loadBets', e); }
+    }
+    // A bet on this card's side: same game, and the bet names the same team
+    // (or over/under) the card picks.
+    function betForCard(p, mode) {
+      const list = betsByGame[p.game_id] || [];
+      const side = String(p.side_team || '').toLowerCase();
+      return list.find(b => (b.mode || 'sim') === mode && (!side || side.includes(String(b.pick_label || '').toLowerCase()) || String(b.pick_label || '').toLowerCase().includes(side.split(' ')[0])));
+    }
+
+    async function undoPendingBet(id) {
+      const b = pendingBets.find(x => String(x.id) === String(id));
+      if (!b) return;
+      const pk = allPicks.find(p => p.game_id === b.game_id);
+      if (pk && pk.commence_time && new Date(pk.commence_time).getTime() <= Date.now()) { showToast('That game has started', 'red'); return; }
+      if (!confirm(`Remove the ${(b.mode || 'sim').toUpperCase()} bet on ${b.pick_label} (${b.matchup})?`)) return;
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      try {
+        const res = await fetch(`${url}/rest/v1/bet_log?id=eq.${b.id}`, { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (b.pick_id) { localStorage.removeItem(`edge_bet_sim_${b.pick_id}`); localStorage.removeItem(`edge_bet_real_${b.pick_id}`); }
+        showToast('Bet removed', 'green');
+        await loadPicks(); updateBankrolls();
+      } catch (e) { showToast('Could not remove: ' + e.message, 'red'); }
+    }
+
+    function renderPending() {
+      const list = document.getElementById('picksList');
+      if (!pendingBets.length) {
+        list.innerHTML = `<div class="empty-state"><div class="empty-icon">✓</div><div class="empty-title">NO PENDING BETS</div>
+          <div class="empty-sub">Bets you place show here until their game is graded, then move to Pick History.</div></div>`;
+        return;
+      }
+      const $ = v => '$' + Number(v || 0).toFixed(2);
+      const win = (amt, odds) => { const o = Number(odds) || -110; return o > 0 ? amt * o / 100 : amt * 100 / Math.abs(o); };
+      list.innerHTML = `<div class="pending-list">` + pendingBets.map(b => {
+        const pk = allPicks.find(p => p.game_id === b.game_id);
+        const when = pk?.commence_time ? new Date(pk.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        const line = b.pick_type === 'ML' ? 'ML' : (b.line !== '' && b.line != null ? (Number(b.line) > 0 ? '+' : '') + b.line : '');
+        const amt = Number(b.amount) || 0;
+        return `<div class="pending-row">
+          <div><div class="pr-pick">${String(b.pick_label || '').replace(/[<>&]/g, '')} ${b.pick_type === 'TOTAL' ? '' : line} <span class="pr-mode ${b.mode === 'real' ? 'real' : 'sim'}">${(b.mode || 'sim').toUpperCase()}</span></div>
+            <div class="pr-meta">${b.sport || ''} · ${String(b.matchup || '').replace(/[<>&]/g, '')}${when ? ' · ' + when : ''} · ${b.odds > 0 ? '+' : ''}${b.odds ?? -110}</div></div>
+          <div class="pr-right"><div class="pr-amt">${$(amt)}</div><div class="pr-meta">to win ${$(win(amt, b.odds))}</div>
+            <button class="pr-undo" onclick="undoPendingBet('${b.id}')">Remove</button></div>
+        </div>`;
+      }).join('') + `</div>`;
+    }
+
     async function loadPicks() {
       const url = localStorage.getItem('edge_supabase_url');
       const key = localStorage.getItem('edge_supabase_key');
@@ -547,6 +611,7 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         // Picks you removed stay removed — the pipeline won't re-add them.
         allPicks = (await res.json()).filter(p => p.decision !== 'REMOVED');
+        await loadBets(url, key);
       } catch (e) {
         logEdgeError('picks.loadFromSupabase', e);
         allPicks = loadCachedPicks();
@@ -807,7 +872,7 @@
     //   Picks     — the governor's bets (a value tier)
     //   Full Slate — every game the pipeline rated, best value first,
     //                passes included, so you can make your own call
-    //   My Lines  — lines you entered from other books (＋ Line)
+    //   (Lines you entered with ＋ Line, and your ★ My Picks, show in Picks, tagged MINE.)
     let currentView = 'picks';
     // Leans live in Full Slate (and Totals) unless you choose to see them
     // with picks — the Picks tab is 1U and 2U by default.
@@ -818,7 +883,12 @@
     function isTotalRow(p) { return String(p.decision || '').startsWith('TOTAL_'); }
     function isMineRow(p) { return p.decision === 'MINE'; }
     // Picks tab: ATS and moneyline only — over/unders live in the Totals tab.
-    function isPickRow(p) { return !isTotalRow(p) && (BET_TIERS.has(p.decision) || isMineRow(p) || (showLeans && LEAN_TIERS.has(p.decision))); }
+    // Picks tab: the model's picks plus every pick you added from any
+    // page (★ My Pick, ⇄ Flip, ＋ Line). Over/unders stay in Totals.
+    function isPickRow(p) {
+      if (isMineRow(p) || isLineRow(p)) return true;
+      return !isTotalRow(p) && (BET_TIERS.has(p.decision) || (showLeans && LEAN_TIERS.has(p.decision)));
+    }
     function toggleLeans(on) {
       showLeans = !!on;
       localStorage.setItem('edge_picks_show_leans', showLeans ? 'true' : 'false');
@@ -843,7 +913,6 @@
     }
 
     function inView(picks) {
-      if (currentView === 'lines') return picks.filter(isLineRow);
       if (currentView === 'totals') return picks.filter(isTotalRow).slice().sort((a, b) => evOf(b) - evOf(a));
       if (currentView === 'slate') return picks.filter(p => !isLineRow(p) && !isTotalRow(p) && !isMineRow(p)).slice().sort((a, b) => evOf(b) - evOf(a));
       return picks.filter(isPickRow);
@@ -933,19 +1002,19 @@
       if (ps && document.activeElement !== ps) ps.value = previewStake();
       const note = document.getElementById('bankrollNote');
       if (note) note.hidden = parseFloat(localStorage.getItem('edge_bankroll') || '0') > 0;
+      const list = document.getElementById('picksList');
+      if (currentView === 'pending') { renderEarlier(); renderPending(); return; }
       const filtered = applyFilter(allPicks);
       updateSummary(filtered);
-      const list = document.getElementById('picksList');
       renderEarlier();
 
       if (!filtered.length) {
         list.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">✓</div>
-            <div class="empty-title">${allPicks.length ? (currentView === 'lines' ? 'NO LINES YET' : currentView === 'picks' ? 'NO PICKS' : 'NO MATCHES') : 'NO PICKS YET'}</div>
+            <div class="empty-title">${allPicks.length ? (currentView === 'picks' ? 'NO PICKS' : 'NO MATCHES') : 'NO PICKS YET'}</div>
             <div class="empty-sub">
-              ${currentView === 'lines' ? 'Add a book\'s line with ＋ Line on Matchups'
-                : currentView === 'picks' && allPicks.length ? 'No game cleared the value bar — see Full Slate for every game\'s rating'
+              ${currentView === 'picks' && allPicks.length ? 'No game cleared the value bar — see Full Slate for every game\'s rating'
                 : allPicks.length ? 'No picks match current filter' : 'Tap RUN to generate picks'}
             </div>
             ${!allPicks.length ? '<a href="matchups.html" class="go-btn">Go to Matchups →</a>' : ''}
@@ -1023,8 +1092,9 @@
       }));
 
       const pickKey = p.pick_id || p.game_id || p.id;
-      const betPlacedReal = localStorage.getItem(`edge_bet_real_${pickKey}`) === 'true';
-      const betPlacedSim  = localStorage.getItem(`edge_bet_sim_${pickKey}`) === 'true';
+      const betPlacedReal = localStorage.getItem(`edge_bet_real_${pickKey}`) === 'true' || !!betForCard(p, 'real');
+      const betPlacedSim  = localStorage.getItem(`edge_bet_sim_${pickKey}`) === 'true' || !!betForCard(p, 'sim');
+      const sourceTag = (isMineRow(p) || isLineRow(p)) ? '<span class="src-tag mine">MINE</span>' : '<span class="src-tag model">MODEL</span>';
 
       let actions = '';
       if (isVetoed || isPassed) {
@@ -1065,7 +1135,7 @@
             <div class="pick-meta">
               <span class="sport-tag">${p.sport || '—'}</span>
               <span class="pick-time">${gameTime}</span>
-              <span class="decision-tag ${tagCls}">${decisionTag}</span>
+              ${sourceTag}<span class="decision-tag ${tagCls}">${decisionTag}</span>${(betPlacedReal || betPlacedSim) ? '<span class="src-tag bet">BET</span>' : ''}
               ${isAi ? '<span class="mode-badge ai">AI-REVIEWED</span>' : '<span class="mode-badge">DETERMINISTIC</span>'}
             </div>
           </div>
