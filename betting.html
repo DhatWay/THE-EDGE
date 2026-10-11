@@ -12,30 +12,8 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <script src="power-engine.js"></script>
-  <script src="algorithms.js"></script>
-  <script src="governor.js"></script>
-  <script src="physics.js"></script>
-  <script src="claude.js"></script>
-  <script src="context-builder.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
-  <script src="injury-fragmentation.js"></script>
-  <script src="ats-tracker.js"></script>
-  <script src="orchestrator.js"></script>
   <script src="bankroll.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
-  <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="game-id-map.js"></script>
-  <script src="shadow-grader.js"></script>
-  <script src="sim-grader.js"></script>
-  <script src="backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -288,7 +266,6 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
-    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -343,23 +320,6 @@
     </div>
 
     <!-- BETTING MODE -->
-    <div class="section">
-      <div class="sec-title">BETTING <em>MODE</em></div>
-      <div class="mode-cards">
-        <div class="mode-card active" id="modeManual" onclick="setMode('manual')">
-          <div class="mode-icon">☰</div>
-          <div class="mode-name">Manual</div>
-          <div class="mode-desc">Review and approve each pick individually</div>
-        </div>
-        <div class="mode-card" id="modeAuto" onclick="setMode('auto')">
-          <div class="mode-icon">●</div>
-          <div class="mode-name">Auto</div>
-          <div class="mode-desc">Auto-queue picks above confidence threshold</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PORTFOLIO -->
     <div class="section">
       <div class="sec-title">ACTIVE <em>PORTFOLIO</em></div>
       <div class="portfolio-bar">
@@ -440,20 +400,6 @@
       </div>
     </div>
 
-    <!-- AUTO THRESHOLD -->
-    <div class="section" id="autoSection">
-      <div class="sec-title">AUTO <em>THRESHOLD</em></div>
-      <div class="threshold-row">
-        <div class="threshold-head">
-          <span class="threshold-lbl">Min Confidence to Auto-Bet</span>
-          <span class="threshold-val" id="thresholdDisplay">70%</span>
-        </div>
-        <input type="range" class="threshold-slider" id="thresholdSlider" min="40" max="90" value="70"
-          oninput="updateThreshold(this.value)" />
-        <div class="threshold-desc">Only picks at or above this confidence auto-queue when in Auto mode. Deterministic governor thresholds still apply.</div>
-      </div>
-    </div>
-
     <!-- LIMITS -->
     <div class="section">
       <div class="sec-title">BET <em>LIMITS</em></div>
@@ -479,29 +425,6 @@
     </div>
 
     <!-- BET LOG -->
-    <div class="section">
-      <div class="sec-title">SESSION <em>BET LOG</em></div>
-      <div style="overflow-x:auto;">
-        <table class="bet-log-table">
-          <thead>
-            <tr>
-              <th>Mode</th>
-              <th>Time</th>
-              <th>Matchup</th>
-              <th>Pick</th>
-              <th>Units</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="betLogBody">
-            <tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <button class="action-btn" onclick="clearBetLog()">Clear Session Log</button>
-    </div>
-
-    <!-- SPORTSBOOK -->
     <div class="section">
       <div class="sec-title">SPORTSBOOK <em>API</em></div>
       <div class="sb-card">
@@ -556,10 +479,9 @@
     }
 
     // ── BETTING MODE ──
+    // Betting is manual only: a bet is placed when you tap Bet or Bet All.
     function setMode(mode) {
-      localStorage.setItem('edge_betting_mode', mode);
-      document.getElementById('modeManual').classList.toggle('active', mode === 'manual');
-      document.getElementById('modeAuto').classList.toggle('active', mode === 'auto');
+      localStorage.setItem('edge_betting_mode', 'manual');
       updateStatusBar();
     }
 
@@ -674,58 +596,6 @@
     function saveAnon(val) { localStorage.setItem('edge_anon_mode', val); }
 
     // ── THRESHOLD ──
-    function updateThreshold(val) {
-      document.getElementById('thresholdDisplay').textContent = val + '%';
-      localStorage.setItem('edge_auto_threshold', val);
-    }
-
-    // ── BET LOG (local + Supabase) ──
-    async function loadBetLog() {
-      const body = document.getElementById('betLogBody');
-      const url = localStorage.getItem('edge_supabase_url');
-      const key = localStorage.getItem('edge_supabase_key');
-
-      let rows = [];
-      if (url && key) {
-        try {
-          const since = new Date(Date.now() - 24 * 3600000).toISOString();
-          const res = await fetch(
-            `${url}/rest/v1/bet_log?select=*&created_at=gte.${since}&order=created_at.desc&limit=50`,
-            { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-          );
-          if (res.ok) rows = await res.json();
-        } catch {}
-      }
-
-      if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="6" class="empty-note">No bets placed this session</td></tr>';
-        return;
-      }
-
-      body.innerHTML = rows.map(b => {
-        const modeTag = b.mode === 'sim'
-          ? '<span class="bet-mode-tag sim">SIM</span>'
-          : '<span class="bet-mode-tag real">REAL</span>';
-        const status = b.status || 'pending';
-        return `
-          <tr>
-            <td>${modeTag}</td>
-            <td>${b.time || '—'}</td>
-            <td>${b.matchup || '—'}</td>
-            <td><span class="bet-pick">${b.pick_label || '—'}</span></td>
-            <td>${b.units || '—'}u</td>
-            <td><span class="bet-status ${status}">${status.toUpperCase()}</span></td>
-          </tr>`;
-      }).join('');
-    }
-
-    async function clearBetLog() {
-      localStorage.removeItem('edge_session_bet_log');
-      showToast('Session log cleared');
-      loadBetLog();
-    }
-
-    // ── SPORTSBOOK ──
     function checkSportsbook() {
       const key = localStorage.getItem('edge_sportsbook_api_key');
       const name = localStorage.getItem('edge_sportsbook_name') || 'Not Connected';
@@ -746,21 +616,16 @@
       const bettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
       const decisionMode = localStorage.getItem('edge_decision_mode') || 'math_only';
 
-      setMode(bettingMode);
+      setMode('manual');
       setDecisionMode(decisionMode);
       setPortfolio(portfolio);
 
       loadCaps();
       loadLimits();
-      loadBetLog();
       checkSportsbook();
 
       const anonToggle = document.getElementById('anonToggle');
       anonToggle.checked = localStorage.getItem('edge_anon_mode') === 'true';
-
-      const threshold = localStorage.getItem('edge_auto_threshold') || '70';
-      document.getElementById('thresholdSlider').value = threshold;
-      document.getElementById('thresholdDisplay').textContent = threshold + '%';
 
       updateStatusBar();
     }
