@@ -12,29 +12,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <script src="power-engine.js"></script>
-  <script src="algorithms.js"></script>
-  <script src="governor.js"></script>
-  <script src="physics.js"></script>
-  <script src="claude.js"></script>
-  <script src="context-builder.js"></script>
-  <script src="roster-engine.js"></script>
-  <script src="roster-enrichment.js"></script>
-  <script src="injury-fragmentation.js"></script>
-  <script src="ats-tracker.js"></script>
-  <script src="orchestrator.js"></script>
-  <script src="learning.js"></script>
-  <script src="parlay.js"></script>
-  <script src="rating-core.js"></script>
   <script src="auth.js"></script>
-  <script src="score-backfill.js"></script>
-  <script src="situations-engine.js"></script>
-  <script src="situation-results.js"></script>
-  <script src="trends-engine.js"></script>
-  <script src="game-id-map.js"></script>
-  <script src="shadow-grader.js"></script>
-  <script src="sim-grader.js"></script>
-  <script src="backfill.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -276,7 +254,6 @@
     <a href="index.html"><span class="ico">◆</span> Dashboard</a>
     <a href="matchups.html"><span class="ico">⚡</span> Live Matchups</a>
     <a href="picks.html"><span class="ico">✓</span> Today's Picks</a>
-    <a href="parlay.html"><span class="ico">⧉</span> Trend Bets</a>
     <a href="analysis.html"><span class="ico">◎</span> AI Analysis</a>
     <div class="drawer-section">Intelligence</div>
     <a href="algorithms.html"><span class="ico">⊞</span> Algorithm Suite</a>
@@ -673,7 +650,7 @@
     <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
-      <button class="danger-btn" onclick="resetSimBankroll()">Reset Simulation Bankroll</button>
+      <button class="danger-btn" onclick="resetSimBankroll()">Reset Sim — bets, profit and bankroll</button>
       <button class="danger-btn" onclick="resetLearning()">Reset Learning Loop Timestamp</button>
       <button class="danger-btn" onclick="resetAll()">Reset All Settings to Default</button>
     </div>
@@ -1152,12 +1129,26 @@
       showToast('Cap usage reset');
     }
 
-    function resetSimBankroll() {
-      const initial = localStorage.getItem('edge_sim_bankroll') || '10000';
-      localStorage.setItem('edge_sim_bankroll', initial);
-      localStorage.removeItem('edge_sim_state');
-      localStorage.removeItem('edge_sim_daily_used');
-      showToast('Simulation bankroll reset', 'blue');
+    // Starts the sim over: deletes every sim bet (so profit and stakes
+    // still riding go back to $0) and sets the starting sim bankroll.
+    // Real-money bets are never touched. Asks you to type RESET.
+    async function resetSimBankroll() {
+      const amt = parseFloat(prompt('Start the sim bankroll over at:', localStorage.getItem('edge_sim_bankroll') || '10000'));
+      if (!isFinite(amt) || amt <= 0) return;
+      if (prompt('This deletes every SIM bet and sets sim profit back to $0. Type RESET to confirm.') !== 'RESET') return;
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Connect Supabase first', 'red'); return; }
+      try {
+        const res = await fetch(`${url}/rest/v1/bet_log?mode=eq.sim`,
+          { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
+        localStorage.setItem('edge_sim_bankroll', String(amt));
+        ['edge_sim_state', 'edge_sim_daily_used', 'edge_sim_bets_used', 'edge_session_bet_log'].forEach(k => localStorage.removeItem(k));
+        Object.keys(localStorage).filter(k => k.startsWith('edge_bet_sim_')).forEach(k => localStorage.removeItem(k));
+        const field = document.getElementById('simBankroll');
+        if (field) field.value = String(amt);
+        showToast(`Sim reset — bankroll $${amt.toLocaleString()}, profit $0`, 'blue');
+      } catch (e) { showToast('Sim reset failed: ' + e.message, 'red'); }
     }
 
     function resetLearning() {
