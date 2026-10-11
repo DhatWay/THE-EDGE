@@ -29,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v41';
+const VERSION = 'edge-v42';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
