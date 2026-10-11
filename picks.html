@@ -1111,7 +1111,8 @@
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `
           : `
-            <button class="pick-action-btn approve" onclick="placeBet('real','${pickKey}')">✓ Approve ${p.units}u</button>
+            <button class="pick-action-btn approve" onclick="placeBet('real','${pickKey}')">✓ Bet ${betLabel(p, 'real')}</button>
+            <button class="pick-action-btn" onclick="betCustom('real','${pickKey}')">$ Other</button>
             <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Skip</button>
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `;
@@ -1123,7 +1124,8 @@
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `
           : `
-            <button class="pick-action-btn simbet" onclick="placeBet('sim','${pickKey}')">▶ Bet Sim ${p.units}u</button>
+            <button class="pick-action-btn simbet" onclick="placeBet('sim','${pickKey}')">▶ Bet Sim ${betLabel(p, 'sim')}</button>
+            <button class="pick-action-btn" onclick="betCustom('sim','${pickKey}')">$ Other</button>
             <button class="pick-action-btn skip" onclick="skipPick('${pickKey}')">✗ Skip</button>
             <a href="analysis.html?game=${enc}" class="pick-action-btn analysis">◎ Analysis</a>
           `;
@@ -1549,11 +1551,40 @@
     }
 
     // ── PLACE BET ──
-    async function placeBet(mode, pickId) {
+    // The flat bet amount from Settings ($50 unless changed); 'units' means
+    // size by the pick's units × unit size instead.
+    function flatBetAmount() {
+      const v = localStorage.getItem('edge_flat_bet');
+      if (v === 'units') return null;
+      const n = parseFloat(v || '50');
+      return isFinite(n) && n > 0 ? n : 50;
+    }
+
+    // What the Bet button will bet: the flat amount, or units when sizing by units.
+    function betLabel(p, mode) {
+      const flat = flatBetAmount();
+      return flat != null ? '$' + (Math.round(flat * 100) / 100) : `${p.units}u`;
+    }
+    // A different amount for this one bet.
+    function betCustom(mode, pickId) {
+      const v = parseFloat(prompt('Bet amount for this pick ($):', String(flatBetAmount() ?? 50)));
+      if (!isFinite(v) || v <= 0) return;
+      placeBet(mode, pickId, v);
+    }
+
+    async function placeBet(mode, pickId, amountOverride = null) {
       const pick = allPicks.find(p => (p.pick_id || p.game_id || p.id) === pickId);
       if (!pick) return;
 
-      const units = pick.units || 1;
+      // Flat amount for every bet (Settings › Bet amount, $50 unless you
+      // change it); "units × unit size" only when that box is empty.
+      const flat = amountOverride != null ? amountOverride : flatBetAmount();
+      const unitSizeFor = m => m === 'real'
+        ? ((localStorage.getItem('edge_unit_type') || 'flat') === 'pct'
+            ? (parseFloat(localStorage.getItem('edge_bankroll') || '0') * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
+            : parseFloat(localStorage.getItem('edge_unit_size') || '50'))
+        : parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
+      const units = flat != null ? Math.round((flat / (unitSizeFor(mode) || flat)) * 100) / 100 : (pick.units || 1);
 
       if (mode === 'real') {
         const bankroll = parseFloat(localStorage.getItem('edge_bankroll') || '0');
@@ -1562,7 +1593,7 @@
         const unitSize = unitType === 'pct'
           ? (bankroll * parseFloat(localStorage.getItem('edge_unit_size') || '1')) / 100
           : parseFloat(localStorage.getItem('edge_unit_size') || '50');
-        const stakeDollars = units * unitSize;
+        const stakeDollars = flat != null ? flat : units * unitSize;
         const dailyCap = parseFloat(localStorage.getItem('edge_daily_cap') || '0');
         const dailyUsed = parseFloat(localStorage.getItem('edge_daily_used') || '0');
 
@@ -1574,15 +1605,15 @@
         localStorage.setItem('edge_daily_used', String(dailyUsed + stakeDollars));
         localStorage.setItem(`edge_bet_real_${pickId}`, 'true');
         await logBet('real', pick, units, stakeDollars);
-        showToast(`Real bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, '');
+        showToast(`Real bet placed · $${stakeDollars.toFixed(0)}`, '');
       } else {
         const simBankroll = parseFloat(localStorage.getItem('edge_sim_bankroll') || '10000');
         const simUnitSize = parseFloat(localStorage.getItem('edge_sim_unit_size') || '100');
-        const stakeDollars = units * simUnitSize;
-        if (stakeDollars > simBankroll * 0.05) { showToast('Bet exceeds 5% of sim bankroll', 'red'); return; }
+        const stakeDollars = flat != null ? flat : units * simUnitSize;
+        if (flat == null && stakeDollars > simBankroll * 0.05) { showToast('Bet exceeds 5% of sim bankroll', 'red'); return; }
         localStorage.setItem(`edge_bet_sim_${pickId}`, 'true');
         await logBet('sim', pick, units, stakeDollars);
-        showToast(`Sim bet placed · ${units}u · $${stakeDollars.toFixed(0)}`, 'blue');
+        showToast(`Sim bet placed · $${stakeDollars.toFixed(0)}`, 'blue');
       }
 
       updateBankrolls();
