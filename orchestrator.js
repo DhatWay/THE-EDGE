@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261007-03';
+  const BUILD = 'orch-20261011-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -538,14 +538,10 @@ const EDGE_ORCHESTRATOR = (() => {
           if (summary.persist) summary.persist.totals = tr;
         }
 
-        const portfolio = localStorage.getItem('edge_active_portfolio') || 'real';
-        const bettingMode = localStorage.getItem('edge_betting_mode') || 'manual';
-        if (portfolio === 'sim' || bettingMode === 'auto' || localStorage.getItem('edge_lock_on_first') === 'true') {
-          log(`Auto-placing sim bets (portfolio=${portfolio}, mode=${bettingMode})`);
-          const placed = autoPlaceSimBets(picks, priors, portfolio);
-          log(`  ${placed} sim bets placed`);
-          summary.auto_placed = placed;
-        }
+        // No automatic bets: a bet is placed only when you tap Bet or
+        // Bet All on Today's Picks. (Automatic sim bets were placed on every
+        // run whenever the portfolio was Sim, repeated after Clear, and
+        // took their stakes out of the starting bankroll.)
       }
 
       // ── Optional grading pass ──
@@ -1394,140 +1390,6 @@ const EDGE_ORCHESTRATOR = (() => {
   // standard spread price. sim-grader.js reads all three
   // directly.
   // ============================================================
-
-  function autoPlaceSimBets(picks, priors, portfolio) {
-    if (!picks.length) return 0;
-    const isSim = portfolio === 'sim';
-    let placed = 0;
-
-    // Lock the early number: every pick is placed the first time it
-    // appears, whatever its confidence, so its line is kept.
-    const lockFirst = localStorage.getItem('edge_lock_on_first') === 'true';
-    const autoThreshold = lockFirst ? 0 : parseFloat(localStorage.getItem('edge_auto_threshold') || '0');
-    if (autoThreshold > 0) {
-      picks = picks.filter(p => (p.confidence || 0) >= autoThreshold);
-      if (!picks.length) return 0;
-    }
-
-    const maxBets = parseInt(localStorage.getItem('edge_max_bets') || '0');
-    const counterKey = isSim ? 'edge_sim_bets_used' : 'edge_bets_used';
-    let betsUsed = parseInt(localStorage.getItem(counterKey) || '0');
-
-    const bankrollKey = isSim ? 'edge_sim_bankroll' : 'edge_bankroll';
-    const unitSizeKey = isSim ? 'edge_sim_unit_size' : 'edge_unit_size';
-    let bankroll = parseFloat(localStorage.getItem(bankrollKey) || (isSim ? '10000' : '0'));
-    const unitSize = parseFloat(localStorage.getItem(unitSizeKey) || (isSim ? '100' : '50'));
-    if (bankroll <= 0 || unitSize <= 0) return 0;
-
-    const dailyCapKey = isSim ? 'edge_sim_daily_cap' : 'edge_daily_cap';
-    const dailyUsedKey = isSim ? 'edge_sim_daily_used' : 'edge_daily_used';
-    const dailyCap = parseFloat(localStorage.getItem(dailyCapKey) || '0');
-    let dailyUsed = parseFloat(localStorage.getItem(dailyUsedKey) || '0');
-
-    const priorById = new Map((priors || []).map(p => [p.game_id, p]));
-    const placedBets = [];
-
-    for (const pick of picks) {
-      const flagKey = isSim ? `edge_bet_sim_${pick.pick_id}` : `edge_bet_real_${pick.pick_id}`;
-      if (localStorage.getItem(flagKey) === 'true') continue;
-
-      const units = pick.units || 1;
-      const stake = units * unitSize;
-
-      if (maxBets > 0 && betsUsed >= maxBets) break;
-      if (dailyCap > 0 && dailyUsed + stake > dailyCap) continue;
-      if (stake > bankroll * 0.05) continue;
-      if (stake > bankroll) continue;
-
-      bankroll -= stake;
-      dailyUsed += stake;
-      betsUsed += 1;
-      localStorage.setItem(flagKey, 'true');
-
-      const prior = priorById.get(pick.game_id);
-      const matchup = prior
-        ? `${prior.away_team} @ ${prior.home_team}`
-        : '—';
-
-      const gsnap = pick.governor_snapshot || {};
-      const isMl = gsnap.bet_type === 'ML';
-      const spread = gsnap.best?.home_line ?? pick.market_snapshot?.spread ?? null;
-
-      placedBets.push({
-        pick_id: pick.pick_id,
-        game_id: pick.game_id,
-        sport: pick.sport,
-        matchup,
-        pick_label: pick.side_label?.team || pick.direction,
-        pick_type: isMl ? 'ML' : 'ATS',
-        line: isMl ? '' : (spread != null ? String(spread) : ''),
-        odds: isMl ? (gsnap.price ?? null) : (gsnap.best?.price ?? gsnap.price ?? DEFAULT_SPREAD_PRICE),
-        units,
-        stake,
-        confidence: pick.confidence,
-        edge: pick.edge,
-        direction: pick.direction,
-      });
-      placed++;
-    }
-
-    localStorage.setItem(bankrollKey, String(bankroll));
-    localStorage.setItem(dailyUsedKey, String(dailyUsed));
-    localStorage.setItem(counterKey, String(betsUsed));
-
-    try {
-      const log = JSON.parse(localStorage.getItem('edge_session_bet_log') || '[]');
-      placedBets.forEach(b => {
-        log.unshift({
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          matchup: b.matchup, pick: b.pick_label,
-          type: b.units + 'u', units: b.units, status: 'pending',
-        });
-      });
-      localStorage.setItem('edge_session_bet_log', JSON.stringify(log.slice(0, 100)));
-    } catch (e) { logEdgeError('orch.sessionLog', e); }
-
-    const sbUrl = SUPABASE_URL();
-    const sbKey = SUPABASE_KEY();
-    if (sbUrl && sbKey && placedBets.length) {
-      // Local date, not UTC. An 8pm Eastern tip-off was being
-      // logged as the next calendar day under the old code.
-      const now = new Date();
-      const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-      const localTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-      const rows = placedBets.map(b => ({
-        mode: isSim ? 'sim' : 'real',
-        date: localDate,
-        time: localTime,
-        sport: b.sport,
-        matchup: b.matchup,
-        pick_label: b.pick_label,
-        pick_type: b.pick_type,
-        line: b.line,
-        odds: b.odds,
-        confidence: b.confidence,
-        edge: b.edge,
-        units: b.units,
-        amount: b.stake,
-        status: 'pending',
-        game_id: b.game_id,
-        created_at: now.toISOString(),
-      }));
-
-      fetch(`${sbUrl}/rest/v1/bet_log`, {
-        method: 'POST',
-        headers: {
-          apikey: sbKey, Authorization: `Bearer ${sbKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify(rows),
-      }).catch(e => logEdgeError('orch.betLogWrite', e));
-    }
-
-    return placed;
-  }
 
   // ============================================================
   // ── UTILITIES ──
