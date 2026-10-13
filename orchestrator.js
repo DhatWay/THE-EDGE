@@ -461,9 +461,11 @@ const EDGE_ORCHESTRATOR = (() => {
       summary.totals = Object.keys(totalsByGame).length;
 
       // Every game's result, picked or passed, for the board.
+      const ratedAt = new Date().toISOString();
       summary.evaluations = finalResults.map(p => {
         const prior = priors.find(x => x.game_id === p.game_id) || {};
         return {
+          rated_at: ratedAt,
           reason: reasonFor(p),
           sport: prior.sport || p.sport || null,
           home_team: prior.home_team || null,
@@ -502,6 +504,7 @@ const EDGE_ORCHESTRATOR = (() => {
         const keep = prev.filter(e => !fresh.has(e.game_id) && (!e.commence_time || new Date(e.commence_time).getTime() > Date.now()));
         localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations.concat(keep) }));
       } catch {}
+      if (window.EDGE_GUARD) { try { EDGE_GUARD.refresh(); } catch {} }
 
       // Where the passed games stopped, in one line.
       const tally = {};
