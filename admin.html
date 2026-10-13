@@ -759,6 +759,17 @@
     // ── QUICK UPDATE ──
     // Only what changed since last week. Each job also writes its own
     // detail to its own panel below; this log shows the stages and time.
+    // ── QUICK UPDATE ──
+    // Each step does only what's new since it last finished, per sport:
+    //   1 scores & lines    — new finished games; only their teams' and
+    //                          matchups' ATS records are rewritten
+    //   2 box scores        — sports with new final scores
+    //   3 team ratings      — sports with new final scores
+    //   4 player ratings    — sports with new box scores
+    //   5 injuries          — reports older than 6 hours are refreshed
+    //   6–7 grading         — ungraded picks and bets only
+    // What each step last saw is kept on this phone (edge_quick_marks), so
+    // a second run — or a rerun after an interruption — skips the rest.
     async function runQuickUpdate() {
       const sports = jobSports();
       if (!sports.length) { showToast('Select at least one sport above', 'error'); return; }
@@ -769,24 +780,90 @@
       const step = async (label, fn) => {
         const t = Date.now();
         log(label);
-        try { await fn(); log(`  done · ${Math.round((Date.now() - t) / 1000)}s`); }
-        catch (e) { log('  failed: ' + e.message); }
+        try { await fn(); log(`  done · ${Math.round((Date.now() - t) / 1000)}s`); return true; }
+        catch (e) { log('  failed: ' + e.message); return false; }
       };
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      const MARK_KEY = 'edge_quick_marks';
+      let marks = {};
+      try { marks = JSON.parse(localStorage.getItem(MARK_KEY) || '{}'); } catch {}
+      const saveMark = (sport, name, sig) => {
+        if (sig == null) return;
+        marks[sport] = marks[sport] || {}; marks[sport][name] = sig;
+        localStorage.setItem(MARK_KEY, JSON.stringify(marks));
+      };
+      // A table's "what's there" for one sport: row count and newest date.
+      const signature = async (table, sport, dateCol, filter = '') => {
+        try {
+          const res = await fetch(`${url}/rest/v1/${table}?sport=eq.${sport}${filter}&select=${dateCol}&order=${dateCol}.desc&limit=1`,
+            { headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'count=exact' } });
+          if (!res.ok) return null;
+          const total = (res.headers.get('content-range') || '').split('/')[1] || '';
+          const rows = await res.json();
+          return `${total}|${rows[0] ? rows[0][dateCol] : ''}`;
+        } catch { return null; }
+      };
+      const changedFor = async (name, table, dateCol, filter) => {
+        const sigs = {};
+        for (const s of sports) sigs[s] = await signature(table, s, dateCol, filter);
+        const run = sports.filter(s => sigs[s] == null || (marks[s] || {})[name] !== sigs[s]);
+        const skip = sports.filter(s => !run.includes(s));
+        if (skip.length) log(`  ${skip.join(', ')}: nothing new since the last run — skipped`);
+        return { run, sigs };
+      };
+
       btn.disabled = true;
       logEl.textContent = `Quick Update · ${sports.join(', ')}\n`;
-      await step('1/7 · Scores and lines, last 10 days', async () => {
-        if (!window.EDGE_ATS) throw new Error('ats-tracker.js not loaded');
-        await window.EDGE_ATS.buildAll({ sports, recentDays: 10, onProgress: m => { if (/games|resolv|rows|stored|recent/i.test(m)) log('  ' + m.trim()); } });
-      });
-      await step('2/7 · Box scores for new games', () => runBoxScoreFetch(true));
-      await step('3/7 · Team ratings', () => runPowerRatings(true));
-      await step('4/7 · Player ratings', () => runRosterEnrich(true));
-      await step('5/7 · Injuries', async () => { await refreshInjuries(); });
-      await step('6/7 · Grade picks', () => runShadowGrader(true));
-      await step('7/7 · Grade bets', () => runSimGrader(true));
-      log(`✓ Quick Update complete · ${Math.round((Date.now() - t0) / 60000 * 10) / 10} min`);
-      btn.disabled = false;
-      showToast('✓ Quick Update complete', '');
+      try {
+        await step('1/7 · Scores and lines, last 10 days', async () => {
+          if (!window.EDGE_ATS) throw new Error('ats-tracker.js not loaded');
+          await window.EDGE_ATS.buildAll({ sports, recentDays: 10, onProgress: m => { if (/games|resolv|rows|stored|recent|finished|current/i.test(m)) log('  ' + m.trim()); } });
+        });
+
+        const games = await changedFor('box', 'historical_odds', 'game_date', '&home_score=not.is.null');
+        await step('2/7 · Box scores for new games', async () => {
+          if (!games.run.length) return;
+          quickSportsOverride = games.run;
+          try { await runBoxScoreFetch(true); } finally { quickSportsOverride = null; }
+          games.run.forEach(s => saveMark(s, 'box', games.sigs[s]));
+        });
+
+        const rated = await changedFor('ratings', 'historical_odds', 'game_date', '&home_score=not.is.null');
+        await step('3/7 · Team ratings', async () => {
+          if (!rated.run.length) return;
+          quickSportsOverride = rated.run;
+          try { await runPowerRatings(true); } finally { quickSportsOverride = null; }
+          rated.run.forEach(s => saveMark(s, 'ratings', rated.sigs[s]));
+        });
+
+        const stats = await changedFor('enrich', 'player_game_stats', 'game_date', '');
+        await step('4/7 · Player ratings', async () => {
+          if (!stats.run.length) return;
+          quickSportsOverride = stats.run;
+          try { await runRosterEnrich(true); } finally { quickSportsOverride = null; }
+          stats.run.forEach(s => saveMark(s, 'enrich', stats.sigs[s]));
+        });
+
+        await step('5/7 · Injuries (reports older than 6 hours)', async () => {
+          // The pipeline re-downloads a sport's injury report when it isn't
+          // saved; reports newer than 6 hours are kept.
+          let cache = {};
+          try { cache = JSON.parse(localStorage.getItem('edge_injury_cache_v4') || '{}'); } catch {}
+          const stale = sports.filter(s => !cache[s] || !cache[s].fetchedAt || Date.now() - cache[s].fetchedAt > 6 * 3600000);
+          const fresh = sports.filter(s => !stale.includes(s));
+          if (window.EDGE_INJURY && EDGE_INJURY.invalidateCache) stale.forEach(s => EDGE_INJURY.invalidateCache(s));
+          if (fresh.length) log(`  ${fresh.join(', ')}: report under 6 hours old — kept`);
+          if (stale.length) log(`  ${stale.join(', ')}: refreshed on the next pipeline run`);
+        });
+
+        await step('6/7 · Grade picks', () => runShadowGrader(true));
+        await step('7/7 · Grade bets', () => runSimGrader(true));
+        log(`✓ Quick Update complete · ${Math.round((Date.now() - t0) / 60000 * 10) / 10} min`);
+        showToast('✓ Quick Update complete', '');
+      } finally {
+        quickSportsOverride = null;
+        btn.disabled = false;
+      }
     }
 
     async function runLearning() {
@@ -936,7 +1013,10 @@
 
     // Stops a job before it starts when none of its sports are
     // selected. Returns the sports to run, or null.
+    // Quick Update runs a step for only the sports that have something new.
+    let quickSportsOverride = null;
     function sportsOrStop(logEl, silent, supported = null) {
+      if (quickSportsOverride) return quickSportsOverride.filter(s => !supported || supported.includes(s));
       const sports = jobSports(supported);
       if (sports.length) return sports;
       const msg = supported
