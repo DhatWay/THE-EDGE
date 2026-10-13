@@ -401,6 +401,7 @@ const EDGE_INJURY = (() => {
       cache[sport] = { fetchedAt: Date.now(), byTeam: fresh };
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
       saveSnapshot(sport, fresh);
+      if (typeof window !== 'undefined' && window.EDGE_GUARD) { try { EDGE_GUARD.recordInjuries(sport, fresh); } catch {} }
     }
     return fresh || {};
   }
