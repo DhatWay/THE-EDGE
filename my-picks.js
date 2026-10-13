@@ -9,7 +9,7 @@
 // ============================================================
 
 const EDGE_MYPICK = (function () {
-  const BUILD = 'mypick-20261011-03';
+  const BUILD = 'mypick-20261012-01';
   const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const fmt = v => (v > 0 ? '+' : '') + v;
 
@@ -61,7 +61,8 @@ const EDGE_MYPICK = (function () {
     const away = g?.away_team || hint.away_team || hint.away || 'Away';
     const sport = g?._sport || g?.sport || hint.sport || '';
     const when = g?.commence_time || hint.commence_time || hint.time || null;
-    const ev = lastRating(gameId);
+    let ev = lastRating(gameId);
+    let rating = false;          // true while the game is being rated
     const veil = document.createElement('div');
     veil.className = 'mp-veil';
     veil.innerHTML = `
@@ -94,12 +95,19 @@ const EDGE_MYPICK = (function () {
       $('mpLineRow').hidden = isMl;
       $('mpLine').value = m.line ?? '';
       $('mpPrice').value = m.price ?? '';
-      // What the model said about this game on its last run, for reference.
-      let note = 'The model has no rating for this game yet (run the pipeline to get one).';
+      // The model's view of the side you're about to bet, at its price.
+      let note = rating ? 'Rating this game first…' : 'NO MODEL RATING — the model hasn\u2019t rated this game, so there\u2019s no edge behind this pick.';
       if (ev && ev.confidence != null) {
+        const pr = parseFloat($('mpPrice').value);
+        const be = isFinite(pr) && Math.abs(pr) >= 100 ? (pr > 0 ? 100 / (pr + 100) : Math.abs(pr) / (Math.abs(pr) + 100)) : 0.5238;
+        let ch = null;
+        if (side === 'over' || side === 'under') { if (ev.total && isFinite(ev.total.p)) ch = side === ev.total.side ? ev.total.p : 1 - ev.total.p; }
+        else if (!isMl && (ev.direction === 'home' || ev.direction === 'away')) ch = (side === ev.direction ? Number(ev.confidence) : 100 - Number(ev.confidence)) / 100;
         const modelSide = ev.direction === 'home' ? home : ev.direction === 'away' ? away : '—';
-        note = `Model's last rating: ${modelSide} ${Number(ev.confidence).toFixed(1)}% · ${String(ev.decision || '').replace('_', ' ')}` +
-          (ev.total ? ` · total: ${ev.total.side} ${ev.total.market_total} at ${(ev.total.p * 100).toFixed(1)}%` : '');
+        note = ch != null
+          ? `Model: ${(ch * 100).toFixed(1)}% for this side · needs ${(be * 100).toFixed(1)}% at this price · value ${((ch - be) * 100 >= 0 ? '+' : '')}${((ch - be) * 100).toFixed(1)}%` +
+            ` (the model's side: ${modelSide}, ${String(ev.decision || '').replace('_', ' ')})`
+          : `Model's side: ${modelSide} ${Number(ev.confidence).toFixed(1)}% · ${String(ev.decision || '').replace('_', ' ')} (no rating for this bet type)`;
       }
       $('mpModel').textContent = note;
     };
@@ -111,6 +119,22 @@ const EDGE_MYPICK = (function () {
     $('mpAmount').addEventListener('input', syncBetBtn);
     syncBetBtn();
     $('mpSide').addEventListener('change', fill);
+    $('mpPrice').addEventListener('input', fill);
+    if (!ev && g && window.EDGE_ORCHESTRATOR && (!when || new Date(when).getTime() > Date.now())) {
+      // Rate it before you decide: one pipeline run for this game only.
+      rating = true;
+      $('mpModel').textContent = 'Rating this game first…';
+      $('mpSave').disabled = true; $('mpSaveBet').disabled = true;
+      window.EDGE_ORCHESTRATOR.run({ games: [g], grade: false }).then(r => {
+        ev = ((r && r.evaluations) || []).find(e => e.game_id === gameId) || lastRating(gameId);
+      }).catch(() => {}).finally(() => {
+        rating = false;
+        $('mpSave').disabled = false; $('mpSaveBet').disabled = false;
+        fill();
+      });
+    } else if (!ev && !g) {
+      setTimeout(() => { $('mpModel').textContent = 'NO MODEL RATING — this game isn\u2019t on your saved board. Refresh Live Matchups to rate it first.'; }, 0);
+    }
     if (hint.side && $('mpSide').querySelector(`option[value="${hint.side}"]`)) $('mpSide').value = hint.side;
     fill();
     $('mpCancel').onclick = () => veil.remove();
@@ -147,7 +171,7 @@ const EDGE_MYPICK = (function () {
           bet_type: isTotal ? 'TOTAL' : isMl ? 'ML' : 'SPREAD',
           ...(isTotal ? { line, market_total: line } : {}),
           price, break_even: Math.round((1 / dec) * 10000) / 10000,
-          mine: true, model_rating: ev ? { side: ev.direction, chance: ev.confidence, decision: ev.decision } : null,
+          mine: true, no_rating: !ev, model_rating: ev ? { side: ev.direction, chance: ev.confidence, decision: ev.decision } : null,
         },
         created_at: new Date().toISOString(),
       };
