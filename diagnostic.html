@@ -26,9 +26,9 @@
   <script src="ats-tracker.js"></script>
   <script src="orchestrator.js"></script>
   <script src="learning.js"></script>
-  <script src="parlay.js"></script>
   <script src="team-aliases.js"></script>
   <script src="auth.js"></script>
+  <script src="line-guard.js"></script>
   <script src="score-backfill.js"></script>
   <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
@@ -91,7 +91,6 @@
     <a href="index.html" class="dl">Dashboard</a>
     <a href="matchups.html" class="dl">Live Matchups</a>
     <a href="picks.html" class="dl">Today's Picks</a>
-    <a href="parlay.html" class="dl">Trend Bets</a>
     <a href="analysis.html" class="dl">AI Analysis</a>
     <a href="data.html" class="dl">Data Explorer</a>
     <a href="algorithms.html" class="dl">Algorithm Suite</a>
@@ -105,7 +104,6 @@
     <a href="admin.html" class="dl">Admin</a>
     <a href="diagnostic.html" class="dl" style="color:var(--gold);border-left-color:var(--gold);">Diagnostic</a>
     <a href="slate.html" class="dl">Slate Test</a>
-    <a href="test-espn.html" class="dl">ESPN Test</a>
   </div>
 
   <style>
@@ -1742,7 +1740,6 @@ create policy owner_only on public.${spec.name}
         ['EDGE_SITUATION_RESULTS', 'situation-results.js', true],
         ['EDGE_CLAUDE',        'claude.js',               false],
         ['EDGE_LEARNING',      'learning.js',             false],
-        ['EDGE_PARLAY',        'parlay.js',               false],
         ['EDGE_ROSTER',        'roster-engine.js',        false],
         ['EDGE_ROSTER_ENRICH', 'roster-enrichment.js',    false],
         ['EDGE_INJURY',        'injury-fragmentation.js', false],
@@ -1775,7 +1772,6 @@ create policy owner_only on public.${spec.name}
         ['roster-engine.js',     'starter_inferred',      'v1.4 starter inference'],
         ['roster-enrichment.js', 'NFL_METRICS',           'v3.4 without defensive metrics'],
         ['box-score-fetcher.js', 'mergePlayerRows',       'v1.4 merge export'],
-        ['parlay.js',            'buildContextIfNeeded',  'v1.4 self context'],
         ['physics.js',           'kelly_raw',             'v2.1 single-shrink'],
         ['governor.js',          'MAX_CALIBRATION_PULL',  'v3.1 calibration blend'],
         ['situations-engine.js', 'weighted_lean',         'v2.0 weighted engine'],
@@ -2002,7 +1998,7 @@ create policy owner_only on public.${spec.name}
       const mods = [
         'EDGE_POWER', 'EDGE_ALGOS', 'EDGE_GOVERNOR', 'EDGE_PHYSICS',
         'EDGE_CLAUDE', 'EDGE_CONTEXT', 'EDGE_ORCHESTRATOR',
-        'EDGE_LEARNING', 'EDGE_PARLAY', 'EDGE_SITUATIONS',
+        'EDGE_LEARNING', 'EDGE_SITUATIONS',
         'EDGE_SITUATION_RESULTS', 'EDGE_BACKFILL', 'EDGE_RATING',
         'EDGE_ATS', 'EDGE_TRENDS', 'EDGE_PROP_TRENDS', 'EDGE_INJURY',
         'EDGE_BOXSCORE', 'EDGE_GAME_ID_MAP', 'EDGE_SHADOW_GRADER',
@@ -2019,7 +2015,7 @@ create policy owner_only on public.${spec.name}
       section('3. REMOTE FILE CONTENT');
       const files = ['power-engine.js', 'algorithms.js', 'governor.js', 'physics.js',
                      'claude.js', 'context-builder.js', 'orchestrator.js', 'learning.js',
-                     'parlay.js', 'sw.js', 'situations-engine.js', 'situation-results.js',
+                     'qb-ratings.js', 'sw.js', 'situations-engine.js', 'situation-results.js',
                      'ats-tracker.js', 'rating-core.js', 'backfill.js',
                      'game-id-map.js', 'shadow-grader.js', 'sim-grader.js'];
       for (const f of files) {
