@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261011-02';
+  const BUILD = 'orch-20261012-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -492,8 +492,15 @@ const EDGE_ORCHESTRATOR = (() => {
           inputs: p.inputs || null,
         };
       });
+      // Merged with earlier ratings, so rating one game (My Pick,
+      // Re-evaluate) doesn't erase the others; games that have started
+      // drop off.
       try {
-        localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations }));
+        let prev = [];
+        try { prev = (JSON.parse(localStorage.getItem('edge_last_evaluations') || 'null') || {}).items || []; } catch {}
+        const fresh = new Set(summary.evaluations.map(e => e.game_id));
+        const keep = prev.filter(e => !fresh.has(e.game_id) && (!e.commence_time || new Date(e.commence_time).getTime() > Date.now()));
+        localStorage.setItem('edge_last_evaluations', JSON.stringify({ at: new Date().toISOString(), items: summary.evaluations.concat(keep) }));
       } catch {}
 
       // Where the passed games stopped, in one line.
