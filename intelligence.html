@@ -13,6 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="auth.js"></script>
+  <script src="line-guard.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -740,8 +741,18 @@
           if (!bySport[s]) bySport[s] = { count: 0, picks: 0 };
           bySport[s].count++;
         });
-        picks.slice(0, 200).forEach(p => {
-          if (p.sport && bySport[p.sport]) bySport[p.sport].picks++;
+        // Active picks: ungraded picks for games on today's board (matched by
+        // game id, or by sport and teams). It used to count the 200 most
+        // recent picks of each sport, finished games included.
+        const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const onBoard = new Set();
+        allGames.forEach(g => {
+          onBoard.add('id:' + g.id);
+          onBoard.add(`${g._sport || g.sport}|${nm(g.home_team)}|${nm(g.away_team)}`);
+        });
+        picks.forEach(p => {
+          if (p.result || !p.sport || !bySport[p.sport]) return;
+          if (onBoard.has('id:' + p.game_id) || onBoard.has(`${p.sport}|${nm(p.home_team)}|${nm(p.away_team)}`)) bySport[p.sport].picks++;
         });
         snap.innerHTML = Object.entries(bySport).map(([sport, info]) => `
           <div class="snap-tile">
