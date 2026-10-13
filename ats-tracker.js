@@ -36,7 +36,7 @@
 
 const EDGE_ATS = (() => {
 
-  const BUILD = 'ats-20261006-01';
+  const BUILD = 'ats-20261012-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -194,6 +194,22 @@ const EDGE_ATS = (() => {
 
     log('  loading cached odds');
     const oddsIndex = await loadCachedOdds(sport, url, key, canStoreOpen, quick);
+
+    // Quick mode: games that finished since the last run — not already
+    // stored with a final score. Only their teams' records can change.
+    let newTeams = null, newPairs = null;
+    if (quick) {
+      newTeams = new Set(); newPairs = new Set();
+      games.forEach(g => {
+        const st = oddsIndex[g.id];
+        const storedFinal = st && st.home_score != null && st.away_score != null && isFinite(st.home_score);
+        if (!storedFinal) {
+          newTeams.add(g.home); newTeams.add(g.away);
+          newPairs.add([g.home, g.away].sort().join('|'));
+        }
+      });
+      log(`  ${newPairs.size} game${newPairs.size === 1 ? '' : 's'} finished since the last run`);
+    }
     const withSpread = Object.values(oddsIndex).filter(r => r.spread != null).length;
     const withOpen   = Object.values(oddsIndex).filter(r => r.open_spread != null).length;
     log(`  ${withSpread} cached spreads · ${withOpen} cached opens`);
@@ -350,8 +366,19 @@ const EDGE_ATS = (() => {
       });
     });
 
-    const teamRows = Object.values(teamState).map(computeTeamSummary).filter(Boolean);
-    const matchupRows = Object.values(matchupState).map(computeMatchupSummary).filter(Boolean);
+    let teamRows = Object.values(teamState).map(computeTeamSummary).filter(Boolean);
+    let matchupRows = Object.values(matchupState).map(computeMatchupSummary).filter(Boolean);
+    if (quick) {
+      // Only the teams and matchups that played since the last run are
+      // rewritten; every other record is already current.
+      teamRows = teamRows.filter(r => newTeams.has(r.team_name));
+      matchupRows = matchupRows.filter(r => newPairs.has([r.team_a, r.team_b].sort().join('|')));
+      if (!teamRows.length && !matchupRows.length) {
+        log('  ATS records already current — nothing to rewrite');
+        return { teams_written: 0, matchups_written: 0, odds_resolved: resolved, opens_resolved: opensResolved,
+                 scores_written: scoresWritten, skipped: true };
+      }
+    }
     log(`  ${teamRows.length} team rows · ${matchupRows.length} matchup rows`);
 
     await upsert(`${url}/rest/v1/team_ats?on_conflict=sport,team_name`, teamRows, key, log, 'team_ats');
