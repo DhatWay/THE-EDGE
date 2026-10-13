@@ -28,6 +28,7 @@
   <script src="learning.js"></script>
   <script src="rating-core.js"></script>
   <script src="auth.js"></script>
+  <script src="line-guard.js"></script>
   <script src="situations-engine.js"></script>
   <script src="situation-results.js"></script>
   <script src="external-data.js"></script>
@@ -1885,6 +1886,8 @@
     updateModeIndicator();
     { const sl = document.getElementById('showLeans'); if (sl) sl.checked = showLeans; }
     { const rt = document.getElementById('rateTotals'); if (rt) rt.checked = localStorage.getItem('edge_rate_totals') === 'true'; }
+    // Opened from a Line Guard alert on another page: re-evaluate that game.
+    { const rq = new URLSearchParams(location.search).get('reeval'); if (rq) setTimeout(() => reevaluate(rq), 600); }
     { const ec = document.getElementById('earlyCaution'); if (ec) ec.checked = localStorage.getItem('edge_early_caution') === 'true'; }
     { const ul = document.getElementById('useLearned'); if (ul) ul.checked = localStorage.getItem('edge_use_learned') === 'true'; }
     loadPicks();
