@@ -957,6 +957,11 @@
     function isLineRow(p) { return String(p.decision || '').startsWith('LINE_'); }
     function isTotalRow(p) { return String(p.decision || '').startsWith('TOTAL_'); }
     function isMineRow(p) { return p.decision === 'MINE'; }
+    // Your own pick saved without a model rating (it used to show 50%).
+    function noModelRating(p) {
+      const gs = p.governor_snapshot || {};
+      return isMineRow(p) && (gs.no_rating === true || (gs.mine && !gs.model_rating));
+    }
     // Picks tab: ATS and moneyline only — over/unders live in the Totals tab.
     // Picks tab: the model's picks plus every pick you added from any
     // page (★ My Pick, ⇄ Flip, ＋ Line). Over/unders stay in Totals.
@@ -1225,11 +1230,11 @@
 
             <div class="metric-row">
               <div class="metric-cell">
-                <div class="metric-val ${conf >= 57 ? 'gold' : conf >= 55 ? 'green' : ''}">${conf.toFixed(1)}%</div>
+                <div class="metric-val ${noModelRating(p) ? '' : conf >= 57 ? 'gold' : conf >= 55 ? 'green' : ''}">${noModelRating(p) ? 'NO RATING' : conf.toFixed(1) + '%'}</div>
                 <div class="metric-lbl">To cover</div>
               </div>
               <div class="metric-cell">
-                <div class="metric-val ${p.edge > 0 ? 'green' : 'red'}">${((p.edge || 0) * 100).toFixed(2)}%</div>
+                <div class="metric-val ${noModelRating(p) ? '' : p.edge > 0 ? 'green' : 'red'}">${noModelRating(p) ? '—' : ((p.edge || 0) * 100).toFixed(2) + '%'}</div>
                 <div class="metric-lbl">Edge</div>
               </div>
               <div class="metric-cell">
