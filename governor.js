@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261010-01';
+  const BUILD = 'gov-20261014-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -230,13 +230,22 @@ const EDGE_GOVERNOR = (() => {
   function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
 
   // Blend weights for a sport (and bet type), from the Slate Test.
+  // Each sport's own value bars (sport-profiles.js); the shared ones only
+  // if that file isn't loaded.
+  function tiersFor(sport) {
+    try { const t = window.EDGE_SPORTS && EDGE_SPORTS.tiers(sport); if (t) return t; } catch {}
+    return EV_TIERS;
+  }
+
   function blendFor(sport, betType) {
     // Learned strength weights apply only when switched on (Today's
     // Picks); otherwise every sport uses the same default, so no sport
     // plays by different rules because one test happened to be run.
     let useLearned = false;
     try { useLearned = localStorage.getItem('edge_use_learned') === 'true'; } catch {}
-    if (!useLearned) return { ...DEFAULT_BLEND, source: 'default' };
+    let base = DEFAULT_BLEND;
+    try { const w = window.EDGE_SPORTS && EDGE_SPORTS.strength(sport); if (isFinite(w)) base = { ...DEFAULT_BLEND, w_strength: w }; } catch {}
+    if (!useLearned) return { ...base, source: 'default' };
     try {
       const t = readCalibrationTable();
       const key = betType === 'ML' ? `${sport}_ML` : sport;
@@ -286,7 +295,8 @@ const EDGE_GOVERNOR = (() => {
     const p = side === 'over' ? prob.over : prob.under;
     const price = side === 'over' ? op : up;
     const ev = side === 'over' ? evOver : evUnder;
-    const tier = ev >= EV_TIERS.bet2u ? '2U' : ev >= EV_TIERS.bet1u ? '1U' : ev >= EV_TIERS.lean ? 'LEAN' : 'PASS';
+    const bars = tiersFor(sport);
+    const tier = ev >= bars.bet2u ? '2U' : ev >= bars.bet1u ? '1U' : ev >= bars.lean ? 'LEAN' : 'PASS';
     return {
       side, p: round(p, 4), price, ev: round(ev, 4), break_even: round(1 / americanToDecimal(price), 4), tier,
       mu: round(mu, 2), sd, shift: round(shift, 2), weight: wInfo.w, weight_source: wInfo.source,
@@ -340,7 +350,11 @@ const EDGE_GOVERNOR = (() => {
     });
     let cNum = 0, cDen = 0;
     breakdown.forEach(b => { if (b.role === 'context') { cNum += b.signal * b.confidence; cDen += b.confidence; } });
-    const contextLogit = cDen > 0 ? clamp(cNum / cDen, -1, 1) * CONTEXT_CAP : 0;
+    // Rest, injuries, starters and bullpens are counted once, in the
+    // ranking's margin (sport-profiles.js). Adding them again here would
+    // count them twice, so this step only applies without the profiles.
+    const driversInRanking = typeof window !== 'undefined' && !!window.EDGE_SPORTS;
+    const contextLogit = driversInRanking ? 0 : (cDen > 0 ? clamp(cNum / cDen, -1, 1) * CONTEXT_CAP : 0);
 
     // ── Market ──
     const marketInfo = betType === 'ML' ? resolveMoneyline(prior) : resolveMarket(prior, homeBaseline, sport);
@@ -351,7 +365,11 @@ const EDGE_GOVERNOR = (() => {
     const strengthHomeProb = rankingSource && isFinite(rankingSource.home_cover) ? rankingSource.home_cover : null;
 
     // ── Spots ──
-    const spots = spotEvidence(prior?.spots);
+    // Rest, travel, injury and weather situations describe factors the
+    // ranking's margin already counts (sport-profiles.js) — leaving them
+    // out here keeps each factor counted once.
+    const inRanking = typeof window !== 'undefined' && !!window.EDGE_SPORTS;
+    const spots = spotEvidence(inRanking ? (prior?.spots || []).filter(x => !CONTEXT_GROUPS.has(x && x.group)) : prior?.spots);
 
     // ── One probability ──
     // The Slate Test passes its own blend (the defaults) so a backtest
@@ -413,9 +431,10 @@ const EDGE_GOVERNOR = (() => {
     const edge = round(pDecide - breakEven, 4);
 
     let decision = 'PASS', units = 0;
-    if (ev >= EV_TIERS.bet2u)      { decision = 'BET_2U'; units = 2; }
-    else if (ev >= EV_TIERS.bet1u) { decision = 'BET_1U'; units = 1; }
-    else if (ev >= EV_TIERS.lean)  { decision = 'LEAN';   units = 0.5; }
+    const bars = tiersFor(sport);
+    if (ev >= bars.bet2u)      { decision = 'BET_2U'; units = 2; }
+    else if (ev >= bars.bet1u) { decision = 'BET_1U'; units = 1; }
+    else if (ev >= bars.lean)  { decision = 'LEAN';   units = 0.5; }
 
     const kellyInput = buildKellyInput({ sideProb: pDecide, sidePrice, otherPrice, betType, units });
 
@@ -553,9 +572,10 @@ const EDGE_GOVERNOR = (() => {
     const pSide = finalConfidence / 100;
     const ev = pSide * (americanToDecimal(sidePrice) - 1) - (1 - pSide);
     let decision = 'PASS', units = 0;
-    if (ev >= EV_TIERS.bet2u)      { decision = 'BET_2U'; units = 2; }
-    else if (ev >= EV_TIERS.bet1u) { decision = 'BET_1U'; units = 1; }
-    else if (ev >= EV_TIERS.lean)  { decision = 'LEAN';   units = 0.5; }
+    const bars = tiersFor(sport);
+    if (ev >= bars.bet2u)      { decision = 'BET_2U'; units = 2; }
+    else if (ev >= bars.bet1u) { decision = 'BET_1U'; units = 1; }
+    else if (ev >= bars.lean)  { decision = 'LEAN';   units = 0.5; }
 
     return {
       decision_source: 'prop',
