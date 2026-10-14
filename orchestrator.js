@@ -217,6 +217,7 @@ const EDGE_ORCHESTRATOR = (() => {
           const ext = await EDGE_EXTERNAL.loadForSlate(gameList, builtContext, log);
           builtContext = builtContext || {};
           builtContext.externalByGame = ext.byGame;
+          if (window.EDGE_GUARD) { try { EDGE_GUARD.recordStarters(ext.byGame); } catch {} }
           summary.stages.external = ext.status;
         } catch (e) { log('  outside data failed: ' + e.message); }
       }
