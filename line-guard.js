@@ -29,7 +29,7 @@
 // ============================================================
 
 const EDGE_GUARD = (function () {
-  const BUILD = 'guard-20261014-01';
+  const BUILD = 'guard-20261014-02';
   const K_LINES = 'edge_guard_lines', K_NEWS = 'edge_guard_news', K_INJ = 'edge_guard_inj', K_DISMISS = 'edge_guard_dismissed', K_ST = 'edge_guard_starters', K_LOGGED = 'edge_guard_logged';
   const FOOTBALL = new Set(['NFL', 'NCAAF']), ML_SPORTS = new Set(['MLB', 'NHL']);
   // Points of spread that count as a real move, by sport.
@@ -439,6 +439,7 @@ const EDGE_GUARD = (function () {
     }
     const hot = current.some(a => a.sev >= 3);
     b.classList.toggle('hot', hot);
+    logAlerts();                     // every alert is logged when it appears
     b.textContent = `⚠ ${current.length}`;
     b.title = 'Line Guard — tap to see why lines moved';
     return current;
@@ -459,6 +460,44 @@ const EDGE_GUARD = (function () {
       if (window.EDGE_MYPICK) { document.querySelectorAll('.lg-veil').forEach(v => v.remove()); EDGE_MYPICK.open(a.game.id, { home_team: a.game.home, away_team: a.game.away, sport: a.game.sport, commence_time: a.game.start, side }); }
       else location.href = 'matchups.html';
     }
+  }
+
+  // ── DECISIONS ──
+  // What you decide on an alert is saved with the time and the line at
+  // that moment, then carried out. After the game both the guard's
+  // suggestion and your decision are graded.
+  async function decide(id, action) {
+    const a = current.find(x => x.id === id); if (!a) return;
+    const { url, key } = sb();
+    const logId = `${a.id}|${a.dismissKey}`.slice(0, 200);
+    await logAlerts();
+    const decision = { action, line: isFinite(a.at) ? a.at : null, at: new Date().toISOString(),
+                       side: a.side || null, bet_id: a.bet ? a.bet.id : null, amount: a.bet ? Number(a.bet.amount) || null : null };
+    if (url && key) {
+      fetch(`${url}/rest/v1/guard_alerts?id=eq.${encodeURIComponent(logId)}`, {
+        method: 'PATCH',
+        headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ decision, decided_at: decision.at }),
+      }).catch(() => {});
+    }
+    const close = () => document.querySelectorAll('.lg-veil').forEach(v => v.remove());
+    const hide = () => { const d = read(K_DISMISS, {}); d[id] = a.dismissKey; write(K_DISMISS, d); };
+    if (action === 'remove' && a.bet && url && key) {
+      if (new Date(a.game.start || 0).getTime() <= Date.now()) { alert('That game has started — the bet stays.'); return; }
+      if (!confirm(`Remove your $${Number(a.bet.amount || 0).toFixed(0)} ${a.bet.mode} bet on ${a.side}?`)) return;
+      try {
+        const r = await fetch(`${url}/rest/v1/bet_log?id=eq.${a.bet.id}`, { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal' } });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+      } catch (e) { alert('Could not remove the bet: ' + e.message); return; }
+    }
+    hide(); close();
+    if (action === 'add' || action === 'other_side') {
+      const sameHome = !!a.sideHome;
+      const side = action === 'add' ? (sameHome ? 'home' : 'away') : (sameHome ? 'away' : 'home');
+      if (window.EDGE_MYPICK) EDGE_MYPICK.open(a.game.id, { home_team: a.game.home, away_team: a.game.away, sport: a.game.sport, commence_time: a.game.start, side });
+      else location.href = 'matchups.html';
+    }
+    refresh();
   }
 
   // ── HEADLINES ──
@@ -495,7 +534,9 @@ const EDGE_GUARD = (function () {
     const { url, key } = sb();
     if (!url || !key || localStorage.getItem('edge_guard_log_missing') === 'true') return;
     const logged = read(K_LOGGED, {});
-    const rows = current.filter(a => !logged[`${a.id}|${a.dismissKey}`]).map(a => ({
+    const sig = a => `${a.kind}|${a.rule}|${(a.evidence && a.evidence.headlines || []).length}`;
+    const fresh = current.filter(a => logged[`${a.id}|${a.dismissKey}`] !== sig(a));
+    const rows = fresh.map(a => ({
       id: `${a.id}|${a.dismissKey}`.slice(0, 200),
       game_id: a.game.id, sport: a.game.sport, home: a.game.home, away: a.game.away, start_time: a.game.start || null,
       kind: a.kind, rule: a.rule || null, side_team: a.side || null, mode: a.mode || null,
@@ -510,7 +551,7 @@ const EDGE_GUARD = (function () {
         body: JSON.stringify(rows),
       });
       if (res.status === 404 || res.status === 400) { localStorage.setItem('edge_guard_log_missing', 'true'); return; }
-      if (res.ok) { rows.forEach(r => { logged[r.id] = Date.now(); }); write(K_LOGGED, logged); }
+      if (res.ok) { fresh.forEach(a => { logged[`${a.id}|${a.dismissKey}`] = sig(a); }); write(K_LOGGED, logged); }
     } catch {}
   }
 
@@ -536,6 +577,27 @@ const EDGE_GUARD = (function () {
         other_side: atAlert == null ? null : !atAlert,
       };
       g.suggestion_right = r.rule in right ? right[r.rule] : null;
+      // Your decision on the alert, if you made one.
+      const d = r.decision && r.decision.action;
+      if (d) {
+        const otherAtAlert = atAlert == null ? null : !atAlert;
+        const isBet = r.mode && r.mode !== 'model';
+        const dr = {
+          hold: isBet ? atYour : null, dismissed: isBet ? atYour : (atAlert == null ? null : !atAlert),
+          add: atAlert, other_side: otherAtAlert,
+          remove: atYour == null ? null : !atYour,        // removing was right if the bet would have lost
+          skip: atAlert == null ? null : !atAlert,
+        };
+        g.decision = d;
+        g.decision_right = d in dr ? dr[d] : null;
+        const follows = {
+          favorable: ['hold', 'dismissed'], hold: ['hold', 'dismissed'],
+          edge_gone: ['hold', 'remove', 'dismissed'], sharp_dont_add: ['hold', 'remove', 'dismissed'], steam_wait: ['hold', 'remove', 'dismissed', 'skip'],
+          other_side: ['other_side'], sharp_skip: ['skip', 'dismissed'], sharp_strong_value: ['add'], favorable_pick: ['add'],
+          news_reeval: [], reevaluate: [],
+        };
+        g.followed = r.rule in follows ? follows[r.rule].includes(d) : null;
+      }
     }
     return g;
   }
@@ -577,6 +639,16 @@ const EDGE_GUARD = (function () {
       if (res.status === 404 || res.status === 400) return { rows: [], missing: true };
       return { rows: res.ok ? await res.json() : [], missing: false };
     } catch { return { rows: [], missing: false }; }
+  }
+  function decisionCard(rows) {
+    const out = { followed: { w: 0, l: 0 }, overrode: { w: 0, l: 0 } };
+    rows.forEach(r => {
+      const g = r.grade || {};
+      if (!r.graded_at || g.followed == null || g.decision_right == null) return;
+      const k = g.followed ? 'followed' : 'overrode';
+      if (g.decision_right) out[k].w++; else out[k].l++;
+    });
+    return out;
   }
   function scorecard(rows) {
     const by = {};
@@ -622,10 +694,16 @@ const EDGE_GUARD = (function () {
           ${a.model ? `<div class="lg-model">${esc(a.model)}</div>` : ''}
           <div class="lg-suggest">${esc(a.suggest)}</div>
           ${a.checks && a.checks.length ? `<details class="lg-checks"><summary>What it checked</summary>${a.checks.map(esc).join('<br>')}</details>` : ''}
-          <div class="lg-acts">
+          <div class="lg-acts">${a.bet ? `
+            <button onclick="EDGE_GUARD.decide('${a.id}','hold')">Hold</button>
+            <button onclick="EDGE_GUARD.decide('${a.id}','add')">Add</button>
+            <button onclick="EDGE_GUARD.decide('${a.id}','other_side')">⇄ Other side</button>
+            <button onclick="EDGE_GUARD.decide('${a.id}','remove')">Remove bet</button>
+            <button onclick="EDGE_GUARD.decide('${a.id}','dismissed')">Dismiss</button>` : `
+            <button onclick="EDGE_GUARD.decide('${a.id}','add')">Bet it</button>
+            <button onclick="EDGE_GUARD.decide('${a.id}','other_side')">⇄ Other side</button>
+            <button onclick="EDGE_GUARD.decide('${a.id}','skip')">Skip</button>`}
             <button onclick="EDGE_GUARD.act('${a.id}','reeval')">↻ Re-evaluate</button>
-            ${a.kind !== 'FAVORABLE' ? `<button onclick="EDGE_GUARD.act('${a.id}','flip')">⇄ Other side</button>` : ''}
-            <button onclick="EDGE_GUARD.dismiss('${a.id}')">Dismiss</button>
           </div>
         </div>`).join('') : '<div class="lg-empty">No alerts. Lines on your bets and the model\u2019s picks haven\u2019t moved enough to matter.</div>') +
       `<div class="lg-empty" style="margin-top:12px">Checked when you refresh Live Matchups or run the pipeline; headlines when you open this panel. "Sharp" is an inference from the books and the absence of news — the app can\u2019t see betting tickets.</div>`;
@@ -641,7 +719,11 @@ const EDGE_GUARD = (function () {
         Object.entries(sc).map(([k, s]) => `<tr><td>${esc(k)}</td><td>${s.n}</td><td>${pc(s.cc, s.ccN)}</td><td>${pc(s.sr, s.srN)}</td></tr>`).join('') + `</table>`
       : '<div class="lg-empty">No graded alerts yet — alerts are graded after their games finish and the scores are in (Quick Update).</div>';
     const yn = v => v == null ? '—' : v ? '✓' : '✗';
-    body.innerHTML = `<div class="lg-why" style="margin-top:8px"><b>Scorecard</b></div>${card}
+    const dc = decisionCard(rows);
+    const dline = (dc.followed.w + dc.followed.l + dc.overrode.w + dc.overrode.l)
+      ? `<div class="lg-why" style="margin-top:8px"><b>Your decisions</b> · followed the guard ${dc.followed.w}-${dc.followed.l} · overrode it ${dc.overrode.w}-${dc.overrode.l}</div>`
+      : `<div class="lg-why" style="margin-top:8px"><b>Your decisions</b> · none graded yet</div>`;
+    body.innerHTML = `<div class="lg-why" style="margin-top:8px"><b>Scorecard</b></div>${card}${dline}
       <div class="lg-why" style="margin-top:12px"><b>Every alert</b> (newest first)</div>` +
       (rows.length ? rows.map(r => `
         <div class="lg-item">
@@ -659,7 +741,7 @@ const EDGE_GUARD = (function () {
           </details>
           <div class="lg-meta" style="margin-top:6px">${r.graded_at
             ? `Final ${esc(r.grade && r.grade.final || '')} · close ${r.close_line ?? '—'} · close confirmed ${yn(r.grade && r.grade.close_confirmed)} · suggestion right ${yn(r.grade && r.grade.suggestion_right)}`
-            : 'Not graded yet'}</div>
+            : 'Not graded yet'}${r.decision ? ` · your decision: ${esc(r.decision.action)}${r.grade && r.grade.decision_right != null ? ' ' + yn(r.grade.decision_right) : ''}` : ''}</div>
         </div>`).join('') : '<div class="lg-empty">Nothing logged yet. Alerts are logged when you open them.</div>');
   }
 
@@ -668,7 +750,7 @@ const EDGE_GUARD = (function () {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else setTimeout(go, 0);
   }
 
-  return { BUILD, recordBoard, recordInjuries, recordStarters, refresh, buildAlerts, openPanel, dismiss, act, _homeCoverAt: homeCoverAt, _classify: classify, _gradeOne: gradeOne, _headlinesFor: headlinesFor };
+  return { BUILD, recordBoard, recordInjuries, recordStarters, refresh, buildAlerts, openPanel, dismiss, act, decide, _homeCoverAt: homeCoverAt, _classify: classify, _gradeOne: gradeOne, _headlinesFor: headlinesFor };
 })();
 
 if (typeof window !== 'undefined') window.EDGE_GUARD = EDGE_GUARD;
