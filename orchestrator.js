@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261012-01';
+  const BUILD = 'orch-20261014-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -229,6 +229,15 @@ const EDGE_ORCHESTRATOR = (() => {
           builtContext = builtContext || {};
           builtContext.qbByGame = await EDGE_QB.forGames(gameList, builtContext.injuriesByGame || {}, log);
         } catch (e) { log('  quarterbacks failed: ' + e.message); }
+      }
+
+      // ── Stage 3d · Bullpens (MLB): relief innings over the last 3 days ──
+      if (gameList.some(g => (g._sport || g.sport) === 'MLB')) {
+        log('Stage 3d · Bullpens');
+        try {
+          builtContext = builtContext || {};
+          builtContext.bullpenByTeam = await loadBullpens(log);
+        } catch (e) { log('  bullpens failed: ' + e.message); }
       }
 
       log('Stage 4/7 · Computing game priors');
@@ -773,6 +782,12 @@ const EDGE_ORCHESTRATOR = (() => {
           adjustments: { qb_home_out: !!inj?.home_qb_out, qb_away_out: !!inj?.away_qb_out,
                          qb: context?.qbByGame?.[game.id] || null },
           external: context?.externalByGame?.[game.id] || null,
+          // The sport's own factors, added in the ranking's margin.
+          injuries: inj || null,
+          bullpen: sport === 'MLB' && context?.bullpenByTeam ? {
+            home: bullpenFor(context.bullpenByTeam, game.home_team),
+            away: bullpenFor(context.bullpenByTeam, game.away_team),
+          } : null,
           rest: {
             home: context?.restByTeam?.[`${sport}:${game.home_team}`] ?? null,
             away: context?.restByTeam?.[`${sport}:${game.away_team}`] ?? null,
@@ -1176,6 +1191,37 @@ const EDGE_ORCHESTRATOR = (() => {
   // One row per game for its total, kept apart from the side rating
   // (decision TOTAL_2U / TOTAL_1U / TOTAL_LEAN / TOTAL_PASS). Graded
   // on the combined score at the posted total and price.
+  // Relief innings per MLB team over the last three days, from the box
+  // scores already stored (pitchers who didn't start).
+  async function loadBullpens(log = () => {}) {
+    const url = SUPABASE_URL(), key = SUPABASE_KEY();
+    if (!url || !key) return {};
+    const since = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    const out = {};
+    for (let off = 0; off < 10000; off += 1000) {
+      const res = await fetch(`${url}/rest/v1/player_game_stats?sport=eq.MLB&game_date=gte.${since}&starter=eq.false&innings_pitched=gt.0` +
+        `&select=team_name,innings_pitched&limit=1000&offset=${off}`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      if (!res.ok) break;
+      const rows = await res.json();
+      rows.forEach(r => {
+        // Box scores write innings as 5.1 = 5⅓, 5.2 = 5⅔.
+        const ip = Number(r.innings_pitched) || 0;
+        const whole = Math.floor(ip), outs = Math.round((ip - whole) * 10);
+        const k = String(r.team_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        out[k] = (out[k] || 0) + whole + outs / 3;
+      });
+      if (rows.length < 1000) break;
+    }
+    log(`  bullpen workload for ${Object.keys(out).length} teams`);
+    return out;
+  }
+  function bullpenFor(map, team) {
+    const t = String(team || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (map[t] != null) return map[t];
+    const k = Object.keys(map).find(x => t.includes(x) || x.includes(t) || (x.length > 4 && t.endsWith(x.slice(-6))));
+    return k ? map[k] : 0;       // no relief innings on file: a rested bullpen
+  }
+
   async function persistTotals(totalsByGame, priors, mode, runId) {
     const url = SUPABASE_URL(), key = SUPABASE_KEY();
     const out = { saved: 0, refreshed: 0, failed: 0, error: null };
