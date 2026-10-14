@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261010-01';
+  const BUILD = 'pe-20261014-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -1230,10 +1230,34 @@ const EDGE_POWER = (() => {
     }
     if (qbDelta) extEffect.qb = qbDelta;
 
+    // The sport's own factors (sport-profiles.js): rest, injuries by
+    // lineup share, bullpen workload — as margin for the home team.
+    const SP = (typeof window !== 'undefined' && window.EDGE_SPORTS) || null;
+    const sportDrv = SP ? SP.drivers(sport, { rest, restInFit, injuries: options.injuries || null, bullpen: options.bullpen || null })
+                        : { delta: 0, parts: [] };
+    if (sportDrv.delta) extEffect.sport_drivers = sportDrv.delta;
+
     const totalModelSpread = round(
-      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1) - qbDelta - starterDelta,
+      modelSpread + (coachDelta * -1) + (defenseMatchup.adjustment_points * -1) - qbDelta - starterDelta - sportDrv.delta,
       2
     );
+    // The chance each side covers a line, by the sport's own math: normal
+    // outcomes for the points sports (pace, mismatches, key numbers), exact
+    // goal/run distributions for hockey, baseball and soccer.
+    const baseSigma = (modelSource === 'fitted' ? fit.rmse : null) ?? calib?.sigma_settled ?? calib?.projection_sigma ?? null;
+    const coverAt = (line) => {
+      if (totalModelSpread == null || !isFinite(totalModelSpread) || line == null || !isFinite(line)) return null;
+      if (SP && SP.profile(sport)) {
+        return SP.cover(sport, -totalModelSpread, line, {
+          // Expected scoring: the market's total first (the best estimate
+          // of how many goals/runs a game produces), then the projection.
+          sigma: baseSigma, total: (options.market && isFinite(options.market.total) && options.market.total > 0) ? options.market.total
+                                 : ((projection && isFinite(projection.total) && projection.total > 0) ? projection.total : null),
+          homeStats, awayStats, league: options.league || null,
+        });
+      }
+      return core ? core.coverProbability(-totalModelSpread, line, baseSigma, { sport, lambda: null, blendSigma: null }) : null;
+    };
 
     const rawEdge = marketSpread !== null ? round(marketSpread - totalModelSpread, 2) : 0;
 
@@ -1294,30 +1318,14 @@ const EDGE_POWER = (() => {
       // Chance to win outright (moneylines): the same margin and
       // spread of outcomes against a line of 0, not anchored to the
       // spread market.
-      win: (core && totalModelSpread != null && isFinite(totalModelSpread))
-        ? core.coverProbability(-totalModelSpread, 0,
-            (modelSource === 'fitted' ? fit.rmse : null) ?? calib?.sigma_settled ?? calib?.projection_sigma ?? null,
-            { sport })
-        : null,
+      win: coverAt(0),
 
       // Cover chance from the full ranking margin — offense/defense
       // and composite blend, coaching, and the defense matchup — the
       // same number as model_spread. Available whenever the ranking
       // produced a spread, not only when the projection ran.
-      cover: (core && totalModelSpread != null && isFinite(totalModelSpread) && marketSpread !== null)
-        ? core.coverProbability(-totalModelSpread, marketSpread,
-            (modelSource === 'fitted' ? fit.rmse : null) ?? calib?.sigma_settled ?? calib?.projection_sigma ?? null,
-            {
-              // Not pulled toward the market here: the governor blends
-              // market and strength once, by the weight the Slate Test
-              // measured. Anchoring here too would count the market twice.
-              lambda: null,
-              sport,
-              // The model's own spread of outcomes, not the narrower
-              // market-blend one (that belongs with anchoring).
-              blendSigma: null,
-            })
-        : null,
+      cover: marketSpread !== null ? coverAt(marketSpread) : null,
+      sport_drivers: sportDrv.parts.length ? sportDrv.parts : null,
       calibrated: !!calib,
       calibration_note: calib
         ? (calib.market_lambda != null
