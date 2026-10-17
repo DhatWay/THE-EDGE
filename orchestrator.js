@@ -1526,6 +1526,11 @@ const EDGE_ORCHESTRATOR = (() => {
   return {
     BUILD,
     run,
+    // Used by the background rater (supabase/functions/edge-rater), which
+    // runs these same steps on the server.
+    loadPowerIndex,
+    buildPriors,
+    loadBullpens,
     getMode,
     setMode,
     MODES,
