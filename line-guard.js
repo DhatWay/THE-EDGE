@@ -29,7 +29,7 @@
 // ============================================================
 
 const EDGE_GUARD = (function () {
-  const BUILD = 'guard-20261014-02';
+  const BUILD = 'guard-20261017-01';
   const K_LINES = 'edge_guard_lines', K_NEWS = 'edge_guard_news', K_INJ = 'edge_guard_inj', K_DISMISS = 'edge_guard_dismissed', K_ST = 'edge_guard_starters', K_LOGGED = 'edge_guard_logged';
   const FOOTBALL = new Set(['NFL', 'NCAAF']), ML_SPORTS = new Set(['MLB', 'NHL']);
   // Points of spread that count as a real move, by sport.
@@ -129,12 +129,16 @@ const EDGE_GUARD = (function () {
   }
   // The injury report as last downloaded: important players out or
   // doubtful on a team, quarterbacks first, with the date ESPN gives.
-  function currentInjuries(sport, team) {
+  function currentInjuries(sport, team, sinceMs) {
     const cache = read('edge_injury_cache_v4', {});
     const byTeam = (cache[sport] || {}).byTeam || {};
     const key = Object.keys(byTeam).find(k => teamKeyMatch(k, team));
     const list = key ? byTeam[key] : [];
-    return (list || []).filter(p => SEVERE.test(String(p.status || '')))
+    // Only injuries reported recently — since two days before the line was
+    // taken. A player out for weeks was priced in long ago and can't explain
+    // a move; one with no date isn't counted.
+    const recentFrom = (sinceMs || Date.now() - 4 * 86400000) - 2 * 86400000;
+    return (list || []).filter(p => SEVERE.test(String(p.status || '')) && p.date && new Date(p.date).getTime() >= recentFrom)
       .sort((x, y) => (String(y.position).toUpperCase() === 'QB') - (String(x.position).toUpperCase() === 'QB'))
       .map(p => ({ player: p.name, pos: String(p.position || '').toUpperCase(), status: String(p.status || '').toLowerCase(), date: p.date || null }));
   }
@@ -213,9 +217,9 @@ const EDGE_GUARD = (function () {
     out.evidence.changes = items.map(n => ({ team: n.team, player: n.player, pos: n.pos, from: n.from, to: n.to, worse: n.worse }));
     out.checks.push(`Injury changes since then: ${items.length ? items.length + ' found' : 'none recorded'}`);
     // 2. The current injury report for the team the line moved against
-    const inj = currentInjuries(sport, againstTeam);
+    const inj = currentInjuries(sport, againstTeam, refTime);
     out.evidence.injuries = inj.slice(0, 6);
-    out.checks.push(`Injury report for ${againstTeam}: ${inj.length ? inj.length + ' out or doubtful' : 'no one important listed out'}`);
+    out.checks.push(`Injury report for ${againstTeam}: ${inj.length ? inj.length + ' newly out or doubtful' : 'no new injuries since then'}`);
     // 3. Starting pitcher / goalie changes
     const sc = starterChange(game, refTime);
     out.evidence.starters = sc;
@@ -228,11 +232,11 @@ const EDGE_GUARD = (function () {
     } else if (sc) {
       out.cause = 'NEWS';
       out.why.push(sc.map(c => `${c.team} ${c.kind} change: ${c.from} → ${c.to}`).join('; '));
-    } else if (inj.length && (inj.some(p => p.pos === 'QB' && FOOTBALL.has(sport)) || inj.length >= 2)) {
+    } else if (inj.length && (inj.some(p => p.pos === 'QB' && FOOTBALL.has(sport)) || inj.length >= 1)) {
       out.cause = 'NEWS';
       const qb = inj.find(p => p.pos === 'QB' && FOOTBALL.has(sport));
       out.why.push(qb ? `${againstTeam} quarterback ${qb.player} is listed ${qb.status}${qb.date ? ' (since ' + new Date(qb.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ')' : ''}`
-        : `${againstTeam} has ${inj.length} players listed out or doubtful: ` + inj.slice(0, 3).map(p => `${p.player}${p.pos ? ' (' + p.pos + ')' : ''}`).join(', '));
+        : `${againstTeam} newly listed out or doubtful: ` + inj.slice(0, 3).map(p => `${p.player}${p.pos ? ' (' + p.pos + ')' : ''} ${p.status}${p.date ? ' since ' + new Date(p.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`).join(', '));
     }
     // 4. Steam: a fast move between the last two refreshes, near kickoff
     const lines = read(K_LINES, {})[game.id];
@@ -330,7 +334,7 @@ const EDGE_GUARD = (function () {
           ? `The news is priced in and the model still gives your bet ${pct(pYour)} at ${fmt(yourLine)}. Hold; don\u2019t add at the new number.`
           : (otherVal != null && otherVal > 0.02
               ? `Your edge is gone after the news (model ${pYour != null ? pct(pYour) : '—'} for your bet). Don\u2019t add. The other side is +${(otherVal * 100).toFixed(1)}% value at ${fmt(-curLine)} — ⇄ Flip if you want to offset.`
-              : `Your edge is gone after the news. Hold what you have and don\u2019t add.`);
+              : `Your edge is gone after the news (${c.why[0] || 'see above'}). Hold what you have and don\u2019t add.`);
       } else if (c.cause === 'STEAM') {
         rule = 'steam_wait';
         suggest = 'A fast move this close to kickoff usually means late information. Don\u2019t add until you know why.';
