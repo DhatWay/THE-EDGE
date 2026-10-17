@@ -1356,6 +1356,20 @@
       }
       // Quarterbacks: who's expected to start against the one the team's
       // ratings were built on, and what the gap is worth.
+      // The sport's own logic: which of its factors moved this game, and the
+      // math used for its outcomes (sport-profiles.js).
+      if (r.sport_logic && r.sport_logic.sport) {
+        const sl = r.sport_logic;
+        const MATH = { NFL: 'normal outcomes with key numbers 3 and 7', NCAAF: 'normal outcomes, wider in mismatches', NBA: 'normal outcomes scaled by pace',
+                       WNBA: 'normal outcomes scaled by pace', NCAAB: 'normal outcomes scaled by pace', MLB: 'runs per team (bunched), extra innings ~50/50',
+                       NHL: 'goals per team, overtime ~50/50', MLS: 'goals per team with the draw correction' };
+        rows.push([`${sl.sport} logic`, MATH[sl.sport] || '—']);
+        rows.push([`${sl.sport} factors`, (sl.drivers && sl.drivers.length)
+          ? sl.drivers.map(d => `${d.why} → ${d.value >= 0 ? '+' : ''}${d.value} to home`).join(' · ')
+          : 'none moved this game (rest even, no lineup losses on file)']);
+        if (sl.sigma != null) rows.push(['Spread of outcomes', `${sl.sigma}${sl.sigma_notes && sl.sigma_notes.length ? ' (' + sl.sigma_notes.join(', ') + ')' : ''}`]);
+        if (sl.lambda) rows.push(['Expected scoring', `${p.home_team || 'home'} ${sl.lambda.home} · ${p.away_team || 'away'} ${sl.lambda.away}`]);
+      }
       // Home field for this matchup, from the two teams' own results.
       if (r.home_split && isFinite(r.home_split.matchup_hfa)) {
         const hs = r.home_split, f1 = v => (v > 0 ? '+' : '') + Number(v).toFixed(1);
