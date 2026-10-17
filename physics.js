@@ -434,6 +434,13 @@ const EDGE_PHYSICS = (() => {
           qb: prior?.qb ?? null,
           external_effect: prior?.external_effect ?? null,
           home_split: prior?.home_split ?? null,
+          sport_logic: {
+            sport: prior?.sport ?? null,
+            drivers: prior?.sport_drivers ?? null,
+            sigma: prior?.cover?.sigma ?? null,
+            sigma_notes: prior?.cover?.sigma_notes ?? null,
+            lambda: prior?.cover?.lambda_home != null ? { home: prior.cover.lambda_home, away: prior.cover.lambda_away } : null,
+          },
           rest_in_fit: !!prior?.rest_in_fit,
           external: prior?.external ?? null,
           rest_days: prior?.rest_days ?? null,
