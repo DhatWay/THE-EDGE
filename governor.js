@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261014-01';
+  const BUILD = 'gov-20261017-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -237,6 +237,43 @@ const EDGE_GOVERNOR = (() => {
     return EV_TIERS;
   }
 
+  // ── MONEYLINE DE-BIAS ──
+  // The ranking's win chances sit closer to 50/50 than the market's (it
+  // doesn't see everything the market prices), so measured against the
+  // market every underdog looked like value and every pick was a dog.
+  // The fix: learn, per sport, how much of the market's favorite/underdog
+  // spread the ranking reproduces (the slope of the ranking's log-odds on
+  // the market's), and count only what the ranking says BEYOND that. Its
+  // leftover opinion has no built-in lean to either side. Learned from the
+  // games it rates (newest count most); 0.75 until 30 games are seen. The
+  // Slate Test learns its own copy from earlier games only.
+  const SCALE_KEY = 'edge_win_scale';
+  const scaleMem = {};
+  const inSlate = () => typeof window !== 'undefined' && !!window.__EDGE_SLATE;
+  function scaleStore() {
+    if (inSlate()) return scaleMem;
+    try { return JSON.parse(localStorage.getItem(SCALE_KEY) || '{}'); } catch { return {}; }
+  }
+  function winScale(sport) {
+    const st = scaleStore()[sport];
+    if (!st || st.n < 30 || !(st.mm > 0)) return { b: 0.75, n: st ? st.n : 0, learned: false };
+    return { b: clamp(st.rm / st.mm, 0.2, 1.5), n: st.n, learned: true };
+  }
+  function observeWin(sport, gameId, r, m) {
+    if (!isFinite(r) || !isFinite(m)) return;
+    const all = scaleStore();
+    const st = all[sport] || { n: 0, rm: 0, mm: 0, seen: [] };
+    st.seen = st.seen || [];
+    if (gameId && st.seen.includes(gameId)) return;          // each game once
+    const d = 0.995;                                           // newest count most
+    st.rm = st.rm * d + r * m; st.mm = st.mm * d + m * m; st.n = (st.n || 0) + 1;
+    if (gameId) { st.seen.push(gameId); if (st.seen.length > 400) st.seen = st.seen.slice(-400); }
+    all[sport] = st;
+    if (!inSlate()) { try { localStorage.setItem(SCALE_KEY, JSON.stringify(all)); } catch {} }
+  }
+
+  function resetWinScale() { Object.keys(scaleMem).forEach(k => delete scaleMem[k]); }
+
   function blendFor(sport, betType) {
     // Learned strength weights apply only when switched on (Today's
     // Picks); otherwise every sport uses the same default, so no sport
@@ -384,8 +421,18 @@ const EDGE_GOVERNOR = (() => {
     const gh = Number(prior?.home_power?.games_played), ga = Number(prior?.away_power?.games_played);
     const strengthCertainty = (caution && isFinite(gh) && isFinite(ga))
       ? clamp(Math.min(gh, ga) / (STRENGTH_FULL_GAMES[sport] || 10), 0.25, 1) : 1;
+    // Moneylines: only the ranking's opinion beyond the share of the
+    // market's favorite/underdog spread it normally reproduces (above).
+    let mlScale = null;
+    if (betType === 'ML' && strengthHomeProb != null) {
+      mlScale = winScale(sport);
+      observeWin(sport, prior?.game_id, logit(strengthHomeProb), logit(marketHomeProb));
+    }
     const strengthTerm = strengthHomeProb != null
-      ? blend.w_strength * strengthCertainty * (logit(strengthHomeProb) - logit(marketHomeProb)) : 0;
+      ? blend.w_strength * strengthCertainty * (mlScale
+          ? (logit(strengthHomeProb) - mlScale.b * logit(marketHomeProb))
+          : (logit(strengthHomeProb) - logit(marketHomeProb)))
+      : 0;
     const spotTerm = blend.w_spots * spots.logit;
     const posteriorHomeProb = sigmoid(logit(marketHomeProb) + strengthTerm + spotTerm + contextLogit);
 
@@ -432,7 +479,11 @@ const EDGE_GOVERNOR = (() => {
 
     let decision = 'PASS', units = 0;
     const bars = tiersFor(sport);
-    if (ev >= bars.bet2u)      { decision = 'BET_2U'; units = 2; }
+    // NCAAF: no picks until both teams have 3 games of data — the Slate
+    // Test showed the ranking is noise before that.
+    const ncaafThin = sport === 'NCAAF' && isFinite(gh) && isFinite(ga) && Math.min(gh, ga) < 3;
+    if (ncaafThin)                  { decision = 'PASS'; units = 0; }
+    else if (ev >= bars.bet2u)      { decision = 'BET_2U'; units = 2; }
     else if (ev >= bars.bet1u) { decision = 'BET_1U'; units = 1; }
     else if (ev >= bars.lean)  { decision = 'LEAN';   units = 0.5; }
 
@@ -459,6 +510,8 @@ const EDGE_GOVERNOR = (() => {
 
       // The probability, piece by piece (home view, log-odds terms)
       decision_source: strengthHomeProb != null ? 'blend' : 'market + spots',
+      ml_debias: mlScale ? { slope: round(mlScale.b, 3), games: mlScale.n, learned: mlScale.learned } : null,
+      thin_data: ncaafThin ? 'NCAAF: under 3 games of data' : null,
       components: {
         market_home: round(marketHomeProb, 4),
         strength_home: strengthHomeProb != null ? round(strengthHomeProb, 4) : null,
@@ -877,6 +930,7 @@ const EDGE_GOVERNOR = (() => {
     BUILD,
     run,
     runProp,
+    resetWinScale,
     rateTotal,
     DEFAULT_BLEND,
     SPOT_PRIOR_RATE,
