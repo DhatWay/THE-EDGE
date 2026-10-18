@@ -29,7 +29,7 @@
 
 const EDGE_RATING = (() => {
 
-  const BUILD = 'rc-20260930-01';
+  const BUILD = 'rc-20261017-01';
 
   // NFL final margins bunch on key numbers: about 15% of games end
   // by exactly 3 and about 9% by 7, far more than a smooth curve
@@ -84,6 +84,9 @@ const EDGE_RATING = (() => {
   // Typical possessions per team per game, for the attack/defence
   // model. Points alone conflate quality with pace.
   const POSSESSIONS = { NFL: 12, NCAAF: 13, NBA: 100, NCAAB: 68, NHL: 60, MLB: 38, MLS: 100 };
+  // Pretend-average games each team starts with in the offense/defense
+  // ratings, so a handful of real games can't produce an extreme rating.
+  const PRIOR_GAMES = { NFL: 3, NCAAF: 3, NBA: 8, WNBA: 6, NCAAB: 6, MLB: 15, NHL: 10, MLS: 5 };
 
   // Home advantage in points, applied at projection time.
   const HOME_POINTS = { NFL: 2.0, NCAAF: 2.8, NBA: 2.6, NCAAB: 3.3, NHL: 0.25, MLB: 0.20, MLS: 0.38 };
@@ -105,6 +108,7 @@ const EDGE_RATING = (() => {
     massey,
     colley,
     attackDefense,
+    forRatings,
     carryOver,
     projectScore,
     blend,
@@ -469,6 +473,24 @@ const EDGE_RATING = (() => {
   // what converts ratings into a projected score.
   // ============================================================
 
+  // NCAAF: games against small-school (FCS) opponents are left out of
+  // the ratings. Those teams only show up in one or two games a season
+  // (against major-college teams), so they can't be rated — treated as
+  // average, they inflated the teams that beat them and were picked at
+  // +35 to +58. A team counts as small-school when it has 2 or fewer games
+  // while the typical team has 4+ (1 or fewer while it has 2–3).
+  function forRatings(sport, games) {
+    if (sport !== 'NCAAF' || !Array.isArray(games) || !games.length) return games;
+    const n = {};
+    games.forEach(g => { n[g.home] = (n[g.home] || 0) + 1; n[g.away] = (n[g.away] || 0) + 1; });
+    const counts = Object.values(n).sort((a, b) => a - b);
+    const median = counts[Math.floor(counts.length / 2)] || 0;
+    const cut = median >= 4 ? 2 : median >= 2 ? 1 : 0;
+    if (!cut) return games;
+    const small = new Set(Object.keys(n).filter(t => n[t] <= cut));
+    return games.filter(g => !small.has(g.home) && !small.has(g.away));
+  }
+
   function attackDefense(sport, games, iterations = 30) {
     const teams = teamList(games);
     if (!teams.length) return {};
@@ -488,13 +510,17 @@ const EDGE_RATING = (() => {
     const active = teams.filter(t => played[t] > 0);
     if (!active.length) return {};
 
-    // Per-possession rates.
+    // Per-possession rates. Every team starts at the league average and
+    // its own games pull it away: a few games move it a little, a full
+    // season moves it fully (PRIOR_GAMES pretend-average games). Without
+    // this, a team with one or two games gets an extreme rating.
     const leagueAvg = active.reduce((s, t) => s + scored[t] / played[t], 0) / active.length;
+    const kPrior = PRIOR_GAMES[sport] ?? 5;
     const perPoss = {};
     active.forEach(t => {
       perPoss[t] = {
-        att: (scored[t] / played[t]) / poss,
-        def: (allowed[t] / played[t]) / poss,
+        att: ((scored[t] + kPrior * leagueAvg) / (played[t] + kPrior)) / poss,
+        def: ((allowed[t] + kPrior * leagueAvg) / (played[t] + kPrior)) / poss,
       };
     });
     const leaguePerPoss = leagueAvg / poss;
@@ -502,6 +528,12 @@ const EDGE_RATING = (() => {
     let att = {}, def = {};
     active.forEach(t => { att[t] = perPoss[t].att; def[t] = perPoss[t].def; });
 
+    // Opponent adjustment, held steady: each pass moves a team only half
+    // way to its new value, one opponent schedule can change a rate by at
+    // most ±40%, and the league's average attack and defence are put back
+    // to the league rate after every pass. With few games per team
+    // (football) the unsteadied version ran away to extreme ratings.
+    const meanOf = m => active.reduce((s, t) => s + m[t], 0) / active.length;
     for (let k = 0; k < iterations; k++) {
       const nextAtt = {}, nextDef = {};
       active.forEach(t => {
@@ -514,9 +546,13 @@ const EDGE_RATING = (() => {
           ? oppAtt.reduce((s, o) => s + att[o], 0) / oppAtt.length : leaguePerPoss;
 
         // Scored more than these opponents usually concede → stronger attack.
-        nextAtt[t] = perPoss[t].att * (leaguePerPoss / Math.max(avgOppDef, 1e-6));
-        nextDef[t] = perPoss[t].def * (leaguePerPoss / Math.max(avgOppAtt, 1e-6));
+        const fa = clamp(leaguePerPoss / Math.max(avgOppDef, 1e-6), 0.6, 1.4);
+        const fd = clamp(leaguePerPoss / Math.max(avgOppAtt, 1e-6), 0.6, 1.4);
+        nextAtt[t] = 0.5 * att[t] + 0.5 * perPoss[t].att * fa;
+        nextDef[t] = 0.5 * def[t] + 0.5 * perPoss[t].def * fd;
       });
+      const ma = meanOf(nextAtt), md = meanOf(nextDef);
+      active.forEach(t => { nextAtt[t] *= leaguePerPoss / Math.max(ma, 1e-9); nextDef[t] *= leaguePerPoss / Math.max(md, 1e-9); });
       att = nextAtt; def = nextDef;
     }
 
