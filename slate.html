@@ -237,6 +237,9 @@
 </main>
 
 <script>
+// The Slate Test learns its own moneyline de-bias from earlier games in
+// the window only, never the live one (governor.js).
+window.__EDGE_SLATE = true;
 // ============================================================
 // CONFIG
 // ============================================================
@@ -460,6 +463,7 @@ async function probeSchema() {
 // ============================================================
 
 async function run() {
+  if (window.EDGE_GOVERNOR && EDGE_GOVERNOR.resetWinScale) EDGE_GOVERNOR.resetWinScale();
   const btn = document.getElementById('runBtn');
   const sport = document.getElementById('sport').value;
   const cap = parseInt(document.getElementById('cap').value, 10);
@@ -976,11 +980,14 @@ function buildPowerFromHistory(sport, history, coaching, seed, minHistory = MIN_
              close_game_record: Math.round(shrunk * 1000) / 1000 };
   };
 
-  const glicko = R.rateGlicko(sport, games, seed ? { seed } : {});
-  const massey = R.massey(sport, games);
-  const colley = R.colley(games);
+  // NCAAF: small-school opponents left out of the rating fits, as live
+  // (records below still count every game, as live).
+  const rateGames = R.forRatings ? R.forRatings(sport, games) : games;
+  const glicko = R.rateGlicko(sport, rateGames, seed ? { seed } : {});
+  const massey = R.massey(sport, rateGames);
+  const colley = R.colley(rateGames);
   const blended = R.blend(sport, glicko, massey, colley);
-  const ad = R.attackDefense(sport, games);
+  const ad = R.attackDefense(sport, rateGames);
 
   const agg = {};
   games.forEach(g => {
