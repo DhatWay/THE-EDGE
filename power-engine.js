@@ -367,7 +367,10 @@ const EDGE_POWER = (() => {
         }
         emit(`${sport}: ${events.length} completed games`);
 
-        const { teamMap, chronological } = buildTeamStates(sport, events);
+        const built = buildTeamStates(sport, events);
+        const teamMap = built.teamMap;
+        // NCAAF: small-school opponents left out of the ratings (rating-core).
+        const chronological = (window.EDGE_RATING && EDGE_RATING.forRatings) ? EDGE_RATING.forRatings(sport, built.chronological) : built.chronological;
         if (!teamMap.size) { results.counts[sport] = 0; continue; }
 
         // Floor from the league's median games played.
