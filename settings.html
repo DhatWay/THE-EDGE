@@ -657,6 +657,7 @@
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
       <button class="danger-btn" onclick="resetSimBankroll()">Reset Sim — bets, profit and bankroll</button>
+      <button class="danger-btn" style="margin-top:8px" onclick="clearPhoneHistory()">Start fresh on this phone — saved picks, bet marks, Line Guard memory, learned settings</button>
       <button class="danger-btn" onclick="resetLearning()">Reset Learning Loop Timestamp</button>
       <button class="danger-btn" onclick="resetAll()">Reset All Settings to Default</button>
     </div>
@@ -1142,6 +1143,19 @@
     // Starts the sim over: deletes every sim bet (so profit and stakes
     // still riding go back to $0) and sets the starting sim bankroll.
     // Real-money bets are never touched. Asks you to type RESET.
+    // Clears what this phone keeps about past picks and what the Slate Test
+    // learned: bet marks on cards, Line Guard's memory, the saved learned
+    // table, the moneyline de-bias and the last ratings. Your database
+    // address and keys, bet amount and other settings stay.
+    function clearPhoneHistory() {
+      if (prompt('Type FRESH to clear this phone\u2019s saved picks data and learned settings:') !== 'FRESH') return;
+      const drop = /^edge_(bet_(sim|real)_|guard_|governor_calibration$|win_scale$|last_evaluations$|quick_marks$)/;
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && drop.test(k)) keys.push(k); }
+      keys.forEach(k => localStorage.removeItem(k));
+      alert(`Cleared ${keys.length} saved items on this phone. Your settings and keys are unchanged.`);
+    }
+
     async function resetSimBankroll() {
       const amt = parseFloat(prompt('Start the sim bankroll over at:', localStorage.getItem('edge_sim_bankroll') || '10000'));
       if (!isFinite(amt) || amt <= 0) return;
