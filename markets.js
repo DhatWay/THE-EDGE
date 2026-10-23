@@ -22,7 +22,7 @@
 // ============================================================
 
 const EDGE_MARKETS = (function () {
-  const BUILD = 'markets-20261022-01';
+  const BUILD = 'markets-20261023-01';
   const round = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
   const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = v => (v > 0 ? '+' : '') + round(v, 2);
@@ -108,7 +108,8 @@ const EDGE_MARKETS = (function () {
       line: market === 'spread' && isFinite(line) ? line : null,
       home_line: market === 'spread' ? Number(game.spread) : null,
       price: g.price ?? null, chance: g.confidence != null ? round(g.confidence / 100, 4) : null,
-      value: g.ev ?? null, tier: g.decision || 'PASS', ...extra,
+      value: g.ev ?? null, tier: g.decision || 'PASS',
+      extreme: !!(g.extreme || (g.components && g.components.extreme)), ...extra,
     };
   }
   function rateGame(prior, game, opts = {}) {
@@ -120,14 +121,14 @@ const EDGE_MARKETS = (function () {
     const decType = dec && dec.governor_snapshot ? dec.governor_snapshot.bet_type : (dec && dec.bet_type) || null;
     try {
       if (game.spread != null && isFinite(Number(game.spread))) {
-        const g = decType === 'SPREAD' ? { direction: dec.direction, decision: dec.decision, confidence: dec.confidence, ev: dec.governor_snapshot && dec.governor_snapshot.ev, price: dec.governor_snapshot && dec.governor_snapshot.price }
+        const g = decType === 'SPREAD' ? { direction: dec.direction, decision: dec.decision, confidence: dec.confidence, ev: dec.governor_snapshot && dec.governor_snapshot.ev, price: dec.governor_snapshot && dec.governor_snapshot.price, extreme: dec.governor_snapshot && dec.governor_snapshot.extreme }
                                        : G.run([], { ...prior, bet_type: 'SPREAD' }, {});
         out.spread = pack('spread', g, game);
       }
     } catch {}
     try {
       if (game.ml != null && game.away_ml != null && prior.win) {
-        const g = decType === 'ML' ? { direction: dec.direction, decision: dec.decision, confidence: dec.confidence, ev: dec.governor_snapshot && dec.governor_snapshot.ev, price: dec.governor_snapshot && dec.governor_snapshot.price }
+        const g = decType === 'ML' ? { direction: dec.direction, decision: dec.decision, confidence: dec.confidence, ev: dec.governor_snapshot && dec.governor_snapshot.ev, price: dec.governor_snapshot && dec.governor_snapshot.price, extreme: dec.governor_snapshot && dec.governor_snapshot.extreme }
                                    : G.run([], { ...prior, bet_type: 'ML' }, {});
         out.moneyline = pack('moneyline', g, game);
       }
@@ -136,7 +137,7 @@ const EDGE_MARKETS = (function () {
       const t = opts.total || rateTotal(prior, game, { weatherAdj: opts.weatherAdj });
       if (t && t.side) out.total = { market: 'total', side: t.side, team: t.side === 'over' ? 'Over' : 'Under', line: Number(game.total),
         price: t.price ?? null, chance: t.p != null ? round(t.p, 4) : null, value: t.ev ?? null, tier: t.tier && t.tier !== 'PASS' ? (t.tier === 'LEAN' ? 'LEAN' : 'BET_' + t.tier) : 'PASS',
-        model_total: t.model_adjusted ?? t.model_total ?? null, parts: t.parts || [] };
+        model_total: t.model_adjusted ?? t.model_total ?? null, parts: t.parts || [], extreme: !!t.extreme };
     } catch {}
     return out;
   }
@@ -170,7 +171,9 @@ const EDGE_MARKETS = (function () {
   }
   function buildPicks(candidates, n) {
     const want = Math.max(1, Math.min(10, Number(n) || 3));
-    const sorted = candidates.slice().sort((a, b) => (b.value - a.value) || ((b.chance || 0) - (a.chance || 0)));
+    // Believable edges first; extreme disagreements (held at the cap) only
+    // after them, so they can't crowd the top of the list.
+    const sorted = candidates.slice().sort((a, b) => ((a.extreme ? 1 : 0) - (b.extreme ? 1 : 0)) || (b.value - a.value) || ((b.chance || 0) - (a.chance || 0)));
     const usedGames = new Set(), picks = [];
     for (const c of sorted) {
       if (picks.length >= want) break;
