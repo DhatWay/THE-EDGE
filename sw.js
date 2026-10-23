@@ -29,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v58';
+const VERSION = 'edge-v60';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -85,6 +85,8 @@ const SHELL_FILES = [
   './bankroll.js',
   './line-guard.js',
   './sport-profiles.js',
+  './markets.js',
+  './prop-logic.js',
   './guide.html',
   './builder.html',
   './external-data.js',
