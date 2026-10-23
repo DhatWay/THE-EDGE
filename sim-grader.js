@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20261007-01';
+  const BUILD = 'simgrade-20261022-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -161,9 +161,36 @@ const EDGE_SIM_GRADER = (() => {
       log(`  ${legacy} legacy-format rows skipped (written before v3.2 shape)`);
     }
 
+    // ── 3a. Prop bets grade from their prop pick (prop_picks, graded from
+    //        the player's box score); the bet records which pick in its
+    //        reason as "prop:<id>". ──
+    const propBets = gradable.filter(b => b.pick_type === 'PROP' && /^prop:/.test(String(b.reason || '')));
+    const propUpdates = [];
+    if (propBets.length) {
+      const ids = [...new Set(propBets.map(b => String(b.reason).slice(5).split(/[\s|]/)[0]).filter(Boolean))];
+      let props = [];
+      try {
+        const pr = await fetch(`${url}/rest/v1/prop_picks?id=in.(${ids.map(encodeURIComponent).join(',')})&select=id,result`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (pr.ok) props = await pr.json();
+      } catch {}
+      const resultOf = {}; props.forEach(p => { resultOf[String(p.id)] = p.result; });
+      propBets.forEach(bet => {
+        const res = resultOf[String(bet.reason).slice(5).split(/[\s|]/)[0]];
+        if (!res || !['W', 'L', 'P'].includes(res)) return;
+        const odds = Number(bet.odds) || -110, stake = Number(bet.amount) || 0;
+        const win = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
+        const pnl = res === 'W' ? Math.round(stake * win * 100) / 100 : res === 'L' ? -stake : 0;
+        propUpdates.push({ id: bet.id, result: res, pnl, graded_at: new Date().toISOString(), status: 'graded' });
+        tryUpdateLocalSimState(bet, { result: res, pnl });
+      });
+      if (propUpdates.length) log(`  ${propUpdates.length} prop bets graded from their prop picks`);
+    }
+
     // ── 3. Group by game ──
     const byGame = {};
     for (const b of gradable) {
+      if (b.pick_type === 'PROP') continue;          // graded above
       const gid = b.game_id;
       if (!gid) {
         log(`  ${b.pick_label} — no game_id, cannot grade`);
@@ -266,7 +293,8 @@ const EDGE_SIM_GRADER = (() => {
     let graded = 0;
     let unresolved = 0;
     let pendingScore = 0;
-    const updates = [];
+    const updates = propUpdates.slice();
+    graded += propUpdates.length;
 
     for (const [gid, bets] of Object.entries(byGame)) {
       const espnId = idMap[gid];
