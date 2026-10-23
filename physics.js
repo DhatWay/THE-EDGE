@@ -410,6 +410,7 @@ const EDGE_PHYSICS = (() => {
         // What the ranking said, for the Picks page analytics.
         decision_source: governor.decision_source || null,
         bet_type: governor.bet_type || 'SPREAD',
+        extreme: governor.extreme || null,
         price: governor.price ?? null,
         ev: governor.ev ?? null,
         break_even: governor.break_even ?? null,
