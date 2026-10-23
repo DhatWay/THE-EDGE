@@ -1376,7 +1376,10 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     price: gov.price ?? -110,
     // Totals, at the default weight, for the totals backtest.
     ...(() => {
-      const mt = Number(g.total), model = Number(prior.projection?.total);
+      // Each sport's own over/under logic (markets.js), as live — in a
+      // backtest only the parts with history apply (ballpark, back-to-backs).
+      const mt = Number(g.total);
+      const model = window.EDGE_MARKETS ? Number((EDGE_MARKETS.totalFor({ ...prior, sport }) || {}).total) : Number(prior.projection?.total);
       if (!isFinite(mt) || !isFinite(model) || !EDGE_GOVERNOR.rateTotal) return {};
       const gh = Number(homeStats.games_played), ga = Number(awayStats.games_played);
       const full = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 }[sport] || 10;
