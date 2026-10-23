@@ -647,7 +647,7 @@
         <td class="mk-pick">${mkEsc(EDGE_MARKETS.describe(x))}${x.price != null ? ` (${x.price > 0 ? '+' : ''}${x.price})` : ''}</td>
         <td>${x.chance != null ? (x.chance * 100).toFixed(1) + '%' : '—'}</td>
         <td class="mk-v ${x.value > 0 ? 'pos' : 'neg'}">${x.value != null ? (x.value > 0 ? '+' : '') + (x.value * 100).toFixed(1) + '%' : '—'}</td>
-        <td>${tier}</td>
+        <td>${tier}${x.extreme ? ' <span title="Extreme disagreement with the market — held at the cap; check news" style="color:var(--red)">⚠</span>' : ''}</td>
         <td><button class="mk-bet" onclick="betMarket('${gid}','${x.market}')">Bet</button></td></tr>`;
     }
     // Every market for this game, each by its own logic: side or over/under,
@@ -747,7 +747,7 @@
         <div class="bpick"><div>
           <div class="bp-main">${i + 1}. ${mkEsc(EDGE_MARKETS.describe(c))}${c.price != null ? ` (${c.price > 0 ? '+' : ''}${c.price})` : ''}</div>
           <div class="bp-meta">${mkEsc(c.sport)} · ${EDGE_MARKETS.LABEL[c.market]} · ${mkEsc(c.away)} @ ${mkEsc(c.home)} · ${when(c.start)}<br>
-            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value +${(c.value * 100).toFixed(1)}% · ${String(c.tier).replace('BET_', '')}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}${c.market === 'total' && c.model_total != null ? ` · model total ${c.model_total}` : ''}</div>
+            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value +${(c.value * 100).toFixed(1)}% · ${String(c.tier).replace('BET_', '')}${c.extreme ? ' · <span style="color:var(--red)">⚠ extreme disagreement — check news</span>' : ''}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}${c.market === 'total' && c.model_total != null ? ` · model total ${c.model_total}` : ''}</div>
         </div><div><button class="mk-bet" onclick="betBuilderPick(${i})">Bet</button></div></div>`).join('')
         : '<div class="pick-meta">Nothing clears the value bar in the markets you picked.</div>') +
         `<div class="pick-meta" style="margin-top:6px">${r.considered} options considered${r.short > 0 ? ` · only ${r.picks.length} of ${r.asked} qualify — not padded` : ''}</div>` +
@@ -1593,6 +1593,9 @@
       }
       // Quarterbacks: who's expected to start against the one the team's
       // ratings were built on, and what the gap is worth.
+      // Held at the disagreement cap: the model wanted more than the cap.
+      const exDis = gs.extreme || (gs.components && gs.components.extreme);
+      if (exDis) rows.push(['⚠ Extreme disagreement', `the model's own chance was ${(Number(exDis.uncapped_home ?? exDis.uncapped) * 100).toFixed(1)}%${exDis.market_home != null ? ` (home) vs the market's ${(exDis.market_home * 100).toFixed(1)}%` : ''} — held at the cap (${Math.round(exDis.cap * 100)} points); check news before trusting it`]);
       // The sport's own logic: which of its factors moved this game, and the
       // math used for its outcomes (sport-profiles.js).
       if (r.sport_logic && r.sport_logic.sport) {
