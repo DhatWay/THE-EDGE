@@ -150,6 +150,9 @@
     .overall-box .ov-rec { font-family: 'Bebas Neue', sans-serif; font-size: 24px; color: var(--text); letter-spacing: 1px; }
     .overall-box .ov-sub { margin-top: 4px; }
     .overall-box .pos { color: var(--green); } .overall-box .neg { color: var(--red); }
+    .mk-hist { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+    .mk-hist td { padding: 3px 4px; border-top: 1px solid var(--border); color: var(--text-dim); }
+    .mk-hist td:first-child { color: var(--text); }
     .money-row b { color: var(--text); }
     .money-row .pos { color: var(--green); } .money-row .neg { color: var(--red); }
     .grade-btn { padding: 8px 12px; background: transparent; border: 1px solid var(--gold); color: var(--gold);
@@ -281,6 +284,7 @@
 
     <div class="money-box" id="moneyBox" hidden></div>
     <div class="overall-box" id="overallBox"></div>
+    <div class="overall-box" id="marketBox"></div>
 
     <div class="record-grid">
       <div class="rec-cell">
@@ -728,9 +732,60 @@
         <div class="ov-sub">Model ${rec(m)} (${pct(m)}, ${u(m)}) · Mine ${rec(y)} (${pct(y)}, ${u(y)})</div>`;
     }
 
+    // ── BY MARKET, AND PICK-BUILDER SETS ──
+    // The model's record in each market (spread, moneyline, over/under,
+    // props) and by sport, and how each size of pick-builder set did.
+    let propRows = null, builderBets = null;
+    async function loadMarketExtras() {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return;
+      const h = { headers: { apikey: key, Authorization: `Bearer ${key}` } };
+      try { const r = await fetch(`${url}/rest/v1/prop_picks?result=not.is.null&decision=neq.PASS&select=sport,result,units,price,pick_side,side&limit=5000`, h); propRows = r.ok ? await r.json() : []; } catch { propRows = []; }
+      try { const r = await fetch(`${url}/rest/v1/bet_log?reason=like.*Builder*&status=eq.graded&select=reason,result,pnl,amount,mode&limit=5000`, h); builderBets = r.ok ? await r.json() : []; } catch { builderBets = []; }
+      renderByMarket();
+    }
+    function renderByMarket() {
+      const box = document.getElementById('marketBox');
+      if (!box) return;
+      const rec = rows => {
+        const w = rows.filter(r => r.result === 'W').length, l = rows.filter(r => r.result === 'L').length, p = rows.filter(r => r.result === 'P').length;
+        return { w, l, p, pct: (w + l) ? (w / (w + l) * 100).toFixed(1) + '%' : '—' };
+      };
+      const graded = allPicks.filter(p => p.result && BET_TIERS.has(p.decision));
+      const typeOf = p => String(p.decision || '').startsWith('TOTAL_') ? 'Over/Under'
+        : ((p.governor_snapshot || {}).bet_type === 'ML' ? 'Moneyline' : 'Spread');
+      const groups = { Spread: [], Moneyline: [], 'Over/Under': [] };
+      graded.forEach(p => { (groups[typeOf(p)] = groups[typeOf(p)] || []).push(p); });
+      const props = (propRows || []).filter(r => ['W', 'L', 'P'].includes(r.result));
+      const line = (name, rows) => { const r = rec(rows); return `<tr><td>${name}</td><td>${r.w}-${r.l}-${r.p}</td><td>${r.pct}</td></tr>`; };
+      let html = `<div class="ov-lbl">BY MARKET · MODEL</div><table class="mk-hist">` +
+        line('Spread', groups.Spread) + line('Moneyline', groups.Moneyline) + line('Over/Under', groups['Over/Under']) +
+        line('Props', props) + `</table>`;
+      const sports = [...new Set(graded.map(p => p.sport))].sort();
+      if (sports.length) {
+        html += `<div class="ov-lbl" style="margin-top:8px">BY SPORT AND MARKET</div><table class="mk-hist">` + sports.map(s => {
+          const g = graded.filter(p => p.sport === s);
+          const cells = ['Spread', 'Moneyline', 'Over/Under'].map(m => { const r = rec(g.filter(p => typeOf(p) === m)); return (r.w + r.l + r.p) ? `${r.w}-${r.l}-${r.p}` : '—'; });
+          return `<tr><td>${s}</td><td>${cells[0]}</td><td>${cells[1]}</td><td>${cells[2]}</td></tr>`;
+        }).join('') + `<tr><td></td><td>spread</td><td>moneyline</td><td>o/u</td></tr></table>`;
+      }
+      if (builderBets && builderBets.length) {
+        const bySize = {};
+        builderBets.forEach(b => { const m = String(b.reason || '').match(/Builder (\d+)-pick set/); if (!m) return; (bySize[m[1]] = bySize[m[1]] || []).push(b); });
+        html += `<div class="ov-lbl" style="margin-top:8px">PICK BUILDER SETS</div><table class="mk-hist">` +
+          Object.keys(bySize).sort((a, b) => a - b).map(k => {
+            const rows = bySize[k], r = rec(rows), pnl = rows.reduce((s, b) => s + (Number(b.pnl) || 0), 0);
+            return `<tr><td>${k}-pick sets</td><td>${r.w}-${r.l}-${r.p}</td><td>${r.pct}</td><td class="${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td></tr>`;
+          }).join('') + `</table>`;
+      }
+      box.innerHTML = html;
+    }
+
     function renderSummary() {
       renderMoney();
       renderOverall();
+      renderByMarket();
+      if (propRows === null) loadMarketExtras();
       const picks = picksForMode();
       const settled = picks.filter(p => p.result === 'W' || p.result === 'L' || p.result === 'P');
       const wins   = picks.filter(p => p.result === 'W').length;
