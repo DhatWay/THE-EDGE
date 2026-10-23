@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261017-01';
+  const BUILD = 'gov-20261023-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -274,6 +274,18 @@ const EDGE_GOVERNOR = (() => {
 
   function resetWinScale() { Object.keys(scaleMem).forEach(k => delete scaleMem[k]); }
 
+  // Most the model may move the market's chance (as a fraction), by sport
+  // and market. Less-watched markets (college) get a little more room.
+  const DISAGREE_CAP = {
+    SPREAD: { NFL: 0.05, NCAAF: 0.06, NBA: 0.04, WNBA: 0.045, NCAAB: 0.05, MLB: 0.04, NHL: 0.04, MLS: 0.04 },
+    ML:     { NFL: 0.04, NCAAF: 0.05, NBA: 0.04, WNBA: 0.04, NCAAB: 0.045, MLB: 0.035, NHL: 0.035, MLS: 0.035 },
+    TOTAL:  { NFL: 0.05, NCAAF: 0.06, NBA: 0.05, WNBA: 0.05, NCAAB: 0.05, MLB: 0.04, NHL: 0.04, MLS: 0.04 },
+  };
+  function disagreementCap(sport, betType) {
+    const t = DISAGREE_CAP[betType] || DISAGREE_CAP.SPREAD;
+    return t[sport] ?? 0.05;
+  }
+
   function blendFor(sport, betType) {
     // Learned strength weights apply only when switched on (Today's
     // Picks); otherwise every sport uses the same default, so no sport
@@ -329,9 +341,17 @@ const EDGE_GOVERNOR = (() => {
     const evOver = prob.over * (americanToDecimal(op) - 1) - prob.under;
     const evUnder = prob.under * (americanToDecimal(up) - 1) - prob.over;
     const side = evOver >= evUnder ? 'over' : 'under';
-    const p = side === 'over' ? prob.over : prob.under;
+    const pRaw = side === 'over' ? prob.over : prob.under;
     const price = side === 'over' ? op : up;
-    const ev = side === 'over' ? evOver : evUnder;
+    // The same disagreement cap as sides: the over/under's chance may sit
+    // at most this far from even; beyond it, held at the cap and flagged.
+    const capT = disagreementCap(sport, 'TOTAL');
+    const pushT = prob.push || 0;
+    const evenT = (1 - pushT) / 2;
+    const extreme = pRaw - evenT > capT;
+    const p = extreme ? evenT + capT : pRaw;
+    const pOther = 1 - pushT - p;
+    const ev = p * (americanToDecimal(price) - 1) - pOther;
     const bars = tiersFor(sport);
     const tier = ev >= bars.bet2u ? '2U' : ev >= bars.bet1u ? '1U' : ev >= bars.lean ? 'LEAN' : 'PASS';
     return {
@@ -339,6 +359,7 @@ const EDGE_GOVERNOR = (() => {
       mu: round(mu, 2), sd, shift: round(shift, 2), weight: wInfo.w, weight_source: wInfo.source,
       model_total: round(modelTotal, 2), market_total: marketTotal, weather_adj: round(Math.min(0, weatherAdj), 2),
       push: prob.push,
+      extreme: extreme ? { uncapped: round(pRaw, 4), cap: capT, note: 'Extreme disagreement with the market total — held at the cap; check news' } : null,
     };
   }
 
@@ -434,7 +455,16 @@ const EDGE_GOVERNOR = (() => {
           : (logit(strengthHomeProb) - logit(marketHomeProb)))
       : 0;
     const spotTerm = blend.w_spots * spots.logit;
-    const posteriorHomeProb = sigmoid(logit(marketHomeProb) + strengthTerm + spotTerm + contextLogit);
+    const uncappedHomeProb = sigmoid(logit(marketHomeProb) + strengthTerm + spotTerm + contextLogit);
+    // ── Disagreement cap ──
+    // How far the model may move the market's own chance, per sport and
+    // market. Real edges in these markets fit inside it; a bigger
+    // disagreement is far more often a model error than a market error, so
+    // it's held at the cap and flagged "extreme — check news".
+    const capPts = disagreementCap(sport, betType);
+    const shift = uncappedHomeProb - marketHomeProb;
+    const extreme = Math.abs(shift) > capPts;
+    const posteriorHomeProb = extreme ? marketHomeProb + Math.sign(shift) * capPts : uncappedHomeProb;
 
     // ── Prices ──
     const priceFor = side => {
@@ -511,6 +541,8 @@ const EDGE_GOVERNOR = (() => {
       // The probability, piece by piece (home view, log-odds terms)
       decision_source: strengthHomeProb != null ? 'blend' : 'market + spots',
       ml_debias: mlScale ? { slope: round(mlScale.b, 3), games: mlScale.n, learned: mlScale.learned } : null,
+      extreme: extreme ? { uncapped_home: round(uncappedHomeProb, 4), market_home: round(marketHomeProb, 4), cap: capPts,
+                           note: 'Extreme disagreement with the market — held at the cap; check news before trusting it' } : null,
       thin_data: ncaafThin ? 'NCAAF: under 3 games of data' : null,
       components: {
         market_home: round(marketHomeProb, 4),
