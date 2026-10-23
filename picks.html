@@ -28,6 +28,8 @@
   <script src="learning.js"></script>
   <script src="rating-core.js"></script>
   <script src="sport-profiles.js"></script>
+  <script src="markets.js"></script>
+  <script src="prop-engine.js"></script>
   <script src="auth.js"></script>
   <script src="line-guard.js"></script>
   <script src="situations-engine.js"></script>
@@ -170,6 +172,19 @@
     .src-tag.mine { border-color: var(--gold); color: var(--gold); }
     .src-tag.bet { border-color: var(--green); color: var(--green); margin-left: 6px; }
     .pending-list { border: 1px solid var(--border); margin-bottom: 14px; }
+    .builder { border: 1px solid var(--gold-dim, #6b5a2a); padding: 10px 12px; margin: 10px 0 14px; }
+    .builder-head { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; color: var(--gold); font-size: 13px; margin-bottom: 6px; }
+    .builder-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 6px 0; font-size: 12px; color: var(--text-dim); }
+    .builder-row select { background: var(--surface, #111); color: var(--text); border: 1px solid var(--border); padding: 4px 6px; font-size: 12px; }
+    .builder-out { font-size: 12px; }
+    .bpick { border-top: 1px solid var(--border); padding: 8px 0; display: flex; justify-content: space-between; gap: 10px; }
+    .bpick .bp-main { color: var(--text); font-size: 13px; }
+    .bpick .bp-meta { color: var(--text-dim); font-size: 11px; margin-top: 2px; line-height: 1.5; }
+    .mk-table { width: 100%; border-collapse: collapse; font-size: 11px; margin: 8px 0 2px; }
+    .mk-table td { padding: 4px 3px; border-top: 1px solid var(--border); color: var(--text-dim); }
+    .mk-table td.mk-pick { color: var(--text); }
+    .mk-table td.mk-v.pos { color: var(--green); } .mk-table td.mk-v.neg { color: var(--red); }
+    .mk-bet { background: none; border: 1px solid var(--border); color: var(--text); font-size: 10px; padding: 3px 7px; cursor: pointer; }
     .pending-head { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 2px; font-size: 12px; color: var(--gold); margin: 10px 0 6px; }
     .pending-grade { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; }
     .pending-row { display: flex; justify-content: space-between; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
@@ -428,6 +443,23 @@
       <button class="tool-btn gold" id="betAllBtn" onclick="betAllPicks()">▶ Bet All</button>
     </div>
 
+    <div class="builder" id="builderPanel">
+      <div class="builder-head">PICK BUILDER</div>
+      <div class="builder-row">
+        <label>Picks <select id="bNum"><option>3</option><option>4</option><option selected>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
+        <label><input type="checkbox" class="bMkt" value="spread" checked> Spread</label>
+        <label><input type="checkbox" class="bMkt" value="moneyline" checked> Moneyline</label>
+        <label><input type="checkbox" class="bMkt" value="total" checked> O/U</label>
+        <label><input type="checkbox" class="bMkt" value="prop" checked> Props</label>
+      </div>
+      <div class="builder-row">
+        <button class="tool-btn gold" onclick="buildPickSet()">Build picks</button>
+        <select id="bPropGame"><option value="">Look up props for a game…</option></select>
+        <button class="tool-btn" onclick="lookupProps()">Look up props</button>
+      </div>
+      <div id="builderOut" class="builder-out"></div>
+    </div>
+
     <div class="picks-list" id="picksList">
       <div class="empty-state">
         <div class="empty-icon">✓</div>
@@ -597,6 +629,208 @@
       await loadPicks(); updateBankrolls();
     }
 
+
+    // ══ FOUR MARKETS & PICK BUILDER (markets.js) ══
+    const mkEsc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    function lastEvals() { try { return (JSON.parse(localStorage.getItem('edge_last_evaluations') || 'null') || {}).items || []; } catch { return []; } }
+    function marketsFor(p) {
+      const gs = (p && p.governor_snapshot) || {};
+      if (gs.markets) return gs.markets;
+      const ev = lastEvals().find(e => e.game_id === (p && p.game_id));
+      return (ev && ev.markets) || null;
+    }
+    function mkRow(label, x, gid) {
+      if (!x) return `<tr><td>${label}</td><td colspan="5">no line posted</td></tr>`;
+      const tier = String(x.tier || 'PASS').replace('BET_', '');
+      return `<tr><td>${label}</td>
+        <td class="mk-pick">${mkEsc(EDGE_MARKETS.describe(x))}${x.price != null ? ` (${x.price > 0 ? '+' : ''}${x.price})` : ''}</td>
+        <td>${x.chance != null ? (x.chance * 100).toFixed(1) + '%' : '—'}</td>
+        <td class="mk-v ${x.value > 0 ? 'pos' : 'neg'}">${x.value != null ? (x.value > 0 ? '+' : '') + (x.value * 100).toFixed(1) + '%' : '—'}</td>
+        <td>${tier}</td>
+        <td><button class="mk-bet" onclick="betMarket('${gid}','${x.market}')">Bet</button></td></tr>`;
+    }
+    // Every market for this game, each by its own logic: side or over/under,
+    // its chance, its value at the price, its tier.
+    function marketsHtml(p) {
+      if (!window.EDGE_MARKETS || isTotalRow(p) || isMineRow(p) || isLineRow(p)) return '';
+      if (p.commence_time && new Date(p.commence_time) <= new Date()) return '';
+      const m = marketsFor(p);
+      if (!m) return '';
+      const parts = (m.total && m.total.parts && m.total.parts.length) ? `<div class="pick-meta" style="font-size:10px;margin-top:2px">O/U adjusted for: ${m.total.parts.map(x => mkEsc(x.why)).join(' · ')}</div>` : '';
+      return `<table class="mk-table">${mkRow('Spread', m.spread, p.game_id)}${mkRow('Moneyline', m.moneyline, p.game_id)}${mkRow('O/U', m.total, p.game_id)}</table>${parts}`;
+    }
+    async function betMarket(gameId, market, reason) {
+      const p = allPicks.find(x => x.game_id === gameId);
+      const ev = lastEvals().find(e => e.game_id === gameId);
+      const m = (p && marketsFor(p)) || (ev && ev.markets);
+      const x = m && m[market];
+      if (!x) { showToast('No line for that market', 'red'); return; }
+      await logMarketBet({ ...x, game_id: gameId, sport: m.sport, home: m.home, away: m.away, start: m.start }, reason || `All markets: ${market}`);
+    }
+    // One bet in any market, at the flat amount, logged like every other bet.
+    async function logMarketBet(c, reason, quiet = false) {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) { showToast('Supabase not connected', 'red'); return false; }
+      if (c.start && new Date(c.start) <= new Date()) { showToast('That game has started', 'red'); return false; }
+      const type = c.market === 'spread' ? 'ATS' : c.market === 'moneyline' ? 'ML' : c.market === 'total' ? 'TOTAL' : 'PROP';
+      const label = c.market === 'spread' || c.market === 'moneyline' ? c.team
+                  : c.market === 'total' ? `${c.team} ${c.line}` : EDGE_MARKETS.describe(c);
+      const line = type === 'ATS' ? String(c.home_line ?? '') : (type === 'TOTAL' || type === 'PROP') ? String(c.line ?? '') : '';
+      const dup = (pendingBets || []).find(b => b.game_id === c.game_id && b.pick_type === type && String(b.pick_label) === label && b.mode === portfolio);
+      if (dup && !quiet && !confirm(`You already have a $${Number(dup.amount || 0).toFixed(0)} ${portfolio} bet on ${label}. Place another?`)) return false;
+      if (dup && quiet) return false;
+      const flat = flatBetAmount();
+      const unitSize = parseFloat(localStorage.getItem(portfolio === 'real' ? 'edge_unit_size' : 'edge_sim_unit_size') || (portfolio === 'real' ? '50' : '100')) || 50;
+      const amount = flat != null ? flat : unitSize;
+      const d = new Date();
+      const row = {
+        mode: portfolio, date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+        time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), sport: c.sport,
+        matchup: `${c.away} vs ${c.home}`, pick_label: label, pick_type: type, line, odds: c.price ?? -110,
+        confidence: c.chance != null ? Math.round(c.chance * 1000) / 10 : null, edge: c.value ?? null,
+        units: Math.round((amount / unitSize) * 100) / 100, amount, status: 'pending', game_id: c.game_id,
+        reason: type === 'PROP' && c.prop_id ? `prop:${c.prop_id} | ${reason}` : reason,
+      };
+      try {
+        const res = await fetch(`${url}/rest/v1/bet_log`, { method: 'POST',
+          headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify(row) });
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 100));
+      } catch (e) { showToast('Bet not saved: ' + e.message, 'red'); return false; }
+      if (!quiet) { await refreshBets(); updateBankrolls(); renderPicks(); showToast(`${portfolio === 'real' ? 'Bet' : 'Sim bet'} placed · $${amount} · ${label}`, ''); }
+      return true;
+    }
+
+    // ── PICK BUILDER ──
+    // The N best options across the markets you tick, one per game, nothing
+    // below the sport's value bar; your saved prop picks count too.
+    let builderSet = null;
+    async function propCandidates(gameIds) {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key || !gameIds.length) return [];
+      try {
+        const list = gameIds.map(g => `"${g}"`).join(',');
+        const res = await fetch(`${url}/rest/v1/prop_picks?game_id=in.(${list})&result=is.null&decision=neq.PASS&select=*&order=created_at.desc&limit=500`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        if (!res.ok) return [];
+        const seen = new Set();
+        return (await res.json()).filter(p => { const k = `${p.player_id}|${p.stat}|${p.line}`; if (seen.has(k)) return false; seen.add(k); return true; })
+          .map(p => {
+            const over = p.pick_side === 'over';
+            const chance = p.prob_over != null ? (over ? Number(p.prob_over) : 1 - Number(p.prob_over)) : null;
+            const price = (p.side === p.pick_side && p.price) ? Number(p.price) : -110;
+            const dec = price > 0 ? 1 + price / 100 : 1 + 100 / -price;
+            return { market: 'prop', game_id: p.game_id, sport: p.sport, home: p.home_team, away: p.away_team, start: p.commence_time,
+                     player: p.player_name, stat: p.stat, stat_label: p.stat_label, side: p.pick_side, line: Number(p.line), price,
+                     chance, value: chance != null ? chance * dec - 1 : null, tier: p.decision, prop_id: p.id,
+                     team: p.player_name, projection: p.projection };
+          });
+      } catch { return []; }
+    }
+    async function buildPickSet() {
+      const out = document.getElementById('builderOut');
+      if (!window.EDGE_MARKETS) { out.textContent = 'markets.js not loaded'; return; }
+      const n = parseInt(document.getElementById('bNum').value, 10) || 5;
+      const markets = [...document.querySelectorAll('.bMkt')].filter(b => b.checked).map(b => b.value);
+      const SPORTS = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'WNBA', 'MLB', 'NHL', 'MLS'];
+      const sports = SPORTS.includes(currentFilter) ? [currentFilter] : null;
+      const evs = lastEvals().filter(e => e.markets && (!e.commence_time || new Date(e.commence_time) > new Date()));
+      if (!evs.length) { out.innerHTML = '<div class="pick-meta">No rated games yet — run the pipeline first.</div>'; return; }
+      out.innerHTML = '<div class="pick-meta">Building…</div>';
+      const props = markets.includes('prop') ? await propCandidates(evs.map(e => e.game_id)) : [];
+      const cands = EDGE_MARKETS.candidatesFrom(evs.map(e => e.markets), props, { markets, sports });
+      const r = EDGE_MARKETS.buildPicks(cands, n);
+      builderSet = { id: Date.now().toString(36), n, picks: r.picks };
+      const when = s => s ? new Date(s).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+      out.innerHTML = (r.picks.length ? r.picks.map((c, i) => `
+        <div class="bpick"><div>
+          <div class="bp-main">${i + 1}. ${mkEsc(EDGE_MARKETS.describe(c))}${c.price != null ? ` (${c.price > 0 ? '+' : ''}${c.price})` : ''}</div>
+          <div class="bp-meta">${mkEsc(c.sport)} · ${EDGE_MARKETS.LABEL[c.market]} · ${mkEsc(c.away)} @ ${mkEsc(c.home)} · ${when(c.start)}<br>
+            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value +${(c.value * 100).toFixed(1)}% · ${String(c.tier).replace('BET_', '')}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}${c.market === 'total' && c.model_total != null ? ` · model total ${c.model_total}` : ''}</div>
+        </div><div><button class="mk-bet" onclick="betBuilderPick(${i})">Bet</button></div></div>`).join('')
+        : '<div class="pick-meta">Nothing clears the value bar in the markets you picked.</div>') +
+        `<div class="pick-meta" style="margin-top:6px">${r.considered} options considered${r.short > 0 ? ` · only ${r.picks.length} of ${r.asked} qualify — not padded` : ''}</div>` +
+        (r.picks.length ? `<div class="builder-row"><button class="tool-btn gold" onclick="betBuilderAll()">Bet all ${r.picks.length} at $${flatBetAmount() ?? 50} each</button></div>` : '');
+    }
+    async function betBuilderPick(i) {
+      if (!builderSet || !builderSet.picks[i]) return;
+      await logMarketBet(builderSet.picks[i], `Builder ${builderSet.picks.length}-pick set ${builderSet.id}`);
+    }
+    async function betBuilderAll() {
+      if (!builderSet || !builderSet.picks.length) return;
+      if (!confirm(`Place ${builderSet.picks.length} ${portfolio} bets at $${flatBetAmount() ?? 50} each?`)) return;
+      let ok = 0;
+      for (const c of builderSet.picks) if (await logMarketBet(c, `Builder ${builderSet.picks.length}-pick set ${builderSet.id}`, true)) ok++;
+      await refreshBets(); updateBankrolls(); renderPicks();
+      showToast(`${ok} of ${builderSet.picks.length} bets placed`, '');
+    }
+    function fillPropGames() {
+      const sel = document.getElementById('bPropGame');
+      if (!sel) return;
+      const evs = lastEvals().filter(e => e.commence_time && new Date(e.commence_time) > new Date() && ['NBA', 'WNBA', 'NFL', 'NCAAF', 'NHL', 'MLB'].includes(e.sport));
+      sel.innerHTML = '<option value="">Look up props for a game…</option>' + evs.map(e =>
+        `<option value="${mkEsc(e.game_id)}">${mkEsc(e.sport)} · ${mkEsc(e.away_team)} @ ${mkEsc(e.home_team)}</option>`).join('');
+    }
+
+    // ── PROPS FOR ONE GAME: lines looked up only when you ask ──
+    // One Odds API call for this game (about 3–4 credits), then each
+    // player's line rated from his box scores and saved as a prop pick
+    // (graded later from the box score like any prop).
+    const PROP_MARKETS = {
+      NBA: { player_points: 'points', player_rebounds: 'rebounds', player_assists: 'assists' },
+      WNBA: { player_points: 'points', player_rebounds: 'rebounds', player_assists: 'assists' },
+      NFL: { player_pass_yds: 'passing_yards', player_rush_yds: 'rushing_yards', player_reception_yds: 'receiving_yards' },
+      NCAAF: { player_pass_yds: 'passing_yards', player_rush_yds: 'rushing_yards', player_reception_yds: 'receiving_yards' },
+      NHL: { player_points: 'points', player_shots_on_goal: 'shots' },
+      MLB: { pitcher_strikeouts: 'pitching_strikeouts', batter_hits: 'hits' },
+    };
+    const SPORT_KEYS_P = { NBA: 'basketball_nba', WNBA: 'basketball_wnba', NFL: 'americanfootball_nfl', NCAAF: 'americanfootball_ncaaf', NHL: 'icehockey_nhl', MLB: 'baseball_mlb' };
+    async function lookupProps() {
+      const out = document.getElementById('builderOut');
+      const gid = document.getElementById('bPropGame').value;
+      const ev = lastEvals().find(e => e.game_id === gid);
+      if (!ev) { showToast('Pick a game first', 'red'); return; }
+      if (!window.EDGE_PROPS) { showToast('prop-engine.js not loaded', 'red'); return; }
+      const apiKey = localStorage.getItem('edge_odds_api_key');
+      if (!apiKey) { showToast('Add your Odds API key in Settings', 'red'); return; }
+      const mk = PROP_MARKETS[ev.sport];
+      out.innerHTML = `<div class="pick-meta">Looking up ${ev.away_team} @ ${ev.home_team} props…</div>`;
+      let data;
+      try {
+        const res = await fetch(`https://api.the-odds-api.com/v4/sports/${SPORT_KEYS_P[ev.sport]}/events/${encodeURIComponent(gid)}/odds?apiKey=${apiKey}&regions=us&markets=${Object.keys(mk).join(',')}&oddsFormat=american`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        data = await res.json();
+      } catch (e) { out.innerHTML = `<div class="pick-meta">Props not available: ${mkEsc(e.message)}</div>`; return; }
+      // Consensus line per player and stat: the most common line, median prices.
+      const lines = {};
+      (data.bookmakers || []).forEach(b => (b.markets || []).forEach(m => (m.outcomes || []).forEach(o => {
+        if (!mk[m.key] || !o.description || o.point == null) return;
+        const k = `${o.description}|${mk[m.key]}`;
+        const L = lines[k] = lines[k] || { player: o.description, stat: mk[m.key], pts: {} };
+        const at = L.pts[o.point] = L.pts[o.point] || { over: [], under: [] };
+        (o.name === 'Over' ? at.over : at.under).push(o.price);
+      })));
+      const med = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; };
+      const roster = await EDGE_PROPS.loadRoster({ ...ev, id: gid, _sport: ev.sport, home_team: ev.home_team, away_team: ev.away_team }).catch(() => []);
+      const players = Array.isArray(roster) ? roster : (roster && roster.players) || [];
+      const nm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+      const todo = Object.values(lines).slice(0, 24);
+      let rated = 0, missing = 0;
+      for (const L of todo) {
+        const best = Object.entries(L.pts).sort((a, b) => (b[1].over.length + b[1].under.length) - (a[1].over.length + a[1].under.length))[0];
+        if (!best) continue;
+        const player = players.find(p => nm(p.name) === nm(L.player));
+        if (!player) { missing++; continue; }
+        try {
+          const r = await EDGE_PROPS.evaluate({ game: { ...ev, id: gid, _sport: ev.sport }, player, stat: L.stat, line: Number(best[0]), side: 'over', price: med(best[1].over) ?? -110 });
+          await EDGE_PROPS.save(r);
+          rated++;
+        } catch {}
+      }
+      out.innerHTML = `<div class="pick-meta">${rated} props rated and saved${missing ? ` · ${missing} players not on file` : ''}. Building picks…</div>`;
+      await buildPickSet();
+    }
+
     async function undoPendingBet(id) {
       const b = pendingBets.find(x => String(x.id) === String(id));
       if (!b) return;
@@ -689,6 +923,7 @@
           });
         await loadBets(url, key);
         await loadAwaiting(url, key);
+        try { fillPropGames(); } catch {}
       } catch (e) {
         logEdgeError('picks.loadFromSupabase', e);
         allPicks = loadCachedPicks();
@@ -1269,6 +1504,7 @@
             <div class="pick-reason">${(p.reasons || []).slice(0, 3).join(' · ') || 'No reason logged'}</div>
 
             ${bestLineHtml(p)}
+            ${marketsHtml(p)}
             ${buildOutcomes(p)}
             ${buildAnalytics(p)}
           </div>
