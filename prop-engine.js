@@ -21,7 +21,7 @@
 // ============================================================
 
 const EDGE_PROPS = (() => {
-  const BUILD = 'props-engine-20261001-01';
+  const BUILD = 'props-20261022-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -208,17 +208,44 @@ const EDGE_PROPS = (() => {
       [seasonVals.length >= 3 ? mean(seasonVals) : mean(last10), 0.25],
     ].filter(([v]) => v != null);
     const wSum = parts.reduce((s, [, w]) => s + w, 0);
-    const base = parts.reduce((s, [v, w]) => s + v * w, 0) / wSum;
+    const formBase = parts.reduce((s, [v, w]) => s + v * w, 0) / wSum;
 
-    // Opponent defense, from the ranking system: defense_index 100 is
-    // league average, higher is a better defense. Scoring stats scale
-    // by 100 / defense_index, limited to ±15%.
-    const oppRow = await loadPowerRow(sport, opponent, url, key);
+    // ── The sport's own drivers (prop-logic.js) ──
+    const PL = window.EDGE_PROP_LOGIC || null;
+    const logic = { parts: [] };
+    // Role × production: his recent volume (minutes, targets, carries,
+    // innings, at-bats, shots) times what he does with it. Weighed 60/40
+    // with his form average.
+    let base = formBase;
+    const rp = PL ? PL.rolePart(sport, stat.key, log) : null;
+    if (rp && isFinite(rp.mu)) {
+      base = 0.6 * rp.mu + 0.4 * formBase;
+      logic.role = { projected: round(rp.roleProj, 2), unit: rp.unit, per_unit: round(rp.rate, 4) };
+      logic.parts.push(`role: ${round(rp.roleProj, 1)} ${rp.unit} × ${round(rp.rate, 3)} per ${rp.unit.replace(/s$/, '')} = ${round(rp.mu, 1)} (weighed with his form average ${round(formBase, 1)})`);
+    }
+    // Game script and pace, from this game's spread and total.
+    const g = game || {};
+    const ctx = {
+      total: Number(g.total?.market_total ?? (typeof g.total === 'number' ? g.total : null) ?? g.markets?.total?.line),
+      homeSpread: Number(g.home_spread ?? g.spread ?? g.market_spread ?? g.markets?.spread?.home_line),
+      playerIsHome, starter: log[0] ? log[0].starter !== false : true,
+      restDays: Number(playerIsHome ? g.rest_days?.home : g.rest_days?.away),
+    };
+    const gp = PL ? PL.gamePart(sport, stat.key, ctx) : { factor: 1, parts: [] };
+    logic.parts.push(...gp.parts);
+    // What this opponent allows in this stat (players who faced them);
+    // the team defense index stands in when that isn't available.
+    const op = PL ? await PL.opponentPart(sport, stat, opponent, url, key) : null;
+    const oppRow = op ? null : await loadPowerRow(sport, opponent, url, key);
     let oppFactor = 1;
-    if (stat.scoring && oppRow && isFinite(oppRow.defense_index) && oppRow.defense_index > 0) {
+    if (op) { oppFactor = op.factor; logic.parts.push(op.why); }
+    else if (stat.scoring && oppRow && isFinite(oppRow.defense_index) && oppRow.defense_index > 0) {
       oppFactor = clamp(100 / oppRow.defense_index, 1 - OPP_FACTOR_LIMIT, 1 + OPP_FACTOR_LIMIT);
     }
-    const projection = base * oppFactor;
+    // MLB pitcher strikeouts: how often this lineup strikes out.
+    const lk = PL ? await PL.lineupKPart(sport, stat.key, opponent, url, key) : null;
+    if (lk) logic.parts.push(lk.why);
+    const projection = base * gp.factor * oppFactor * (lk ? lk.factor : 1);
 
     // Spread of outcomes: the player's own game-to-game variation,
     // never below a fifth of the projection (or 1).
@@ -226,6 +253,16 @@ const EDGE_PROPS = (() => {
     const sigma = Math.max(recentSd || 0, projection * 0.2, 1);
 
     const prob = probabilities(stat.dist, projection, sigma, Number(line));
+    // Calibration from the sport's graded props (100+ needed).
+    if (PL && prob && prob.over_excl_push != null) {
+      const cal = await PL.calibration(sport, url, key);
+      logic.calibration = { factor: cal.k, graded: cal.n };
+      if (cal.k !== 1) {
+        const raw = prob.over_excl_push;
+        prob.over_excl_push = PL.applyCal(raw, cal.k);
+        logic.parts.push(`calibrated from ${cal.n} graded ${sport} props: ${Math.round(raw * 1000) / 10}% → ${Math.round(prob.over_excl_push * 1000) / 10}%`);
+      }
+    }
 
     // ── Adjustment families ──
     const lineNum = Number(line);
@@ -252,10 +289,11 @@ const EDGE_PROPS = (() => {
           `${fmt(mean(vsOpp))} average in ${vsOpp.length} games against ${opponent}`)
       : neutralFamily('vs_opponent', vsOpp.length ? 'One game against this opponent' : 'No games against this opponent'));
 
-    families.push(stat.scoring && oppFactor !== 1
-      ? signalFamily('matchup', (oppFactor - 1) / OPP_FACTOR_LIMIT, 0.6,
-          `${opponent} defense index ${fmt(oppRow.defense_index)} (100 is average)`)
-      : neutralFamily('matchup', stat.scoring ? 'Opponent defense rating unavailable' : 'Not a scoring stat'));
+    // The matchup is already in the projection (what this opponent allows
+    // in this stat); shown here for reading, with no extra pull.
+    families.push(oppFactor !== 1
+      ? neutralFamily('matchup', op ? op.why : `${opponent} defense index ${fmt(oppRow.defense_index)} (100 is average) — in the projection`)
+      : neutralFamily('matchup', 'Opponent allows an average amount — no change'));
 
     return finish(input, {
       sport, stat, side, price, opponent, playerIsHome,
@@ -267,6 +305,8 @@ const EDGE_PROPS = (() => {
         last10: round(mean(last10), 2),
         season_avg: seasonVals.length ? round(mean(seasonVals), 2) : null,
         base: round(base, 2),
+        form_base: round(formBase, 2),
+        logic,
         opp_factor: round(oppFactor, 3),
         opp_defense_index: oppRow?.defense_index ?? null,
         sigma: round(sigma, 2),
@@ -455,19 +495,23 @@ const EDGE_PROPS = (() => {
   // category does not appear — it is not counted as a zero.
   async function loadPlayerLog(sport, playerId, stat, url, key) {
     const cols = Array.from(new Set(stat.cols));
+    // Plus the role columns this sport's logic uses (minutes, targets,
+    // carries, innings, at-bats, shots) and whether he started.
+    const roles = (window.EDGE_PROP_LOGIC && EDGE_PROP_LOGIC.roleCols(sport, stat.key)) || [];
+    const extra = Array.from(new Set(roles.filter(c => !cols.includes(c)).concat(['starter'])));
     const rows = await getJson(
       `${url}/rest/v1/player_game_stats?sport=eq.${sport}&player_id=eq.${encodeURIComponent(playerId)}` +
-      `&select=game_id,game_date,opponent,${cols.join(',')}` +
+      `&select=game_id,game_date,opponent,${cols.concat(extra).join(',')}` +
       `&order=game_date.desc&limit=${LOG_GAMES}`,
       key);
     return rows
       .filter(r => cols.some(c => r[c] != null))
-      .map(r => ({
-        game_id: r.game_id,
-        game_date: r.game_date,
-        opponent: r.opponent,
-        value: cols.reduce((s, c) => s + (Number(r[c]) || 0), 0),
-      }));
+      .map(r => {
+        const o = { game_id: r.game_id, game_date: r.game_date, opponent: r.opponent, starter: r.starter,
+                    value: cols.reduce((s, c) => s + (Number(r[c]) || 0), 0) };
+        roles.forEach(c => { o[c] = r[c]; });
+        return o;
+      });
   }
 
   async function loadPowerRow(sport, teamName, url, key) {
