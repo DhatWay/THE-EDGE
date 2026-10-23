@@ -1329,6 +1329,7 @@ const EDGE_POWER = (() => {
       // produced a spread, not only when the projection ran.
       cover: marketSpread !== null ? coverAt(marketSpread) : null,
       sport_drivers: sportDrv.parts.length ? sportDrv.parts : null,
+      bullpen: options.bullpen || null,
       calibrated: !!calib,
       calibration_note: calib
         ? (calib.market_lambda != null
