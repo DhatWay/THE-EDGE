@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261014-01';
+  const BUILD = 'orch-20261022-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -464,11 +464,37 @@ const EDGE_ORCHESTRATOR = (() => {
         const gh = Number(prior.home_power?.games_played), ga = Number(prior.away_power?.games_played);
         const full = { NFL: 8, NCAAF: 8, NBA: 20, WNBA: 12, NCAAB: 12, MLB: 40, NHL: 20, MLS: 10 }[sp] || 10;
         const certainty = (isFinite(gh) && isFinite(ga)) ? Math.max(0.25, Math.min(1, Math.min(gh, ga) / full)) : 1;
-        const r = EDGE_GOVERNOR.rateTotal({ sport: sp, modelTotal: model, marketTotal: mt,
-          overPrice: Number(g.over_price), underPrice: Number(g.under_price), weatherAdj, certainty });
+        // Each sport's own over/under logic (markets.js): ballpark, starters
+        // and bullpens in MLB, goalies in NHL, back-to-backs in basketball,
+        // weather in football.
+        const r = window.EDGE_MARKETS
+          ? EDGE_MARKETS.rateTotal(prior, { ...g, total: mt }, { weatherAdj })
+          : EDGE_GOVERNOR.rateTotal({ sport: sp, modelTotal: model, marketTotal: mt,
+              overPrice: Number(g.over_price), underPrice: Number(g.under_price), weatherAdj, certainty });
         if (r) totalsByGame[prior.game_id] = { ...r, certainty: Math.round(certainty * 100) / 100 };
       });
       summary.totals = Object.keys(totalsByGame).length;
+
+      // ── All four markets for every rated game (markets.js): the spread,
+      //    the moneyline and the over/under, each by its own logic. The
+      //    pipeline's own decision is used for its bet type, so the card
+      //    and the pick always agree. Saved with each pick and kept for the
+      //    pick builder.
+      const marketsByGame = {};
+      if (window.EDGE_MARKETS) priors.forEach(prior => {
+        try {
+          const g = { ...(prior._raw_game || {}), id: prior.game_id, home_team: prior.home_team, away_team: prior.away_team,
+                      commence_time: prior.commence_time };
+          if (g.spread == null && prior.market && prior.market.current_spread != null) g.spread = prior.market.current_spread;
+          if (g.total == null && prior.market && prior.market.total != null) g.total = prior.market.total;
+          const env = (algoResults.find(r => r.prior?.game_id === prior.game_id)?.families || []).find(f => f.family === 'environment');
+          const weatherAdj = (prior.sport === 'NFL' || prior.sport === 'NCAAF') && env && Number(env.signal) < 0 ? Number(env.signal) * 4 : 0;
+          const dec = finalResults.find(p => p.game_id === prior.game_id) || null;
+          const tot = totalsByGame[prior.game_id] || null;
+          marketsByGame[prior.game_id] = EDGE_MARKETS.rateGame(prior, g, { decision: dec, total: tot, weatherAdj });
+          if (dec && marketsByGame[prior.game_id]) dec.governor_snapshot = { ...(dec.governor_snapshot || {}), markets: marketsByGame[prior.game_id] };
+        } catch (e) { logEdgeError('orch.markets', e); }
+      });
 
       // Every game's result, picked or passed, for the board.
       const ratedAt = new Date().toISOString();
@@ -488,6 +514,7 @@ const EDGE_ORCHESTRATOR = (() => {
           total_spread: prior.model_spread ?? null,
           home_ml: prior.market?.home_ml ?? null,
           away_ml: prior.market?.away_ml ?? null,
+          markets: marketsByGame[p.game_id] || null,
           total: totalsByGame[p.game_id] ? {
             mu: totalsByGame[p.game_id].mu, sd: totalsByGame[p.game_id].sd,
             market_total: totalsByGame[p.game_id].market_total, model_total: totalsByGame[p.game_id].model_total,
