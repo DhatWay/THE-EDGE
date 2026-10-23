@@ -29,13 +29,15 @@
 // ============================================================
 
 const EDGE_GUARD = (function () {
-  const BUILD = 'guard-20261017-01';
+  const BUILD = 'guard-20261022-01';
   const K_LINES = 'edge_guard_lines', K_NEWS = 'edge_guard_news', K_INJ = 'edge_guard_inj', K_DISMISS = 'edge_guard_dismissed', K_ST = 'edge_guard_starters', K_LOGGED = 'edge_guard_logged';
   const FOOTBALL = new Set(['NFL', 'NCAAF']), ML_SPORTS = new Set(['MLB', 'NHL']);
   // Points of spread that count as a real move, by sport.
   const MOVE = { NFL: 1.5, NCAAF: 2.5, NBA: 2, WNBA: 2, NCAAB: 2.5, MLS: 0.5 };
   // Points beyond which the model and the market are far apart.
   const SPLIT = { NFL: 4, NCAAF: 7, NBA: 5, WNBA: 5, NCAAB: 6, MLS: 1 };
+  // Points of total that count as a real move, by sport.
+  const TOTAL_MOVE = { NFL: 1.5, NCAAF: 2.5, NBA: 3, WNBA: 2.5, NCAAB: 3, MLB: 0.5, NHL: 0.5, MLS: 0.25 };
   const SIGMA = { NFL: 13.5, NCAAF: 16.5, NBA: 12, WNBA: 11, NCAAB: 11, MLS: 1.8 };
   const BAD = /(out|doubtful|suspend|injured reserve|ir\b|inactive|questionable|day-to-day)/i;
   const WEIGHT = s => /out|doubtful|suspend|reserve|inactive/i.test(s) ? 2 : /questionable|day-to-day/i.test(s) ? 1 : 0;
@@ -58,7 +60,7 @@ const EDGE_GUARD = (function () {
       const e = lines[g.id] = lines[g.id] || { sport: g._sport || g.sport, home: g.home_team, away: g.away_team, start: g.commence_time, snaps: [] };
       if (g.bench_book) e.bench = g.bench_book;
       const last = e.snaps[e.snaps.length - 1];
-      if (!last || last.h !== snap.h || last.s !== snap.s || last.ml[0] !== snap.ml[0]) e.snaps.push(snap);
+      if (!last || last.h !== snap.h || last.s !== snap.s || last.ml[0] !== snap.ml[0] || last.ml[1] !== snap.ml[1] || last.tot !== snap.tot) e.snaps.push(snap);
       if (e.snaps.length > 40) e.snaps = [e.snaps[0]].concat(e.snaps.slice(-39));   // keep the first (the opener)
     });
     Object.keys(lines).forEach(id => { const st = new Date(lines[id].start || 0).getTime(); if (st && now - st > 2 * 86400000) delete lines[id]; });
@@ -292,6 +294,35 @@ const EDGE_GUARD = (function () {
       const ev = evById[b.game_id];
       const tag = `${b.game_id}|${homeSide ? 'h' : 'a'}|${b.mode}`;
       if (seenGameSide.has(tag)) return; seenGameSide.add(tag);
+      // Over/unders you've bet: the total's move since your bet, explained
+      // by starter changes (MLB/NHL) or new injuries on either team, else
+      // inferred as sharp money.
+      if (b.pick_type === 'TOTAL') {
+        const refT = Number(b.line), nowT = cur.tot;
+        if (!isFinite(refT) || nowT == null) return;
+        const over = /^over/i.test(label);
+        const mv = nowT - refT;
+        if (Math.abs(mv) < (TOTAL_MOVE[L.sport] ?? 2)) return;
+        const favorable = over ? mv > 0 : mv < 0;          // you hold the better number
+        const refTime = new Date(b.created_at).getTime();
+        const sc = starterChange(game, refTime);
+        const injH = currentInjuries(L.sport, L.home, refTime), injA = currentInjuries(L.sport, L.away, refTime);
+        const checks = [`Starters: ${sc ? 'changed' : 'no change recorded'}`, `New injuries: ${L.home} ${injH.length} · ${L.away} ${injA.length}`];
+        let kind = 'SHARP', why = [], rule, suggest;
+        if (sc) { kind = 'NEWS'; why.push(sc.map(c => `${c.team} ${c.kind} change: ${c.from} → ${c.to}`).join('; ')); }
+        else if (injH.length || injA.length) { kind = 'NEWS'; why.push('Newly out or doubtful: ' + injH.concat(injA).slice(0, 4).map(p => `${p.player}${p.pos ? ' (' + p.pos + ')' : ''}`).join(', ')); }
+        else why.push('No starter or injury news found for either team — headlines are checked when you open this panel');
+        if (favorable) { kind = 'FAVORABLE'; rule = 'favorable'; suggest = `You beat the market by ${Math.abs(mv).toFixed(1)} (your ${over ? 'Over' : 'Under'} ${refT} vs ${nowT} now). No action needed.`; }
+        else if (kind === 'NEWS') { rule = 'edge_gone'; suggest = `The total moved ${fmt(mv)} after news (${why[0]}). Hold what you have; don\u2019t add at the new number.`; }
+        else { rule = 'sharp_dont_add'; suggest = `Likely sharp money on the ${mv < 0 ? 'Under' : 'Over'} (an inference — no news explains it). Don\u2019t add.`; }
+        alerts.push({
+          id: `${b.game_id}|tot|${b.mode}`, sev: favorable ? 1 : (kind === 'NEWS' ? 3 : 2), game, kind,
+          title: `${over ? 'Over' : 'Under'} ${refT} → ${nowT} now`, why, suggest, dismissKey: `${nowT}`, bet: b, sideHome: null,
+          rule, ref: refT, at: nowT, sharp: null, side: over ? 'Over' : 'Under', mode: b.mode, checks,
+          evidence: { market: 'total', starters: sc, injuries: injH.concat(injA).slice(0, 6) }, nums: {},
+        });
+        return;
+      }
       if (b.pick_type === 'ML' || ML_SPORTS.has(L.sport)) {
         // Moneylines: the move is in the price's implied chance.
         const priceThen = Number(b.odds), priceNow = homeSide ? cur.ml[0] : cur.ml[1];
@@ -562,6 +593,20 @@ const EDGE_GUARD = (function () {
   // Grades: did the close confirm the move; did the side the alert warned
   // about lose; was the suggestion right. Lines are the home team's.
   function gradeOne(r, close, hs, as) {
+    if (r.evidence && r.evidence.market === 'total') {
+      // Over/under alerts: graded on the final total.
+      const tot = hs + as, over = /^over/i.test(r.side_team || '');
+      const hit = L => { if (!isFinite(L)) return null; const v = tot - L; if (Math.abs(v) < 1e-9) return null; return over ? v > 0 : v < 0; };
+      const g = { close, final: `${as}-${hs}`, total: tot };
+      const atYour = hit(Number(r.ref_line)), atAlert = hit(Number(r.line_at_alert));
+      if (isFinite(r.ref_line) && isFinite(r.line_at_alert) && isFinite(close) && r.rule !== 'favorable') {
+        const dir = Math.sign(r.line_at_alert - r.ref_line);
+        g.close_confirmed = dir !== 0 ? (close - r.ref_line) * dir >= Math.abs(r.line_at_alert - r.ref_line) - 0.5 : null;
+      }
+      g.side_covered_your_line = atYour; g.side_covered_alert_line = atAlert;
+      g.suggestion_right = r.rule === 'favorable' ? atYour : (atAlert == null ? null : !atAlert);
+      return g;
+    }
     const margin = hs - as;
     const homeSide = nm(r.side_team) && nm(r.home) && nm(r.side_team).startsWith(nm(r.home));
     const covers = (L, home) => { const v = margin + L; if (Math.abs(v) < 1e-9) return null; return home ? v > 0 : v < 0; };
@@ -615,22 +660,31 @@ const EDGE_GUARD = (function () {
       if (!res.ok) return;
       const rows = await res.json();
       if (!rows.length) return;
-      const ids = [...new Set(rows.map(r => r.game_id))];
-      const finals = {};
-      for (let i = 0; i < ids.length; i += 80) {
-        const list = ids.slice(i, i + 80).map(x => `"${x}"`).join(',');
-        const r2 = await fetch(`${url}/rest/v1/historical_odds?game_id=in.(${list})&home_score=not.is.null&select=game_id,spread,home_score,away_score`,
-          { headers: { apikey: key, Authorization: `Bearer ${key}` } });
-        if (r2.ok) (await r2.json()).forEach(g => { finals[g.game_id] = g; });
+      // Finals from your game history, matched by sport, teams and date
+      // (the history uses ESPN's game ids, the alerts the odds feed's).
+      const finalsFor = {};
+      for (const r of rows) {
+        const d = new Date(r.start_time);
+        const from = new Date(d.getTime() - 36 * 3600000).toISOString().slice(0, 10), to = new Date(d.getTime() + 36 * 3600000).toISOString().slice(0, 10);
+        const k = `${r.sport}|${from}|${to}`;
+        if (!finalsFor[k]) {
+          try {
+            const r2 = await fetch(`${url}/rest/v1/historical_odds?sport=eq.${r.sport}&game_date=gte.${from}&game_date=lte.${to}&home_score=not.is.null&select=home_team,away_team,spread,total,home_score,away_score&limit=1000`,
+              { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+            finalsFor[k] = r2.ok ? await r2.json() : [];
+          } catch { finalsFor[k] = []; }
+        }
+        r._final = finalsFor[k].find(g => teamKeyMatch(g.home_team, r.home) && teamKeyMatch(g.away_team, r.away)) || null;
       }
       for (const r of rows) {
-        const fz = finals[r.game_id];
+        const fz = r._final;
         if (!fz) continue;
-        const grade = gradeOne(r, num(fz.spread), Number(fz.home_score), Number(fz.away_score));
+        const closeVal = r.evidence && r.evidence.market === 'total' ? num(fz.total) : num(fz.spread);
+        const grade = gradeOne(r, closeVal, Number(fz.home_score), Number(fz.away_score));
         await fetch(`${url}/rest/v1/guard_alerts?id=eq.${encodeURIComponent(r.id)}`, {
           method: 'PATCH',
           headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-          body: JSON.stringify({ close_line: num(fz.spread), home_score: Number(fz.home_score), away_score: Number(fz.away_score), grade, graded_at: new Date().toISOString() }),
+          body: JSON.stringify({ close_line: closeVal, home_score: Number(fz.home_score), away_score: Number(fz.away_score), grade, graded_at: new Date().toISOString() }),
         }).catch(() => {});
       }
     } catch {}
