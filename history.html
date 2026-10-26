@@ -285,6 +285,7 @@
     <div class="money-box" id="moneyBox" hidden></div>
     <div class="overall-box" id="overallBox"></div>
     <div class="overall-box" id="marketBox"></div>
+    <div class="overall-box" id="monitorBox" hidden></div>
 
     <div class="record-grid">
       <div class="rec-cell">
@@ -493,6 +494,7 @@
         // Picks removed on the Picks page are gone from the record too.
         allPicks = (await fetchAllPicks(`${url}/rest/v1/shadow_picks?select=*&order=created_at.desc`, key))
           .filter(p => p.decision !== 'REMOVED');
+        applyStakeMode(allPicks);
         try {
           const bets = await fetchAllPicks(`${url}/rest/v1/bet_log?select=*&order=created_at.desc`, key);
           allBets = betRows(bets, allPicks);
@@ -778,12 +780,67 @@
             return `<tr><td>${k}-pick sets</td><td>${r.w}-${r.l}-${r.p}</td><td>${r.pct}</td><td class="${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td></tr>`;
           }).join('') + `</table>`;
       }
+      // The engine (v1.0+) against the picks made before it, and its timing.
+      const eng = graded.filter(p => (p.governor_snapshot || {}).engine), pre = graded.filter(p => !(p.governor_snapshot || {}).engine);
+      if (eng.length) {
+        const tm = t => eng.filter(p => (p.governor_snapshot || {}).timing === t);
+        html += `<div class="ov-lbl" style="margin-top:8px">BY MODEL</div><table class="mk-hist">` +
+          line('Engine picks (game + line model)', eng) + line('Before the engine', pre) +
+          line('— engine: BET NOW', tm('bet_now')) + line('— engine: WAIT', tm('wait')) + line('— engine: BET (line holding)', tm('bet')) + `</table>`;
+      }
+      html += `<div class="ov-sub" style="margin-top:6px">Scored ${FLAT() ? 'at flat stakes (1 unit per pick at its price)' : 'in the model\u2019s own units'} · <a href="#" onclick="toggleStakeMode();return false" style="color:var(--gold)">switch</a></div>`;
       box.innerHTML = html;
+    }
+
+    // ── FLAT STAKES ──
+    // By default every pick is scored as 1 unit at its price, the way you
+    // bet (a flat amount), so no tier looks bigger than it is. The model's
+    // own sizes are kept and can be switched back on.
+    const FLAT = () => localStorage.getItem('edge_hist_flat') !== 'false';
+    function applyStakeMode(list) {
+      const dec = p => { const pr = Number(p) || -110; return pr > 0 ? 1 + pr / 100 : 1 + 100 / -pr; };
+      (list || []).forEach(p => {
+        if (p.units_model === undefined) { p.units_model = p.units; p.pnl_model = p.pnl; }
+        if (FLAT()) {
+          const price = (p.governor_snapshot || {}).price ?? p.price ?? -110;
+          p.units = 1;
+          p.pnl = p.result === 'W' ? Math.round((dec(price) - 1) * 100) / 100 : p.result === 'L' ? -1 : p.result ? 0 : null;
+        } else { p.units = p.units_model; p.pnl = p.pnl_model; }
+      });
+    }
+    function toggleStakeMode() {
+      localStorage.setItem('edge_hist_flat', FLAT() ? 'false' : 'true');
+      applyStakeMode(allPicks); renderSummary(); if (typeof renderTable === 'function') renderTable();
+    }
+
+    // ── BACKGROUND MONITOR (monitoring database, when connected) ──
+    // The latest weekly report: every game, every market, rated by the
+    // engine in the background — by sport and market, and the line model.
+    let monitorLoaded = false;
+    async function loadMonitorBox() {
+      monitorLoaded = true;
+      const u = localStorage.getItem('edge_mon_url'), k = localStorage.getItem('edge_mon_key'), p = localStorage.getItem('edge_mon_pass');
+      const box = document.getElementById('monitorBox');
+      if (!box || !u || !k || !p) return;
+      try {
+        const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start,ratings,summary&order=week_start.desc&limit=1`,
+          { headers: { apikey: k, Authorization: `Bearer ${k}`, 'x-edge-pass': p } });
+        const w = r.ok ? (await r.json())[0] : null;
+        box.hidden = false;
+        if (!w) { box.innerHTML = '<div class="ov-lbl">BACKGROUND MONITOR</div><div class="ov-sub">No weekly report yet — the first arrives after a full graded week.</div>'; return; }
+        const pc = v => (v == null ? '—' : (v * 100).toFixed(1) + '%');
+        const mk = (w.summary.markets || []).map(m => `<tr><td>${m.sport} ${m.market}</td><td>${m.all.w}-${m.all.l}-${m.all.p}</td><td>${pc(m.all.roi)}</td><td>${m.value_plays.w}-${m.value_plays.l}-${m.value_plays.p}</td><td>${pc(m.value_plays.roi)}</td><td>${pc(m.all.beat_close)}</td></tr>`).join('');
+        const lm = Object.entries(w.summary.lineModel || {}).map(([s, x]) => `${s}: direction right ${x.dirN ? Math.round(x.dirHit / x.dirN * 100) + '%' : '—'} · miss ${x.n ? (x.errModel / x.n).toFixed(2) : '—'} vs ${x.n ? (x.errNaive / x.n).toFixed(2) : '—'} no-move`).join(' · ');
+        box.innerHTML = `<div class="ov-lbl">BACKGROUND MONITOR · WEEK OF ${w.week_start} · ${w.ratings} RATINGS</div>
+          <table class="mk-hist"><tr><td></td><td>all</td><td>ROI</td><td>value plays</td><td>ROI</td><td>beat close</td></tr>${mk}</table>
+          ${lm ? `<div class="ov-sub">Line model — ${lm}</div>` : ''}`;
+      } catch (e) { box.hidden = false; box.innerHTML = `<div class="ov-sub">Background monitor unavailable: ${e.message}</div>`; }
     }
 
     function renderSummary() {
       renderMoney();
       renderOverall();
+      if (!monitorLoaded) loadMonitorBox();
       renderByMarket();
       if (propRows === null) loadMarketExtras();
       const picks = picksForMode();
