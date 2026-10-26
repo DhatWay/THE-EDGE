@@ -21,7 +21,7 @@
 // ============================================================
 
 const EDGE_PROPS = (() => {
-  const BUILD = 'props-20261022-01';
+  const BUILD = 'props-20261025-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -226,8 +226,10 @@ const EDGE_PROPS = (() => {
     // Game script and pace, from this game's spread and total.
     const g = game || {};
     const ctx = {
-      total: Number(g.total?.market_total ?? (typeof g.total === 'number' ? g.total : null) ?? g.markets?.total?.line),
-      homeSpread: Number(g.home_spread ?? g.spread ?? g.market_spread ?? g.markets?.spread?.home_line),
+      // Game script from the engine's game model when the game carries it
+      // (its projected total and margin); otherwise the market's numbers.
+      total: Number(g.markets?.total?.model_total ?? g.total?.market_total ?? (typeof g.total === 'number' ? g.total : null) ?? g.markets?.total?.line),
+      homeSpread: Number(g.engine?.game_model?.model_spread ?? g.home_spread ?? g.spread ?? g.market_spread ?? g.markets?.spread?.home_line),
       playerIsHome, starter: log[0] ? log[0].starter !== false : true,
       restDays: Number(playerIsHome ? g.rest_days?.home : g.rest_days?.away),
     };
