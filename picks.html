@@ -29,6 +29,7 @@
   <script src="rating-core.js"></script>
   <script src="sport-profiles.js"></script>
   <script src="markets.js"></script>
+  <script src="edge-engine.js"></script>
   <script src="prop-logic.js"></script>
   <script src="prop-engine.js"></script>
   <script src="auth.js"></script>
@@ -647,7 +648,7 @@
         <td class="mk-pick">${mkEsc(EDGE_MARKETS.describe(x))}${x.price != null ? ` (${x.price > 0 ? '+' : ''}${x.price})` : ''}</td>
         <td>${x.chance != null ? (x.chance * 100).toFixed(1) + '%' : '—'}</td>
         <td class="mk-v ${x.value > 0 ? 'pos' : 'neg'}">${x.value != null ? (x.value > 0 ? '+' : '') + (x.value * 100).toFixed(1) + '%' : '—'}</td>
-        <td>${tier}${x.extreme ? ' <span title="Extreme disagreement with the market — held at the cap; check news" style="color:var(--red)">⚠</span>' : ''}</td>
+        <td>${tier}${x.extreme ? ' <span title="Extreme disagreement with the market — held at the cap; check news" style="color:var(--red)">⚠</span>' : ''}${x.timing === 'bet_now' ? ' <b title="' + mkEsc(x.timing_why || '') + '">NOW</b>' : x.timing === 'wait' ? ' <b title="' + mkEsc(x.timing_why || '') + '">WAIT</b>' : ''}</td>
         <td><button class="mk-bet" onclick="betMarket('${gid}','${x.market}')">Bet</button></td></tr>`;
     }
     // Every market for this game, each by its own logic: side or over/under,
@@ -658,7 +659,11 @@
       const m = marketsFor(p);
       if (!m) return '';
       const parts = (m.total && m.total.parts && m.total.parts.length) ? `<div class="pick-meta" style="font-size:10px;margin-top:2px">O/U adjusted for: ${m.total.parts.map(x => mkEsc(x.why)).join(' · ')}</div>` : '';
-      return `<table class="mk-table">${mkRow('Spread', m.spread, p.game_id)}${mkRow('Moneyline', m.moneyline, p.game_id)}${mkRow('O/U', m.total, p.game_id)}</table>${parts}`;
+      // The line model: where the spread is heading, and what to do about it.
+      const sp = m.spread;
+      const TIMING = { bet_now: 'BET NOW', wait: 'WAIT', bet: 'BET' };
+      const lineHtml = sp && sp.timing ? `<div class="pick-meta" style="font-size:11px;margin-top:4px">Line model: ${mkEsc(sp.team)} ${sp.line > 0 ? '+' : ''}${sp.line} now → ${sp.line_close > 0 ? '+' : ''}${sp.line_close} expected at close · <b>${TIMING[sp.timing] || ''}</b> — ${mkEsc(sp.timing_why || '')}. Spread value is measured at the expected close.</div>` : '';
+      return `<table class="mk-table">${mkRow('Spread', m.spread, p.game_id)}${mkRow('Moneyline', m.moneyline, p.game_id)}${mkRow('O/U', m.total, p.game_id)}</table>${lineHtml}${parts}`;
     }
     async function betMarket(gameId, market, reason) {
       const p = allPicks.find(x => x.game_id === gameId);
@@ -747,7 +752,7 @@
         <div class="bpick"><div>
           <div class="bp-main">${i + 1}. ${mkEsc(EDGE_MARKETS.describe(c))}${c.price != null ? ` (${c.price > 0 ? '+' : ''}${c.price})` : ''}</div>
           <div class="bp-meta">${mkEsc(c.sport)} · ${EDGE_MARKETS.LABEL[c.market]} · ${mkEsc(c.away)} @ ${mkEsc(c.home)} · ${when(c.start)}<br>
-            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value +${(c.value * 100).toFixed(1)}% · ${String(c.tier).replace('BET_', '')}${c.extreme ? ' · <span style="color:var(--red)">⚠ extreme disagreement — check news</span>' : ''}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}${c.market === 'total' && c.model_total != null ? ` · model total ${c.model_total}` : ''}</div>
+            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value +${(c.value * 100).toFixed(1)}% · ${String(c.tier).replace('BET_', '')}${c.extreme ? ' · <span style="color:var(--red)">⚠ extreme disagreement — check news</span>' : ''}${c.timing ? ` · <b>${c.timing === 'bet_now' ? 'BET NOW' : c.timing === 'wait' ? 'WAIT' : 'BET'}</b>${c.line_close != null ? ` (expected close ${c.line_close > 0 && c.market !== 'total' ? '+' : ''}${c.line_close})` : ''}` : ''}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}${c.market === 'total' && c.model_total != null ? ` · model total ${c.model_total}` : ''}</div>
         </div><div><button class="mk-bet" onclick="betBuilderPick(${i})">Bet</button></div></div>`).join('')
         : '<div class="pick-meta">Nothing clears the value bar in the markets you picked.</div>') +
         `<div class="pick-meta" style="margin-top:6px">${r.considered} options considered${r.short > 0 ? ` · only ${r.picks.length} of ${r.asked} qualify — not padded` : ''}</div>` +
