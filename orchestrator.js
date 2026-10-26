@@ -39,7 +39,7 @@
 
 const EDGE_ORCHESTRATOR = (() => {
 
-  const BUILD = 'orch-20261022-01';
+  const BUILD = 'orch-20261025-01';
 
   const MODES = {
     DETERMINISTIC: 'math_only',
@@ -96,6 +96,27 @@ const EDGE_ORCHESTRATOR = (() => {
     } = options;
 
     const startedAt = Date.now();
+    // The learned table (calibration, weights, the learned game model) as
+    // saved in Supabase — the same copy the background monitor reads, so
+    // both rate with the same numbers.
+    try {
+      const u0 = SUPABASE_URL(), k0 = SUPABASE_KEY();
+      if (u0 && k0) {
+        const r0 = await fetch(`${u0}/rest/v1/settings?id=eq.1&select=governor_calibration`, { headers: { apikey: k0, Authorization: `Bearer ${k0}` } });
+        const g0 = r0.ok ? (await r0.json())[0] : null;
+        if (g0 && g0.governor_calibration) localStorage.setItem('edge_governor_calibration', JSON.stringify(g0.governor_calibration));
+      }
+    } catch {}
+    // Learned line-model weights from the monitoring database, when the app
+    // is connected to it (Settings › Monitoring database).
+    try {
+      const mu = localStorage.getItem('edge_mon_url'), mk = localStorage.getItem('edge_mon_key'), mp = localStorage.getItem('edge_mon_pass');
+      if (window.EDGE_ENGINE && mu && mk && mp) {
+        const r1 = await fetch(`${mu}/rest/v1/rater_state?key=eq.line_model&select=value`, { headers: { apikey: mk, Authorization: `Bearer ${mk}`, 'x-edge-pass': mp } });
+        const v1 = r1.ok ? (await r1.json())[0] : null;
+        if (v1 && v1.value && v1.value.fitted) EDGE_ENGINE.setLearned(v1.value.fitted);
+      }
+    } catch {}
     const runId = `run_${startedAt}_${Math.random().toString(36).slice(2, 8)}`;
     const log = makeLogger(onProgress);
 
@@ -242,6 +263,29 @@ const EDGE_ORCHESTRATOR = (() => {
 
       log('Stage 4/7 · Computing game priors');
       const priors = await buildPriors(gameList, powerIndex, builtContext, log);
+
+      // ── The learned game model (edge-engine.js): each sport's cover model,
+      //    when the Slate Test saved one that beat "no edge" on held-out
+      //    games, replaces the ranking's chance to cover before the governor
+      //    blends and caps it. Its inputs come from your stored games. ──
+      if (window.EDGE_ENGINE && priors.length) {
+        try {
+          const sportsIn = [...new Set(priors.map(p => p.sport))].filter(s => EDGE_ENGINE.coverModelFor(s));
+          if (sportsIn.length) {
+            const url = SUPABASE_URL(), key = SUPABASE_KEY();
+            const since = new Date(Date.now() - 200 * 86400000).toISOString().slice(0, 10);
+            for (const sp of sportsIn) {
+              const res = await fetch(`${url}/rest/v1/historical_odds?sport=eq.${sp}&game_date=gte.${since}&home_score=not.is.null&spread=not.is.null` +
+                `&select=game_date,home_team,away_team,home_score,away_score,spread&limit=5000`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+              const rows = res.ok ? await res.json() : [];
+              const idx = EDGE_ENGINE.historyIndex(sp, rows.map(r => ({ date: r.game_date, home: r.home_team, away: r.away_team, hs: r.home_score, as: r.away_score, line: r.spread })));
+              let applied = 0;
+              priors.filter(p => p.sport === sp).forEach(p => { EDGE_ENGINE.applyCoverModel(p, p._raw_game || {}, idx); if (p.cover_model) applied++; });
+              log(`  ${sp}: learned game model applied to ${applied} games`);
+            }
+          }
+        } catch (e) { log('  learned game model: ' + e.message); }
+      }
       summary.stages.priors_built = priors.length;
 
       if (!priors.length) {
@@ -480,7 +524,7 @@ const EDGE_ORCHESTRATOR = (() => {
       //    pipeline's own decision is used for its bet type, so the card
       //    and the pick always agree. Saved with each pick and kept for the
       //    pick builder.
-      const marketsByGame = {};
+      const marketsByGame = {}, engineByGame = {};
       if (window.EDGE_MARKETS) priors.forEach(prior => {
         try {
           const g = { ...(prior._raw_game || {}), id: prior.game_id, home_team: prior.home_team, away_team: prior.away_team,
@@ -492,7 +536,54 @@ const EDGE_ORCHESTRATOR = (() => {
           const dec = finalResults.find(p => p.game_id === prior.game_id) || null;
           const tot = totalsByGame[prior.game_id] || null;
           marketsByGame[prior.game_id] = EDGE_MARKETS.rateGame(prior, g, { decision: dec, total: tot, weatherAdj });
-          if (dec && marketsByGame[prior.game_id]) dec.governor_snapshot = { ...(dec.governor_snapshot || {}), markets: marketsByGame[prior.game_id] };
+          // ── The engine (edge-engine.js): line model + game model at the
+          //    predicted close. The spread market's value and tier become
+          //    the value at the predicted close; its timing says bet now or
+          //    wait. Same files run in the background monitor.
+          if (window.EDGE_ENGINE) {
+            let opener = null;
+            try { const gl = JSON.parse(localStorage.getItem('edge_guard_lines') || '{}')[prior.game_id]; if (gl && gl.snaps && gl.snaps.length) opener = gl.snaps[0].h; } catch {}
+            let openerTotal = null;
+            try { const gl = JSON.parse(localStorage.getItem('edge_guard_lines') || '{}')[prior.game_id]; if (gl && gl.snaps && gl.snaps.length) openerTotal = gl.snaps[0].tot; } catch {}
+            const eng = EDGE_ENGINE.evaluateGame(prior, { ...g, pin_home_spread: g.pin_home_spread ?? null }, {
+              decision: dec, opener, openerTotal,
+              modelTotal: marketsByGame[prior.game_id] && marketsByGame[prior.game_id].total ? marketsByGame[prior.game_id].total.model_total : null });
+            engineByGame[prior.game_id] = eng;
+            const mk = marketsByGame[prior.game_id];
+            // The pipeline's own spread pick follows the engine: what to bet
+            // is the value at the predicted close (design: "How the two
+            // combine"), so the pick, the card and the markets row agree.
+            const decType = dec && dec.governor_snapshot ? dec.governor_snapshot.bet_type : null;
+            if (eng && eng.combined && dec && decType === 'SPREAD') {
+              const c = eng.combined;
+              const UNITS = { BET_2U: 2, BET_1U: 1, LEAN: 0.5 };
+              if (dec.direction !== c.side || dec.decision !== c.tier) {
+                dec.engine_override = { from: { direction: dec.direction, decision: dec.decision, confidence: dec.confidence }, reason: 'value at the predicted close' };
+              }
+              dec.direction = c.side;
+              dec.decision = c.tier || 'PASS';
+              dec.confidence = Math.round(c.chance * 1000) / 10;
+              dec.edge = c.value_at_close;
+              dec.units = Math.min(Number(dec.units) || 0, UNITS[c.tier] || 0) || (UNITS[c.tier] || 0);
+              if (dec.side_label) dec.side_label = { ...dec.side_label, team: c.team, side: c.side };
+              dec.governor_snapshot = { ...(dec.governor_snapshot || {}), ev: c.value_at_close, decision: dec.decision, timing: c.timing, expected_close: c.line_close };
+            }
+            if (eng && mk && mk.moneyline && eng.moneyline_timing) {
+              const t = eng.moneyline_timing(mk.moneyline.side);
+              mk.moneyline = { ...mk.moneyline, timing: t.call, timing_why: t.why };
+            }
+            if (eng && mk && mk.total && eng.total_timing) {
+              const t = eng.total_timing(mk.total.side);
+              mk.total = { ...mk.total, timing: t.call, timing_why: t.why, line_close: eng.total_line_model ? eng.total_line_model.expected_close : null };
+            }
+            if (eng && eng.combined && mk && mk.spread) {
+              const c = eng.combined;
+              mk.spread = { ...mk.spread, side: c.side, team: c.team, line: c.line_now, home_line: eng.line_model.current,
+                            chance: c.chance, value: c.value_at_close, tier: c.tier, extreme: c.extreme,
+                            timing: c.timing, timing_why: c.timing_why, line_close: c.line_close };
+            }
+          }
+          if (dec && marketsByGame[prior.game_id]) dec.governor_snapshot = { ...(dec.governor_snapshot || {}), markets: marketsByGame[prior.game_id], engine: engineByGame[prior.game_id] || null };
         } catch (e) { logEdgeError('orch.markets', e); }
       });
 
@@ -515,6 +606,7 @@ const EDGE_ORCHESTRATOR = (() => {
           home_ml: prior.market?.home_ml ?? null,
           away_ml: prior.market?.away_ml ?? null,
           markets: marketsByGame[p.game_id] || null,
+          engine: engineByGame[p.game_id] || null,
           total: totalsByGame[p.game_id] ? {
             mu: totalsByGame[p.game_id].mu, sd: totalsByGame[p.game_id].sd,
             market_total: totalsByGame[p.game_id].market_total, model_total: totalsByGame[p.game_id].model_total,
