@@ -654,6 +654,16 @@
     </div>
 
     <div class="section">
+      <div class="sec-title">MONITORING <em>DATABASE</em></div>
+      <div class="pick-meta" style="font-size:12px;color:var(--text-dim);margin-bottom:8px">The second Supabase project. Line Guard logs there, the app shows the background results, and both use the line model's learned weights.</div>
+      <input id="monUrl" class="text-input" placeholder="https://xxxx.supabase.co" style="width:100%;margin-bottom:6px">
+      <input id="monKey" class="text-input" placeholder="anon public key" style="width:100%;margin-bottom:6px">
+      <input id="monPass" class="text-input" placeholder="passphrase (the one in edge-monitor.sql)" style="width:100%;margin-bottom:6px">
+      <button class="danger-btn" style="border-color:var(--gold);color:var(--gold)" onclick="saveMonitor()">Save and test</button>
+      <div id="monStatus" class="pick-meta" style="font-size:12px;margin-top:6px"></div>
+    </div>
+
+    <div class="section">
       <div class="sec-title">DANGER <em>ZONE</em></div>
       <button class="danger-btn" onclick="resetCaps()">Reset Daily & Weekly Cap Usage</button>
       <button class="danger-btn" onclick="resetSimBankroll()">Reset Sim — bets, profit and bankroll</button>
@@ -1147,6 +1157,26 @@
     // learned: bet marks on cards, Line Guard's memory, the saved learned
     // table, the moneyline de-bias and the last ratings. Your database
     // address and keys, bet amount and other settings stay.
+    // Monitoring database: saved on this phone, then tested by reading the
+    // weekly summaries (only works with the right passphrase).
+    function loadMonitor() {
+      const set = (id, k) => { const el = document.getElementById(id); if (el) el.value = localStorage.getItem(k) || ''; };
+      set('monUrl', 'edge_mon_url'); set('monKey', 'edge_mon_key'); set('monPass', 'edge_mon_pass');
+    }
+    async function saveMonitor() {
+      const u = document.getElementById('monUrl').value.trim().replace(/\/+$/, ''), k = document.getElementById('monKey').value.trim(), p = document.getElementById('monPass').value.trim();
+      const st = document.getElementById('monStatus');
+      if (!u || !k || !p) { localStorage.removeItem('edge_mon_url'); localStorage.removeItem('edge_mon_key'); localStorage.removeItem('edge_mon_pass'); st.textContent = 'Cleared — the app uses only your main database.'; return; }
+      localStorage.setItem('edge_mon_url', u); localStorage.setItem('edge_mon_key', k); localStorage.setItem('edge_mon_pass', p);
+      st.textContent = 'Testing…';
+      try {
+        const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start&limit=1`, { headers: { apikey: k, Authorization: `Bearer ${k}`, 'x-edge-pass': p } });
+        const rows = r.ok ? await r.json() : null;
+        st.textContent = r.ok ? `Connected${rows && rows.length ? '' : ' (no weekly reports yet)'} — Line Guard now logs there.` : `Saved, but the test failed (HTTP ${r.status}) — check the URL, key and passphrase.`;
+      } catch (e) { st.textContent = 'Saved, but the test failed: ' + e.message; }
+    }
+    document.addEventListener('DOMContentLoaded', loadMonitor);
+
     function clearPhoneHistory() {
       if (prompt('Type FRESH to clear this phone\u2019s saved picks data and learned settings:') !== 'FRESH') return;
       const drop = /^edge_(bet_(sim|real)_|guard_|governor_calibration$|win_scale$|last_evaluations$|quick_marks$)/;
