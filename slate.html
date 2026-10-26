@@ -25,6 +25,8 @@
   <script src="learning.js"></script>
   <script src="rating-core.js"></script>
   <script src="sport-profiles.js"></script>
+  <script src="markets.js"></script>
+  <script src="edge-engine.js"></script>
   <script src="auth.js"></script>
   <script src="line-guard.js"></script>
   <script src="situation-results.js"></script>
@@ -398,6 +400,7 @@ let evalRows = [];
 let weeklyBoard = [];
 // Result of fitting the ranking model on this run.
 let fitReport = null;
+let coverSamples = [], coverReport = null;
 // Spot records and the strength-weight fit from this run.
 let spotReport = null, blendReport = null;
 // Totals backtest from this run.
@@ -464,6 +467,7 @@ async function probeSchema() {
 
 async function run() {
   if (window.EDGE_GOVERNOR && EDGE_GOVERNOR.resetWinScale) EDGE_GOVERNOR.resetWinScale();
+  coverSamples = []; coverReport = null;
   const btn = document.getElementById('runBtn');
   const sport = document.getElementById('sport').value;
   const cap = parseInt(document.getElementById('cap').value, 10);
@@ -613,11 +617,16 @@ async function run() {
       atsIndex = wf.ats;
       h2hIndex = wf.h2h;
 
+      // The learned game model's inputs, from games before this step only.
+      const coverIdx = window.EDGE_ENGINE
+        ? EDGE_ENGINE.historyIndex(sport, history.map(x => ({ date: x.game_date, home: x.home, away: x.away, hs: x.home_score, as: x.away_score, line: x.spread })))
+        : null;
       for (const g of step.games) {
         try {
           const ctx = {
             rest: restContext[g.game_id] || { home_rest_days: null, away_rest_days: null },
             prev: prevContext[g.game_id] || { home_prev_margin: null, away_prev_margin: null },
+            coverIdx,
           };
           const graded = await gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights);
           if (graded) {
@@ -676,6 +685,21 @@ async function run() {
         };
       }),
     }));
+
+    // ── Fit the learned game model (cover model) on this run ──
+    coverReport = null;
+    if (window.EDGE_ENGINE && coverSamples.length) {
+      coverSamples.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      coverReport = EDGE_ENGINE.fitCoverModel(coverSamples);
+      if (coverReport.beats) {
+        const t = EDGE_GOVERNOR.readCalibrationTable() || {};
+        t.cover_model = t.cover_model || {};
+        t.cover_model[sport] = { ...coverReport, window: `${fromDate}|${toDate}`, at: new Date().toISOString() };
+        EDGE_GOVERNOR.saveCalibrationTable(t);
+        try { await pushCalibrationTable(); } catch {}
+      }
+      log(`  learned game model: ${coverReport.n} games · ${coverReport.test ? `held-out cover log loss ${coverReport.test.logloss_model} vs ${coverReport.test.logloss_naive} no-edge · ` : ''}${coverReport.beats ? 'SAVED — live picks and the background monitor use it' : 'not saved — ' + coverReport.reason}`);
+    }
 
     // ── Fit the ranking model on this run ──
     fitReport = null;
@@ -1205,6 +1229,16 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
 
   // ── Families ──
   let families;
+  // The learned game model (edge-engine.js): every game becomes a training
+  // sample (inputs from earlier games, result against the closing line);
+  // the saved model, if any, is applied as it is live.
+  if (window.EDGE_ENGINE && ctx && ctx.coverIdx && prior && g.spread != null && g.home_score != null) {
+    const L = Number(g.spread);
+    const rd = ctx.rest && ctx.rest.home_rest_days != null ? { home: ctx.rest.home_rest_days, away: ctx.rest.away_rest_days } : prior.rest_days;
+    const fc = EDGE_ENGINE.coverFeatures(sport, g.home, g.away, g.game_date, L, prior.model_spread, rd, ctx.coverIdx);
+    if (fc.n >= 2) coverSamples.push({ x: fc.x, y: (g.home_score - g.away_score) + L, d: g.game_date });
+    EDGE_ENGINE.applyCoverModel(prior, game, ctx.coverIdx);
+  }
   try { families = await EDGE_ALGOS.runAll(prior, gameContext); }
   catch { families = []; }
 
@@ -1723,6 +1757,18 @@ function calibrationRows(rows, kind) {
     if (x.result === 'W') buckets[b].wins++;
   });
   return buckets;
+}
+
+// Saves the governor's learned table (calibration, weights, the learned
+// game model) to Supabase, where live picks and the background monitor read it.
+async function pushCalibrationTable() {
+  const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+  if (!url || !key) return;
+  await fetch(`${url}/rest/v1/settings?on_conflict=id`, {
+    method: 'POST',
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ id: 1, governor_calibration: EDGE_GOVERNOR.readCalibrationTable(), updated_at: new Date().toISOString() }),
+  });
 }
 
 async function writeBacktestCalibration(sport, fromDate, toDate, rows) {
