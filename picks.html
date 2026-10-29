@@ -455,9 +455,16 @@
         <label><input type="checkbox" class="bMkt" value="prop" checked> Props</label>
       </div>
       <div class="builder-row">
+        <select id="bPropGame"><option value="">All games</option></select>
+        <select id="bMode"><option value="value">Value plays only</option><option value="all">Best available (includes picks under the value bar)</option></select>
+      </div>
+      <div class="builder-row">
         <button class="tool-btn gold" onclick="buildPickSet()">Build picks</button>
-        <select id="bPropGame"><option value="">Look up props for a game…</option></select>
-        <button class="tool-btn" onclick="lookupProps()">Look up props</button>
+        <button class="tool-btn" onclick="newPickSet()">New set</button>
+        <button class="tool-btn" onclick="morePicks()">Show more</button>
+        <button class="tool-btn" onclick="copyPickSet()">Copy</button>
+        <button class="tool-btn" onclick="refreshAndBuild()">↻ Refresh ratings &amp; build</button>
+        <button class="tool-btn" onclick="lookupProps()">Look up props (selected game)</button>
       </div>
       <div id="builderOut" class="builder-out"></div>
     </div>
@@ -707,10 +714,7 @@
       return true;
     }
 
-    // ── PICK BUILDER ──
-    // The N best options across the markets you tick, one per game, nothing
-    // below the sport's value bar; your saved prop picks count too.
-    let builderSet = null;
+    // Saved prop picks for the rated games (the builder's props).
     async function propCandidates(gameIds) {
       const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
       if (!url || !key || !gameIds.length) return [];
@@ -733,30 +737,110 @@
           });
       } catch { return []; }
     }
-    async function buildPickSet() {
-      const out = document.getElementById('builderOut');
-      if (!window.EDGE_MARKETS) { out.textContent = 'markets.js not loaded'; return; }
-      const n = parseInt(document.getElementById('bNum').value, 10) || 5;
+    // ── PICK BUILDER ──
+    // Every rated option across the markets you tick, ranked: believable
+    // value plays first, then extreme disagreements, then (in "Best
+    // available") options under the value bar. One per game unless you pick
+    // a single game. New set = the next group you haven't seen; Show more =
+    // add the next ones; ✕ = swap one out for the next best.
+    let builderSet = null;            // { ranked, picks, shown:Set, gameId, n, mode, stats }
+    const pickKey = c => `${c.game_id}|${c.market}|${c.team || c.player}|${c.line}`;
+    async function builderCandidates() {
       const markets = [...document.querySelectorAll('.bMkt')].filter(b => b.checked).map(b => b.value);
       const SPORTS = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'WNBA', 'MLB', 'NHL', 'MLS'];
       const sports = SPORTS.includes(currentFilter) ? [currentFilter] : null;
+      const gameId = document.getElementById('bPropGame').value || null;
+      const mode = document.getElementById('bMode').value;
       const evs = lastEvals().filter(e => e.markets && (!e.commence_time || new Date(e.commence_time) > new Date()));
-      if (!evs.length) { out.innerHTML = '<div class="pick-meta">No rated games yet — run the pipeline first.</div>'; return; }
-      out.innerHTML = '<div class="pick-meta">Building…</div>';
       const props = markets.includes('prop') ? await propCandidates(evs.map(e => e.game_id)) : [];
-      const cands = EDGE_MARKETS.candidatesFrom(evs.map(e => e.markets), props, { markets, sports });
-      const r = EDGE_MARKETS.buildPicks(cands, n);
-      builderSet = { id: Date.now().toString(36), n, picks: r.picks };
+      const cands = EDGE_MARKETS.candidatesFrom(evs.map(e => e.markets), props, { markets, sports, gameId, belowBar: mode === 'all' });
+      const valuePlays = cands.filter(c => !c.below_bar).length;
+      return { ranked: EDGE_MARKETS.rankAll(cands), gameId, mode, evs, stats: { options: cands.length, valuePlays, games: new Set(cands.map(c => c.game_id)).size, rated: evs.length } };
+    }
+    async function buildPickSet() {
+      const out = document.getElementById('builderOut');
+      if (!window.EDGE_MARKETS) { out.textContent = 'markets.js not loaded'; return; }
+      if (!lastEvals().length) { out.innerHTML = '<div class="pick-meta">No rated games yet — run the pipeline first.</div>'; return; }
+      out.innerHTML = '<div class="pick-meta">Building…</div>';
+      const n = parseInt(document.getElementById('bNum').value, 10) || 5;
+      const c = await builderCandidates();
+      const picks = EDGE_MARKETS.takeNext(c.ranked, n, {}, !!c.gameId);
+      builderSet = { ...c, n, picks, shown: new Set(picks.map(pickKey)), id: Date.now().toString(36) };
+      renderBuilder();
+    }
+    function newPickSet() {
+      if (!builderSet) return buildPickSet();
+      const next = EDGE_MARKETS.takeNext(builderSet.ranked, builderSet.n, { keys: [...builderSet.shown] }, !!builderSet.gameId);
+      if (!next.length) {
+        builderSet.shown = new Set();
+        builderSet.note = 'You\u2019ve seen every option — starting again from the top.';
+        builderSet.picks = EDGE_MARKETS.takeNext(builderSet.ranked, builderSet.n, {}, !!builderSet.gameId);
+      } else { builderSet.note = null; builderSet.picks = next; }
+      builderSet.picks.forEach(p => builderSet.shown.add(pickKey(p)));
+      builderSet.id = Date.now().toString(36);
+      renderBuilder();
+    }
+    function morePicks() {
+      if (!builderSet) return buildPickSet();
+      const cur = builderSet.picks;
+      const extra = EDGE_MARKETS.takeNext(builderSet.ranked, builderSet.n,
+        { keys: [...builderSet.shown, ...cur.map(pickKey)], games: builderSet.gameId ? [] : cur.map(p => p.game_id) }, !!builderSet.gameId);
+      builderSet.note = extra.length ? null : 'No more options with these settings.';
+      builderSet.picks = cur.concat(extra);
+      extra.forEach(p => builderSet.shown.add(pickKey(p)));
+      renderBuilder();
+    }
+    function swapPick(i) {
+      if (!builderSet || !builderSet.picks[i]) return;
+      const cur = builderSet.picks, gone = cur[i];
+      builderSet.shown.add(pickKey(gone));
+      const others = cur.filter((_, j) => j !== i);
+      const rep = EDGE_MARKETS.takeNext(builderSet.ranked, 1,
+        { keys: [...builderSet.shown, ...others.map(pickKey)], games: builderSet.gameId ? [] : others.map(p => p.game_id) }, !!builderSet.gameId);
+      builderSet.picks = rep.length ? [...cur.slice(0, i), rep[0], ...cur.slice(i + 1)] : others;
+      if (rep.length) builderSet.shown.add(pickKey(rep[0]));
+      builderSet.note = rep.length ? null : 'Nothing left to swap in with these settings.';
+      renderBuilder();
+    }
+    async function refreshAndBuild() {
+      const out = document.getElementById('builderOut');
+      out.innerHTML = '<div class="pick-meta">Re-rating games with the latest lines…</div>';
+      try { await runPipeline(); } catch (e) { out.innerHTML = `<div class="pick-meta">Pipeline didn\u2019t finish: ${mkEsc(e.message)}</div>`; return; }
+      fillPropGames();
+      await buildPickSet();
+    }
+    function pickLine(c, i) {
+      const price = c.price != null ? ` (${c.price > 0 ? '+' : ''}${c.price})` : '';
+      const when = c.start ? new Date(c.start).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+      return `${i + 1}. ${EDGE_MARKETS.describe(c)}${price} — ${c.sport} ${EDGE_MARKETS.LABEL[c.market]} · ${c.away} @ ${c.home} · ${when} · chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value ${c.value != null ? (c.value > 0 ? '+' : '') + (c.value * 100).toFixed(1) + '%' : '—'}${c.below_bar ? ' (under the value bar)' : ''}`;
+    }
+    async function copyPickSet() {
+      if (!builderSet || !builderSet.picks.length) { showToast('Build picks first', 'red'); return; }
+      const text = `EDGE picks · ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}\n` +
+        builderSet.picks.map(pickLine).join('\n');
+      try { await navigator.clipboard.writeText(text); showToast('Picks copied', ''); }
+      catch {
+        const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); showToast('Picks copied', ''); } catch { showToast('Copy not allowed here', 'red'); }
+        ta.remove();
+      }
+    }
+    function renderBuilder() {
+      const out = document.getElementById('builderOut');
+      const B = builderSet;
+      if (!B) return;
       const when = s => s ? new Date(s).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
-      out.innerHTML = (r.picks.length ? r.picks.map((c, i) => `
+      const T = { bet_now: 'BET NOW', wait: 'WAIT', bet: 'BET' };
+      const st = B.stats;
+      out.innerHTML = (B.picks.length ? B.picks.map((c, i) => `
         <div class="bpick"><div>
           <div class="bp-main">${i + 1}. ${mkEsc(EDGE_MARKETS.describe(c))}${c.price != null ? ` (${c.price > 0 ? '+' : ''}${c.price})` : ''}</div>
           <div class="bp-meta">${mkEsc(c.sport)} · ${EDGE_MARKETS.LABEL[c.market]} · ${mkEsc(c.away)} @ ${mkEsc(c.home)} · ${when(c.start)}<br>
-            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value +${(c.value * 100).toFixed(1)}% · ${String(c.tier).replace('BET_', '')}${c.extreme ? ' · <span style="color:var(--red)">⚠ extreme disagreement — check news</span>' : ''}${c.timing ? ` · <b>${c.timing === 'bet_now' ? 'BET NOW' : c.timing === 'wait' ? 'WAIT' : 'BET'}</b>${c.line_close != null ? ` (expected close ${c.line_close > 0 && c.market !== 'total' ? '+' : ''}${c.line_close})` : ''}` : ''}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}${c.market === 'total' && c.model_total != null ? ` · model total ${c.model_total}` : ''}</div>
-        </div><div><button class="mk-bet" onclick="betBuilderPick(${i})">Bet</button></div></div>`).join('')
-        : '<div class="pick-meta">Nothing clears the value bar in the markets you picked.</div>') +
-        `<div class="pick-meta" style="margin-top:6px">${r.considered} options considered${r.short > 0 ? ` · only ${r.picks.length} of ${r.asked} qualify — not padded` : ''}</div>` +
-        (r.picks.length ? `<div class="builder-row"><button class="tool-btn gold" onclick="betBuilderAll()">Bet all ${r.picks.length} at $${flatBetAmount() ?? 50} each</button></div>` : '');
+            chance ${c.chance != null ? (c.chance * 100).toFixed(1) + '%' : '—'} · value ${c.value != null ? (c.value > 0 ? '+' : '') + (c.value * 100).toFixed(1) + '%' : '—'} · ${String(c.tier || 'PASS').replace('BET_', '')}${c.below_bar ? ' · <span style="color:var(--text-dim)">under the value bar</span>' : ''}${c.extreme ? ' · <span style="color:var(--red)">⚠ extreme disagreement — check news</span>' : ''}${c.timing ? ` · <b>${T[c.timing] || ''}</b>` : ''}${c.market === 'prop' && c.projection != null ? ` · projects ${c.projection}` : ''}</div>
+        </div><div style="display:flex;gap:4px;align-items:flex-start"><button class="mk-bet" onclick="betBuilderPick(${i})">Bet</button><button class="mk-bet" title="Swap for the next best" onclick="swapPick(${i})">✕</button></div></div>`).join('')
+        : '<div class="pick-meta">Nothing qualifies with these settings — try "Best available", tick more markets, or pick All games.</div>') +
+        `<div class="pick-meta" style="margin-top:6px">${st.valuePlays} value plays · ${st.options} options rated across ${st.games} games${B.gameId ? ' (one game)' : ''}${B.note ? ' · ' + mkEsc(B.note) : ''}</div>` +
+        (B.picks.length ? `<div class="builder-row"><button class="tool-btn gold" onclick="betBuilderAll()">Bet all ${B.picks.length} at $${flatBetAmount() ?? 50} each</button></div>` : '');
     }
     async function betBuilderPick(i) {
       if (!builderSet || !builderSet.picks[i]) return;
@@ -773,9 +857,11 @@
     function fillPropGames() {
       const sel = document.getElementById('bPropGame');
       if (!sel) return;
-      const evs = lastEvals().filter(e => e.commence_time && new Date(e.commence_time) > new Date() && ['NBA', 'WNBA', 'NFL', 'NCAAF', 'NHL', 'MLB'].includes(e.sport));
-      sel.innerHTML = '<option value="">Look up props for a game…</option>' + evs.map(e =>
+      const evs = lastEvals().filter(e => e.commence_time && new Date(e.commence_time) > new Date());
+      const keep = sel.value;
+      sel.innerHTML = '<option value="">All games</option>' + evs.map(e =>
         `<option value="${mkEsc(e.game_id)}">${mkEsc(e.sport)} · ${mkEsc(e.away_team)} @ ${mkEsc(e.home_team)}</option>`).join('');
+      if (keep && evs.some(e => e.game_id === keep)) sel.value = keep;
     }
 
     // ── PROPS FOR ONE GAME: lines looked up only when you ask ──
