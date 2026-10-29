@@ -22,7 +22,7 @@
 // ============================================================
 
 const EDGE_MARKETS = (function () {
-  const BUILD = 'markets-20261023-01';
+  const BUILD = 'markets-20261029-01';
   const round = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
   const nm = t => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = v => (v > 0 ? '+' : '') + round(v, 2);
@@ -147,26 +147,51 @@ const EDGE_MARKETS = (function () {
   // price first, one per game (one result can't sink several picks),
   // nothing below the sport's value bar. Fewer than N qualify → fewer.
   const LABEL = { spread: 'Spread', moneyline: 'Moneyline', total: 'Over/Under', prop: 'Prop' };
+  // opts.belowBar: also the ratings under the value bar (flagged), so a
+  // full slate always has options to choose from; opts.gameId: one game.
   function candidatesFrom(gamesMarkets, props = [], opts = {}) {
     const allow = opts.markets || ['spread', 'moneyline', 'total', 'prop'];
     const sports = opts.sports || null;
     const now = Date.now();
     const out = [];
+    const ok = x => x && x.tier && (x.tier !== 'PASS' && x.value > 0 ? true : (opts.belowBar && x.value != null && isFinite(x.value)));
     (gamesMarkets || []).forEach(gm => {
       if (!gm || (sports && !sports.includes(gm.sport))) return;
+      if (opts.gameId && gm.game_id !== opts.gameId) return;
       if (gm.start && new Date(gm.start).getTime() <= now) return;
       ['spread', 'moneyline', 'total'].forEach(m => {
         const x = gm[m];
-        if (!allow.includes(m) || !x || !x.tier || x.tier === 'PASS' || !(x.value > 0)) return;
-        out.push({ ...x, game_id: gm.game_id, sport: gm.sport, home: gm.home, away: gm.away, start: gm.start });
+        if (!allow.includes(m) || !ok(x)) return;
+        out.push({ ...x, below_bar: !(x.tier !== 'PASS' && x.value > 0), game_id: gm.game_id, sport: gm.sport, home: gm.home, away: gm.away, start: gm.start });
       });
     });
     if (allow.includes('prop')) (props || []).forEach(p => {
       if (!p || (sports && !sports.includes(p.sport))) return;
+      if (opts.gameId && p.game_id !== opts.gameId) return;
       if (p.start && new Date(p.start).getTime() <= now) return;
-      if (!p.tier || p.tier === 'PASS' || !(p.value > 0)) return;
-      out.push({ ...p, market: 'prop' });
+      if (!ok(p)) return;
+      out.push({ ...p, market: 'prop', below_bar: !(p.tier !== 'PASS' && p.value > 0) });
     });
+    return out;
+  }
+  // Every option ranked: believable value plays first (by value), then
+  // extreme disagreements, then anything under the bar.
+  function rankAll(candidates) {
+    const g = c => (c.below_bar ? 2 : c.extreme ? 1 : 0);
+    return candidates.slice().sort((a, b) => (g(a) - g(b)) || (b.value - a.value) || ((b.chance || 0) - (a.chance || 0)));
+  }
+  // The next N from a ranked list: one per game (unless sameGame), skipping
+  // games and options already used.
+  function takeNext(ranked, n, used = {}, sameGame = false) {
+    const games = new Set(used.games || []), keys = new Set(used.keys || []);
+    const out = [];
+    for (const c of ranked) {
+      if (out.length >= n) break;
+      const k = `${c.game_id}|${c.market}|${c.team || c.player}|${c.line}`;
+      if (keys.has(k)) continue;
+      if (!sameGame && games.has(c.game_id)) continue;
+      out.push(c); keys.add(k); games.add(c.game_id);
+    }
     return out;
   }
   function buildPicks(candidates, n) {
@@ -191,7 +216,7 @@ const EDGE_MARKETS = (function () {
     return '';
   }
 
-  return { BUILD, PARK, totalFor, rateTotal, rateGame, candidatesFrom, buildPicks, describe, LABEL };
+  return { BUILD, PARK, totalFor, rateTotal, rateGame, candidatesFrom, buildPicks, rankAll, takeNext, describe, LABEL };
 })();
 
 if (typeof window !== 'undefined') window.EDGE_MARKETS = EDGE_MARKETS;
