@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261023-01';
+  const BUILD = 'gov-20261026-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -486,9 +486,10 @@ const EDGE_GOVERNOR = (() => {
     const cappedConfidence = Math.min(rawConfidence, MAX_CONFIDENCE);
     // Spreads calibrate on the chance to cover; moneylines on the chance
     // to win, in their own 4-point bands (underdogs sit below 50%).
+    const calOverride = options.noCalibration ? null : (options.calibration || undefined);
     const calibrated = betType === 'ML'
-      ? applyCalibration(cappedConfidence, `${sport}_ML`)
-      : applyCalibration(cappedConfidence, sport);
+      ? applyCalibration(cappedConfidence, `${sport}_ML`, calOverride)
+      : applyCalibration(cappedConfidence, sport, calOverride);
 
     // ── Nothing to bet against ──
     const dataCaps = [];
@@ -837,11 +838,16 @@ const EDGE_GOVERNOR = (() => {
     return pooled;
   }
 
-  function applyCalibration(confidence, sport) {
+  function applyCalibration(confidence, sport, override) {
+    // override === null: no calibration (a test with nothing learned);
+    // an object: that table instead of the saved one (a test using only
+    // calibration learned from other date ranges).
+    if (override === null) return { value: round(confidence, 1), applied: false, detail: null };
+    const CAL = override || CALIBRATION;
     // This sport's bucket, 2 points wide (table version 3).
-    if (CALIBRATION && CALIBRATION.version === 3) {
+    if (CAL && CAL.version === 3) {
       const bucket = calibrationBucket(confidence, sport);
-      const entry = CALIBRATION.sports?.[sport]?.[bucket];
+      const entry = CAL.sports?.[sport]?.[bucket];
       if (!entry || !isFinite(entry.rate) || (entry.samples || 0) < CALIBRATION_MIN_SAMPLES) {
         return { value: round(confidence, 1), applied: false, detail: null };
       }
