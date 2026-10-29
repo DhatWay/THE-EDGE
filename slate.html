@@ -504,6 +504,10 @@ async function run() {
     const useLearned = !!document.getElementById('useLearned')?.checked;
     runInfo = { sport, from: fromDate, to: toDate, useLearned };
     learnedForRun = useLearned ? learnedFromOtherWindows(sport, `${fromDate}|${toDate}`) : null;
+    // Calibration: none at all unless "Use what earlier tests learned" is
+    // ticked, and then only from tests of date ranges that don't overlap
+    // this one — so a test is never scored with what it already saw.
+    calForRun = useLearned ? calibrationFromOtherWindows(sport, `${fromDate}|${toDate}`) : null;
     if (useLearned) {
       log(learnedForRun.blend
         ? `  using learned strength weight ${learnedForRun.blend.w_strength} and ${Object.keys(learnedForRun.spots).length + Object.keys(learnedForRun.spotsML).length} spot records from other date ranges`
@@ -1330,7 +1334,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
 
   // ── Governor: the default blend, never weights learned from these games ──
   let gov;
-  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { blend: (learnedForRun && learnedForRun.blend) || EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 } }); }
+  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { blend: (learnedForRun && learnedForRun.blend) || EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 },
+                                                     noCalibration: !calForRun, calibration: calForRun || undefined }); }
   catch { return null; }
 
   // ── Physics ──
@@ -1901,6 +1906,22 @@ function fitRatingModel(sport, fromDate, toDate, rows) {
 }
 
 let learnedForRun = null;
+let calForRun = null;
+function calibrationFromOtherWindows(sport, windowKey) {
+  const [from, to] = String(windowKey).split('|');
+  const overlaps = (w) => { const [a, b] = String(w).split('|'); return !(b < from || a > to); };
+  try {
+    const t = EDGE_GOVERNOR.readCalibrationTable() || {};
+    const keep = {};
+    [sport, `${sport}_ML`].forEach(k => {
+      const runs = (t.backtest_runs || {})[k] || {};
+      const kept = Object.fromEntries(Object.entries(runs).filter(([w]) => !overlaps(w)));
+      if (Object.keys(kept).length) keep[k] = kept;
+    });
+    if (!Object.keys(keep).length) return null;
+    return EDGE_GOVERNOR.poolCalibration({ backtest_runs: keep });
+  } catch { return null; }
+}
 
 // The strength weight and spot records saved by tests of other date
 // ranges for this sport — never this range's own — for a train-then-
