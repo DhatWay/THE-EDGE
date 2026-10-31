@@ -13,6 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="edge-time.js"></script>
+  <script src="game-search.js"></script>
   <script src="team-aliases.js"></script>
   <script src="auth.js"></script>
   <script src="line-guard.js"></script>
@@ -371,6 +372,7 @@
         <div class="sec-title" style="font-size:20px;">ALL <em>PICKS</em></div>
         <div class="table-count" id="tableCount">0 picks</div>
       </div>
+      <div id="histSearchBox"></div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -939,6 +941,11 @@
       }).join('');
     }
 
+    let histSearch = null, histQ = '';
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.EDGE_SEARCH) histSearch = EDGE_SEARCH.mount(document.getElementById('histSearchBox'),
+        { placeholder: 'Search history by team — e.g. Chiefs, KC', onChange: q => { histQ = q; renderTable(); } });
+    });
     function renderTable() {
       const body = document.getElementById('historyBody');
       const dateFrom = document.getElementById('dateFrom').value;
@@ -959,6 +966,10 @@
       };
       if (dateFrom) picks = picks.filter(p => { const d = pickDay(p); return d && d >= dateFrom; });
       if (dateTo) picks = picks.filter(p => { const d = pickDay(p); return d && d <= dateTo; });
+      // Search by team (names, nicknames, initials) or sport.
+      const beforeSearch = picks.length;
+      if (histQ && window.EDGE_SEARCH) picks = picks.filter(p => EDGE_SEARCH.matches(histQ, [p.home_team, p.away_team, p.side_team, p.matchup], p.sport));
+      if (histSearch) histSearch.setCount(picks.length, beforeSearch);
 
       picks = picks.filter(p => {
         if (currentFilter === 'all') return true;
