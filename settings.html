@@ -657,7 +657,7 @@
       <div class="sec-title">MONITORING <em>DATABASE</em></div>
       <div class="pick-meta" style="font-size:12px;color:var(--text-dim);margin-bottom:8px">The second Supabase project. Line Guard logs there, the app shows the background results, and both use the line model's learned weights.</div>
       <input id="monUrl" class="text-input" placeholder="https://xxxx.supabase.co" style="width:100%;margin-bottom:6px">
-      <input id="monKey" class="text-input" placeholder="anon public key" style="width:100%;margin-bottom:6px">
+      <input id="monKey" class="text-input" placeholder="key — leave EMPTY to use the edge-app connector" style="width:100%;margin-bottom:6px">
       <input id="monPass" class="text-input" placeholder="passphrase (the one in edge-monitor.sql)" style="width:100%;margin-bottom:6px">
       <button class="danger-btn" style="border-color:var(--gold);color:var(--gold)" onclick="saveMonitor()">Save and test</button>
       <div id="monStatus" class="pick-meta" style="font-size:12px;margin-top:6px"></div>
@@ -1166,9 +1166,25 @@
     async function saveMonitor() {
       const u = document.getElementById('monUrl').value.trim().replace(/\/+$/, ''), k = document.getElementById('monKey').value.trim(), p = document.getElementById('monPass').value.trim();
       const st = document.getElementById('monStatus');
-      if (!u || !k || !p) { localStorage.removeItem('edge_mon_url'); localStorage.removeItem('edge_mon_key'); localStorage.removeItem('edge_mon_pass'); st.textContent = 'Cleared — the app uses only your main database.'; return; }
-      localStorage.setItem('edge_mon_url', u); localStorage.setItem('edge_mon_key', k); localStorage.setItem('edge_mon_pass', p);
+      if (!u || !p) { localStorage.removeItem('edge_mon_url'); localStorage.removeItem('edge_mon_key'); localStorage.removeItem('edge_mon_pass'); st.textContent = 'Cleared — the app uses only your main database.'; return; }
+      localStorage.setItem('edge_mon_url', u); localStorage.setItem('edge_mon_pass', p);
+      if (k) localStorage.setItem('edge_mon_key', k); else localStorage.removeItem('edge_mon_key');
       st.textContent = 'Testing…';
+      // No key: through the edge-app connector function (URL + passphrase only).
+      if (!k) {
+        try {
+          const r = await fetch(`${u}/functions/v1/edge-app`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-edge-pass': p },
+            body: JSON.stringify({ method: 'GET', path: 'weekly_summaries?select=week_start&limit=1' }) });
+          let b = null; try { b = await r.json(); } catch {}
+          const msg = b && !Array.isArray(b) ? (b.message || b.msg || b.error || '') : '';
+          if (r.ok) st.textContent = `Connected through edge-app${Array.isArray(b) && b.length ? '' : ' (no weekly reports yet)'} — Line Guard now logs there.`;
+          else if (r.status === 404) st.textContent = 'Saved, but the edge-app function isn\u2019t deployed in that project yet (HTTP 404).';
+          else if (r.status === 401 && /passphrase/i.test(msg)) st.textContent = 'Saved, but the passphrase doesn\u2019t match the one in the database.';
+          else if (r.status === 401) st.textContent = `Saved, but edge-app still asks for a key (HTTP 401${msg ? ': ' + msg : ''}) — turn OFF "Verify JWT" for edge-app.`;
+          else st.textContent = `Saved, but the test failed (HTTP ${r.status}${msg ? ': ' + msg : ''}).`;
+        } catch (e) { st.textContent = 'Saved, but the test failed: ' + e.message; }
+        return;
+      }
       try {
         // Newer keys (sb_publishable_…) go in the apikey header only; the
         // Authorization header is for the older eyJ… keys.
