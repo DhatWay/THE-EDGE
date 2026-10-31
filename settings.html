@@ -1173,6 +1173,19 @@
         // Newer keys (sb_publishable_…) go in the apikey header only; the
         // Authorization header is for the older eyJ… keys.
         const kh = /^eyJ/.test(k) ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k };
+        // Which kind of key this is — shown with the result, so a wrong key
+        // is obvious without ever showing the key itself.
+        let kind = 'unrecognized key';
+        if (/^sb_publishable_/.test(k)) kind = 'publishable key';
+        else if (/^sb_secret_/.test(k)) kind = 'SECRET key — never use this one in the app; use the publishable key';
+        else if (/^eyJ/.test(k)) {
+          try {
+            const pl = JSON.parse(atob(k.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+            kind = pl.role === 'anon' ? `older anon key (project ${pl.ref || '?'})`
+                 : pl.role === 'service_role' ? 'older SERVICE key — never use this one in the app'
+                 : `older key, role ${pl.role || '?'}`;
+          } catch { kind = 'older eyJ… key (unreadable)'; }
+        }
         const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start&limit=1`, { headers: { ...kh, 'x-edge-pass': p } });
         const rows = r.ok ? await r.json() : null;
         // On failure, show the database's own reason (bad key, missing
@@ -1180,7 +1193,7 @@
         let why = '';
         if (!r.ok) { try { const b = await r.json(); why = b.message || b.msg || b.error || b.hint || ''; } catch {} }
         st.textContent = r.ok ? `Connected${rows && rows.length ? '' : ' (no weekly reports yet)'} — Line Guard now logs there.`
-          : `Saved, but the test failed (HTTP ${r.status}${why ? ': ' + why : ''}) — check the URL, key and passphrase.`;
+          : `Saved, but the test failed (HTTP ${r.status}${why ? ': ' + why : ''}). Key used: ${kind}.`;
       } catch (e) { st.textContent = 'Saved, but the test failed: ' + e.message; }
     }
     document.addEventListener('DOMContentLoaded', loadMonitor);
