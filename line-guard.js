@@ -29,7 +29,7 @@
 // ============================================================
 
 const EDGE_GUARD = (function () {
-  const BUILD = 'guard-20261025-01';
+  const BUILD = 'guard-20261031-01';
   const K_LINES = 'edge_guard_lines', K_NEWS = 'edge_guard_news', K_INJ = 'edge_guard_inj', K_DISMISS = 'edge_guard_dismissed', K_ST = 'edge_guard_starters', K_LOGGED = 'edge_guard_logged';
   const FOOTBALL = new Set(['NFL', 'NCAAF']), ML_SPORTS = new Set(['MLB', 'NHL']);
   // Points of spread that count as a real move, by sport.
@@ -277,7 +277,7 @@ const EDGE_GUARD = (function () {
       const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
       if (url && key) {
         const res = await fetch(`${url}/rest/v1/bet_log?status=eq.pending&select=id,game_id,mode,sport,matchup,pick_label,pick_type,line,odds,amount,confidence,created_at&order=created_at.desc&limit=500`,
-          { headers: { ...(sb().extra || {}), apikey: key, Authorization: `Bearer ${key}` } });
+          { headers: { ...(sb().extra || {}), ...keyHeaders(key) } });
         if (res.ok) bets = await res.json();
       }
     } catch {}
@@ -519,7 +519,7 @@ const EDGE_GUARD = (function () {
     if (url && key) {
       fetch(`${url}/rest/v1/guard_alerts?id=eq.${encodeURIComponent(logId)}`, {
         method: 'PATCH',
-        headers: { ...(sb().extra || {}), apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        headers: { ...(sb().extra || {}), ...keyHeaders(key), 'Content-Type': 'application/json', Prefer: 'return=minimal' },
         body: JSON.stringify({ decision, decided_at: decision.at }),
       }).catch(() => {});
     }
@@ -575,6 +575,9 @@ const EDGE_GUARD = (function () {
   // the game, the closing line and score are added and the alert graded.
   // Where the log lives: the monitoring database when the app is connected
   // to it (Settings), otherwise the main one. Finals always come from main.
+  // Newer Supabase keys (sb_publishable_…) go in the apikey header only;
+  // the Authorization header is for the older eyJ… keys.
+  const keyHeaders = k => (/^eyJ/.test(String(k || '')) ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k });
   const mainDb = () => ({ url: localStorage.getItem('edge_supabase_url'), key: localStorage.getItem('edge_supabase_key'), extra: {} });
   const sb = () => {
     const u = localStorage.getItem('edge_mon_url'), k = localStorage.getItem('edge_mon_key'), p = localStorage.getItem('edge_mon_pass');
@@ -597,7 +600,7 @@ const EDGE_GUARD = (function () {
     try {
       const res = await fetch(`${url}/rest/v1/guard_alerts?on_conflict=id`, {
         method: 'POST',
-        headers: { ...(sb().extra || {}), apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+        headers: { ...(sb().extra || {}), ...keyHeaders(key), 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify(rows),
       });
       if (res.status === 404 || res.status === 400) { localStorage.setItem('edge_guard_log_missing', 'true'); return; }
@@ -671,7 +674,7 @@ const EDGE_GUARD = (function () {
     try {
       const cutoff = new Date(Date.now() - 4 * 3600000).toISOString();
       const res = await fetch(`${url}/rest/v1/guard_alerts?graded_at=is.null&start_time=lt.${cutoff}&select=*&limit=200`,
-        { headers: { ...(sb().extra || {}), apikey: key, Authorization: `Bearer ${key}` } });
+        { headers: { ...(sb().extra || {}), ...keyHeaders(key) } });
       if (!res.ok) return;
       const rows = await res.json();
       if (!rows.length) return;
@@ -699,7 +702,7 @@ const EDGE_GUARD = (function () {
         const grade = gradeOne(r, closeVal, Number(fz.home_score), Number(fz.away_score));
         await fetch(`${url}/rest/v1/guard_alerts?id=eq.${encodeURIComponent(r.id)}`, {
           method: 'PATCH',
-          headers: { ...(sb().extra || {}), apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          headers: { ...(sb().extra || {}), ...keyHeaders(key), 'Content-Type': 'application/json', Prefer: 'return=minimal' },
           body: JSON.stringify({ close_line: closeVal, home_score: Number(fz.home_score), away_score: Number(fz.away_score), grade, graded_at: new Date().toISOString() }),
         }).catch(() => {});
       }
@@ -709,7 +712,7 @@ const EDGE_GUARD = (function () {
     const { url, key } = sb();
     if (!url || !key) return { rows: [], missing: false };
     try {
-      const res = await fetch(`${url}/rest/v1/guard_alerts?select=*&order=created_at.desc&limit=200`, { headers: { ...(sb().extra || {}), apikey: key, Authorization: `Bearer ${key}` } });
+      const res = await fetch(`${url}/rest/v1/guard_alerts?select=*&order=created_at.desc&limit=200`, { headers: { ...(sb().extra || {}), ...keyHeaders(key) } });
       if (res.status === 404 || res.status === 400) return { rows: [], missing: true };
       return { rows: res.ok ? await res.json() : [], missing: false };
     } catch { return { rows: [], missing: false }; }
