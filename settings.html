@@ -1172,7 +1172,12 @@
       try {
         const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start&limit=1`, { headers: { apikey: k, Authorization: `Bearer ${k}`, 'x-edge-pass': p } });
         const rows = r.ok ? await r.json() : null;
-        st.textContent = r.ok ? `Connected${rows && rows.length ? '' : ' (no weekly reports yet)'} — Line Guard now logs there.` : `Saved, but the test failed (HTTP ${r.status}) — check the URL, key and passphrase.`;
+        // On failure, show the database's own reason (bad key, missing
+        // permission, legacy keys turned off…), not just the status code.
+        let why = '';
+        if (!r.ok) { try { const b = await r.json(); why = b.message || b.msg || b.error || b.hint || ''; } catch {} }
+        st.textContent = r.ok ? `Connected${rows && rows.length ? '' : ' (no weekly reports yet)'} — Line Guard now logs there.`
+          : `Saved, but the test failed (HTTP ${r.status}${why ? ': ' + why : ''}) — check the URL, key and passphrase.`;
       } catch (e) { st.textContent = 'Saved, but the test failed: ' + e.message; }
     }
     document.addEventListener('DOMContentLoaded', loadMonitor);
