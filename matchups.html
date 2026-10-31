@@ -13,6 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <script src="edge-time.js"></script>
+  <script src="game-search.js"></script>
   <script src="power-engine.js"></script>
   <script src="algorithms.js"></script>
   <script src="governor.js"></script>
@@ -306,6 +307,7 @@
       </div>
     </div>
 
+    <div id="gameSearchBox" style="padding:0 16px"></div>
     <div class="games-section" id="gamesContainer">
       <div class="empty-state" id="emptyState">
         <div class="empty-icon">⚡</div>
@@ -926,11 +928,26 @@
 
     setTimeout(() => { try { renderInputAudit(); } catch {} }, 0);
 
+    // Search: filters the board as you type (team names, nicknames,
+    // initials like KC or SAS, sport names).
+    let gameSearch = null, searchQ = '';
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.EDGE_SEARCH) gameSearch = EDGE_SEARCH.mount(document.getElementById('gameSearchBox'),
+        { placeholder: 'Search teams — e.g. Chiefs, KC, Spurs', onChange: q => { searchQ = q; renderGames(); } });
+    });
     function renderGames() {
       const container = document.getElementById('gamesContainer');
-      const games = currentSport === 'all'
+      const inSport = currentSport === 'all'
         ? allGames
         : allGames.filter(g => g._sport === currentSport);
+      const games = searchQ && window.EDGE_SEARCH
+        ? inSport.filter(g => EDGE_SEARCH.matches(searchQ, [g.home_team, g.away_team], g._sport))
+        : inSport;
+      if (gameSearch) gameSearch.setCount(games.length, inSport.length);
+      if (searchQ && !games.length && inSport.length) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-title">NO GAMES MATCH</div><div class="empty-sub">Nothing in this window matches "${String(searchQ).replace(/[<>&"]/g, '')}". Try part of a team name or its initials.</div></div>`;
+        return;
+      }
 
       if (games.length === 0) {
         container.innerHTML = `
