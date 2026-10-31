@@ -1170,7 +1170,10 @@
       localStorage.setItem('edge_mon_url', u); localStorage.setItem('edge_mon_key', k); localStorage.setItem('edge_mon_pass', p);
       st.textContent = 'Testing…';
       try {
-        const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start&limit=1`, { headers: { apikey: k, Authorization: `Bearer ${k}`, 'x-edge-pass': p } });
+        // Newer keys (sb_publishable_…) go in the apikey header only; the
+        // Authorization header is for the older eyJ… keys.
+        const kh = /^eyJ/.test(k) ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k };
+        const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start&limit=1`, { headers: { ...kh, 'x-edge-pass': p } });
         const rows = r.ok ? await r.json() : null;
         // On failure, show the database's own reason (bad key, missing
         // permission, legacy keys turned off…), not just the status code.
