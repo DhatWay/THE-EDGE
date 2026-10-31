@@ -111,8 +111,8 @@ const EDGE_ORCHESTRATOR = (() => {
     // is connected to it (Settings › Monitoring database).
     try {
       const mu = localStorage.getItem('edge_mon_url'), mk = localStorage.getItem('edge_mon_key'), mp = localStorage.getItem('edge_mon_pass');
-      if (window.EDGE_ENGINE && mu && mk && mp) {
-        const r1 = await fetch(`${mu}/rest/v1/rater_state?key=eq.line_model&select=value`, { headers: { ...(/^eyJ/.test(mk) ? { apikey: mk, Authorization: `Bearer ${mk}` } : { apikey: mk }), 'x-edge-pass': mp } });
+      if (window.EDGE_ENGINE && mu && mp && window.EDGE_MON) {
+        const r1 = await EDGE_MON.fetch('rater_state?key=eq.line_model&select=value');
         const v1 = r1.ok ? (await r1.json())[0] : null;
         if (v1 && v1.value && v1.value.fitted) EDGE_ENGINE.setLearned(v1.value.fitted);
       }
