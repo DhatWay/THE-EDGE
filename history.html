@@ -823,10 +823,11 @@
       monitorLoaded = true;
       const u = localStorage.getItem('edge_mon_url'), k = localStorage.getItem('edge_mon_key'), p = localStorage.getItem('edge_mon_pass');
       const box = document.getElementById('monitorBox');
-      if (!box || !u || !k || !p) return;
+      if (!box || !u || !p) return;
       try {
-        const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start,ratings,summary&order=week_start.desc&limit=1`,
-          { headers: { ...(/^eyJ/.test(k) ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k }), 'x-edge-pass': p } });
+        const q = 'weekly_summaries?select=week_start,ratings,summary&order=week_start.desc&limit=1';
+        const r = window.EDGE_MON ? await EDGE_MON.fetch(q)
+          : await fetch(`${u}/rest/v1/${q}`, { headers: { ...(/^eyJ/.test(k || '') ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k }), 'x-edge-pass': p } });
         const w = r.ok ? (await r.json())[0] : null;
         box.hidden = false;
         if (!w) { box.innerHTML = '<div class="ov-lbl">BACKGROUND MONITOR</div><div class="ov-sub">No weekly report yet — the first arrives after a full graded week.</div>'; return; }
