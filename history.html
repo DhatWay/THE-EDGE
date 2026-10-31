@@ -826,7 +826,7 @@
       if (!box || !u || !k || !p) return;
       try {
         const r = await fetch(`${u}/rest/v1/weekly_summaries?select=week_start,ratings,summary&order=week_start.desc&limit=1`,
-          { headers: { apikey: k, Authorization: `Bearer ${k}`, 'x-edge-pass': p } });
+          { headers: { ...(/^eyJ/.test(k) ? { apikey: k, Authorization: `Bearer ${k}` } : { apikey: k }), 'x-edge-pass': p } });
         const w = r.ok ? (await r.json())[0] : null;
         box.hidden = false;
         if (!w) { box.innerHTML = '<div class="ov-lbl">BACKGROUND MONITOR</div><div class="ov-sub">No weekly report yet — the first arrives after a full graded week.</div>'; return; }
