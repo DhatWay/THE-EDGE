@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261026-01';
+  const BUILD = 'gov-20261101-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -277,8 +277,14 @@ const EDGE_GOVERNOR = (() => {
   // Most the model may move the market's chance (as a fraction), by sport
   // and market. Less-watched markets (college) get a little more room.
   const DISAGREE_CAP = {
-    SPREAD: { NFL: 0.05, NCAAF: 0.06, NBA: 0.04, WNBA: 0.045, NCAAB: 0.05, MLB: 0.04, NHL: 0.04, MLS: 0.04 },
-    ML:     { NFL: 0.04, NCAAF: 0.05, NBA: 0.04, WNBA: 0.04, NCAAB: 0.045, MLB: 0.035, NHL: 0.035, MLS: 0.035 },
+    // NHL puck line and MLB run line pay plus money on the favorite, so each
+    // point of chance is worth ~2.5x the value of a -110 point: the cap is
+    // tighter there (Slate Test: puck-line picks went 26-53 and 16-36).
+    SPREAD: { NFL: 0.05, NCAAF: 0.06, NBA: 0.04, WNBA: 0.045, NCAAB: 0.05, MLB: 0.02, NHL: 0.02, MLS: 0.04 },
+    // NHL and MLB moneylines: the Slate Test's underdog picks won 31-33%
+    // (NHL) and 44-45% (MLB), below even the market's own price — so their
+    // disagreement room is smaller.
+    ML:     { NFL: 0.04, NCAAF: 0.05, NBA: 0.04, WNBA: 0.04, NCAAB: 0.045, MLB: 0.02, NHL: 0.02, MLS: 0.035 },
     TOTAL:  { NFL: 0.05, NCAAF: 0.06, NBA: 0.05, WNBA: 0.05, NCAAB: 0.05, MLB: 0.04, NHL: 0.04, MLS: 0.04 },
   };
   function disagreementCap(sport, betType) {
@@ -510,13 +516,18 @@ const EDGE_GOVERNOR = (() => {
 
     let decision = 'PASS', units = 0;
     const bars = tiersFor(sport);
+    // Puck lines and run lines: value is judged at the -110 equivalent (the
+    // chance edge over break-even, as it would pay at -110), so a +150 price
+    // can't turn a small rating error into a big-looking edge.
+    const plusLine = (sport === 'NHL' || sport === 'MLB') && sidePrice != null && sidePrice > 100;
+    const evTier = plusLine ? (pDecide - breakEven) * 1.9091 : ev;
     // NCAAF: no picks until both teams have 3 games of data — the Slate
     // Test showed the ranking is noise before that.
     const ncaafThin = sport === 'NCAAF' && isFinite(gh) && isFinite(ga) && Math.min(gh, ga) < 3;
     if (ncaafThin)                  { decision = 'PASS'; units = 0; }
-    else if (ev >= bars.bet2u)      { decision = 'BET_2U'; units = 2; }
-    else if (ev >= bars.bet1u) { decision = 'BET_1U'; units = 1; }
-    else if (ev >= bars.lean)  { decision = 'LEAN';   units = 0.5; }
+    else if (evTier >= bars.bet2u)      { decision = 'BET_2U'; units = 2; }
+    else if (evTier >= bars.bet1u) { decision = 'BET_1U'; units = 1; }
+    else if (evTier >= bars.lean)  { decision = 'LEAN';   units = 0.5; }
 
     const kellyInput = buildKellyInput({ sideProb: pDecide, sidePrice, otherPrice, betType, units });
 
@@ -716,6 +727,13 @@ const EDGE_GOVERNOR = (() => {
         const atPin = ih / (ih + ia);
         const shift = (m.current_spread - m.pin_home_spread) * 0.03;
         return { prob: clamp(atPin + shift, 0.05, 0.95), source: m.bench_book || 'benchmark' };
+      }
+      // Both prices for this line known: the market's own chance, vig
+      // removed. 50% at -110/-110; far from it on puck and run lines
+      // (e.g. -1.5 at +150 vs +1.5 at -180 is about 38%/62%).
+      if (m.home_spread_price && m.away_spread_price) {
+        const ih = americanToImplied(m.home_spread_price), ia = americanToImplied(m.away_spread_price);
+        if (ih > 0 && ia > 0) return { prob: clamp(ih / (ih + ia), 0.05, 0.95), source: 'spread prices' };
       }
       return { prob: 0.5, source: 'spread' };
     }
