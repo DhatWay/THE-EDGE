@@ -259,6 +259,40 @@ const W_HIT_STRONG  = EDGE_SITUATION_RESULTS.STRONG_HIT;
 const W_HIT_NEUTRAL = EDGE_SITUATION_RESULTS.NEUTRAL_HIT;
 
 const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
+
+// ── Keeping the phone responsive during long runs ──
+// A short pause lets the screen update and keeps Android from shutting
+// the page down; a live progress line shows where the run is; Stop ends
+// it cleanly and reports what was done so far.
+const pauseUI = () => new Promise(r => setTimeout(r, 0));
+let stopRequested = false, runStartedAt = 0;
+function stopRun() {
+  stopRequested = true;
+  const b = document.getElementById('stopBtn'); if (b) { b.disabled = true; b.textContent = 'Stopping…'; }
+}
+function showProgress(text) {
+  let el = document.getElementById('slateProgress');
+  if (!el) {
+    const logEl = document.getElementById('log');
+    el = document.createElement('div');
+    el.id = 'slateProgress';
+    el.style.cssText = 'font-size:12px;margin:6px 0;color:var(--gold,#c9a84c)';
+    if (logEl && logEl.parentNode) logEl.parentNode.insertBefore(el, logEl);
+  }
+  el.textContent = text;
+}
+function stopButton(show) {
+  let b = document.getElementById('stopBtn');
+  const runBtn = document.getElementById('runBtn');
+  if (show && !b && runBtn) {
+    b = document.createElement('button');
+    b.id = 'stopBtn'; b.className = runBtn.className; b.textContent = '■ Stop';
+    b.style.marginLeft = '8px'; b.onclick = stopRun;
+    runBtn.parentNode.insertBefore(b, runBtn.nextSibling);
+  }
+  if (b) { b.style.display = show ? '' : 'none'; b.disabled = false; b.textContent = '■ Stop'; }
+}
+const fmtDur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; };
 const clearLog = () => { document.getElementById('log').textContent = ''; };
 const out = h => { document.getElementById('output').innerHTML = h; };
 
@@ -468,6 +502,7 @@ async function probeSchema() {
 async function run() {
   if (window.EDGE_GOVERNOR && EDGE_GOVERNOR.resetWinScale) EDGE_GOVERNOR.resetWinScale();
   coverSamples = []; coverReport = null;
+  stopRequested = false; runStartedAt = Date.now(); stopButton(true);
   const btn = document.getElementById('runBtn');
   const sport = document.getElementById('sport').value;
   const cap = parseInt(document.getElementById('cap').value, 10);
@@ -518,7 +553,7 @@ async function run() {
     log(`  ${games.length} games with final scores`);
     if (!games.length) {
       out('<div class="empty">No scored games in this range. Run Backfill Scores first.</div>');
-      btn.disabled = false;
+      btn.disabled = false; stopButton(false);
       return;
     }
 
@@ -564,7 +599,7 @@ async function run() {
     // ── 6. Walk forward ──
     if (!window.EDGE_RATING) {
       out('<div class="empty">rating-core.js not loaded — the walk-forward needs it.</div>');
-      btn.disabled = false;
+      btn.disabled = false; stopButton(false);
       return;
     }
 
@@ -578,8 +613,16 @@ async function run() {
     const seedBySeason = { [seasonOf(sport, windowStart)]: carryover || null };
     const allScored = warmup.concat(games);
 
+    const totalGames = steps.reduce((t, s) => t + s.games.length, 0);
     for (let si = 0; si < steps.length; si++) {
       const step = steps[si];
+      if (stopRequested) { log(`  stopped by you after ${si} of ${steps.length} steps — results below cover the games done so far`); break; }
+      await pauseUI();
+      {
+        const el = Date.now() - runStartedAt, done = Math.max(1, processed);
+        showProgress(`${sport} · step ${si + 1} of ${steps.length} (${step.label}) · ${processed} of ${totalGames} games · ${fmtDur(el)} so far` +
+          (processed > 20 ? ` · about ${fmtDur(el / done * (totalGames - processed))} left` : ''));
+      }
 
       // Rate each step the way the live engine rates today: this
       // season's games before the step, seeded with this season's
@@ -612,6 +655,7 @@ async function run() {
       }
 
       const power = buildPowerFromHistory(sport, history, coaching, seasonSeed, minHistory);
+      await pauseUI();                 // let the screen update after the heaviest rebuild
       if (!power) { processed += step.games.length; continue; }
 
       log(`  step ${si + 1}/${steps.length} · ${step.label} · ` +
@@ -649,8 +693,13 @@ async function run() {
           if (!firstGradeError) firstGradeError = `${g.away} @ ${g.home}: ${e.message}`;
         }
         processed++;
+        if (processed % 8 === 0) {
+          await pauseUI();
+          if (stopRequested) break;
+        }
       }
     }
+    showProgress(stopRequested ? `${sport} · stopped · ${processed} games done in ${fmtDur(Date.now() - runStartedAt)}` : `${sport} · done · ${processed} games in ${fmtDur(Date.now() - runStartedAt)}`);
 
     log(`  ${processed} processed · ${evalRows.length} graded` +
         (skippedThin ? ` · ${skippedThin} skipped (too early in the season to rate)` : '') +
@@ -799,7 +848,7 @@ async function run() {
     console.error(e);
   }
 
-  btn.disabled = false;
+  btn.disabled = false; stopButton(false);
 }
 
 // ============================================================
