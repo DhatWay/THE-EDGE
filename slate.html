@@ -501,7 +501,7 @@ async function probeSchema() {
 
 async function run() {
   if (window.EDGE_GOVERNOR && EDGE_GOVERNOR.resetWinScale) EDGE_GOVERNOR.resetWinScale();
-  coverSamples = []; coverReport = null;
+  coverSamples = []; coverReport = null; coverageReport = null;
   stopRequested = false; runStartedAt = Date.now(); stopButton(true);
   const btn = document.getElementById('runBtn');
   const sport = document.getElementById('sport').value;
@@ -551,6 +551,8 @@ async function run() {
     const games = await loadScoredGames(sport, fromDate, toDate, cap, url, key);
     games.forEach(x => { x.sport = sport; });
     log(`  ${games.length} games with final scores`);
+    coverageReport = buildCoverage(sport, fromDate, toDate, games);
+    if (coverageReport && coverageReport.missing.length) log(`  data gaps: ${coverageReport.missing.length} week(s) with no stored games — see the report`);
     if (!games.length) {
       out('<div class="empty">No scored games in this range. Run Backfill Scores first.</div>');
       btn.disabled = false; stopButton(false);
@@ -2406,6 +2408,61 @@ function probabilityScores(rows) {
   return { games: r.length, brier, logLoss, brier_market: brierMkt, skill: 1 - brier / brierMkt };
 }
 
+// ── The learned game model's result on this run ──
+function renderCoverReport() {
+  if (!coverReport) return '';
+  const c = coverReport, t = c.test || null;
+  let html = `<div class="section"><div class="sec-title">LEARNED <em>GAME MODEL</em></div>`;
+  if (t) {
+    html += `<div class="row head"><span>Held-out games</span><span>N</span><span>Model log loss</span><span>No-edge log loss</span><span>Avg miss vs line</span></div>`;
+    html += `<div class="row"><span class="name">Last 30%</span><span class="num neu">${t.n}</span>`
+          + `<span class="num ${c.beats ? 'pos' : 'neg'}">${t.logloss_model}</span><span class="num neu">${t.logloss_naive}</span>`
+          + `<span class="num neu">${t.mae_model} vs ${t.mae_naive}</span></div>`;
+  }
+  html += `<div class="note">${c.n} games learned from. ${c.beats
+    ? 'SAVED — beat "no edge" on games it never saw; live picks and the background monitor use it for this sport.'
+    : 'Not saved: ' + (c.reason || '') + '. This sport keeps using the ranking.'} Lower log loss is better; "no edge" is a coin flip at the closing line.</div></div>`;
+  return html;
+}
+
+// ── Data coverage: weeks inside the window with no stored games ──
+let coverageReport = null;
+function buildCoverage(sport, fromDate, toDate, games) {
+  const wk = d => { const x = new Date(d); x.setUTCHours(0, 0, 0, 0); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
+  const counts = {};
+  games.forEach(g => { if (g.game_date) { const k = wk(g.game_date); counts[k] = (counts[k] || 0) + 1; } });
+  const keys = Object.keys(counts).sort();
+  if (!keys.length) return null;
+  const first = new Date(keys[0]), last = new Date(keys[keys.length - 1]);
+  const missing = [];
+  for (let d = new Date(first); d <= last; d.setUTCDate(d.getUTCDate() + 7)) {
+    const k = d.toISOString().slice(0, 10);
+    if (!counts[k]) missing.push(k);
+  }
+  // Long stretches at either end of the window with nothing stored (the
+  // season may still have been going, e.g. NCAAB stopping in January).
+  const lastGame = games.reduce((m, g) => (g.game_date > m ? g.game_date : m), '');
+  const firstGame = games.reduce((m, g) => (!m || g.game_date < m ? g.game_date : m), '');
+  const end = String(toDate).slice(0, 10) < new Date().toISOString().slice(0, 10) ? String(toDate).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const days = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+  const tail = lastGame && days(lastGame, end) > 21 ? { from: lastGame, to: end } : null;
+  const head = null;   // a quiet start is usually just the preseason
+  return { sport, from: keys[0], to: keys[keys.length - 1], weeks: keys.length, missing, tail, head };
+}
+function renderCoverage() {
+  const c = coverageReport;
+  if (!c || (!c.missing.length && !c.tail && !c.head)) return '';
+  const runs = [];
+  c.missing.forEach(k => { const last = runs[runs.length - 1]; const prev = last && new Date(new Date(last[1]).getTime() + 7 * 86400000).toISOString().slice(0, 10);
+    if (last && prev === k) last[1] = k; else runs.push([k, k]); });
+  const fmt = r => r[0] === r[1] ? `week of ${r[0]}` : `${r[0]} to ${r[1]}`;
+  return `<div class="section"><div class="sec-title">DATA <em>GAPS</em></div><div class="note" style="color:var(--red)">`
+       + (c.missing.length ? `${c.missing.length} week${c.missing.length === 1 ? '' : 's'} between ${c.from} and ${c.to} have no stored ${c.sport} games: ${runs.map(fmt).join(' · ')}. ` : '')
+       + (c.head ? `Nothing stored from ${c.head.from} until ${c.head.to}. ` : '')
+       + (c.tail ? `Nothing stored after ${c.tail.from} (the window runs to ${c.tail.to}). ` : '')
+       + `If the season was being played in those stretches, run Build ATS in Admin for those dates, then run this test again — results from a season with gaps are less reliable.</div></div>`;
+}
+
 function renderFitReport() {
   if (!fitReport) return '';
   let html = `<div class="section"><div class="sec-title">FITTED <em>RANKING MODEL</em></div>`;
@@ -2489,7 +2546,7 @@ function renderProfit() {
 }
 
 function renderAccuracyAndCalibration() {
-  let html = renderProfit() + renderSpotsAndBlend() + renderTotals() + renderFitReport();
+  let html = renderCoverage() + renderProfit() + renderSpotsAndBlend() + renderTotals() + renderCoverReport() + renderFitReport();
   if (evalRows.length && evalRows.every(x => x.bet_type === 'ML')) {
     const sc = probabilityScores(evalRows);
     if (sc) html += `<div class="section"><div class="sec-title">SKILL <em>VS THE MONEYLINE</em></div><div class="note">`
