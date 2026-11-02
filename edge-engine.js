@@ -20,7 +20,7 @@
 // ============================================================
 
 const EDGE_ENGINE = (function () {
-  const VERSION = 'engine-1.1.0';
+  const VERSION = 'engine-1.1.1';
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const round = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
   const num = v => (v == null || v === '' || !isFinite(Number(v)) ? null : Number(v));
@@ -190,7 +190,14 @@ const EDGE_ENGINE = (function () {
       n: Math.min(h6.length, a6.length),
     };
   }
+  // Only where the line is a fair 50/50: point spreads. Puck and run lines
+  // (NHL, MLB) and soccer goal lines aren't, so beating a coin flip there
+  // only means learning that -1.5 favourites usually fail — which the
+  // prices already say.
+  const POINT_SPREAD = new Set(['NFL', 'NCAAF', 'NBA', 'WNBA', 'NCAAB']);
+  const coverModelSport = sport => POINT_SPREAD.has(String(sport || '').toUpperCase());
   function coverModelFor(sport) {
+    if (!coverModelSport(sport)) return null;
     try {
       const t = (typeof EDGE_GOVERNOR !== 'undefined' && EDGE_GOVERNOR.readCalibrationTable) ? EDGE_GOVERNOR.readCalibrationTable() : null;
       const cm = t && t.cover_model && t.cover_model[sport];
@@ -215,8 +222,10 @@ const EDGE_ENGINE = (function () {
   }
   // Fits the cover model from samples { x:[…], y: actual result vs the
   // line } in date order; tested on the last 30%.
-  function fitCoverModel(samples) {
+  function fitCoverModel(samples, sport) {
     const S = (samples || []).filter(s => s && s.x && s.x.every(v => isFinite(v)) && isFinite(s.y));
+    if (sport && !coverModelSport(sport))
+      return { beats: false, skipped: true, n: S.length, reason: 'puck and run lines aren\'t 50/50 at the line, so "no edge" isn\'t a fair test — not used for this sport' };
     if (S.length < 150) return { beats: false, n: S.length, reason: `needs 150 games, has ${S.length}` };
     const k = S[0].x.length, cut = Math.floor(S.length * 0.7), train = S.slice(0, cut), test = S.slice(cut);
     const mean = Array(k).fill(0), sd = Array(k).fill(0);
@@ -309,7 +318,7 @@ const EDGE_ENGINE = (function () {
   }
 
   return { VERSION, LINE_W, FEATURES, lineModel, timing, totalLineModel, totalTiming, evaluateGame, fitLineModel, setLearned, weightsFor,
-           historyIndex, coverFeatures, applyCoverModel, fitCoverModel, coverModelFor };
+           historyIndex, coverFeatures, applyCoverModel, fitCoverModel, coverModelFor, coverModelSport};
 })();
 
 if (typeof window !== 'undefined') window.EDGE_ENGINE = EDGE_ENGINE;
