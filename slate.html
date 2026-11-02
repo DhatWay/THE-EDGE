@@ -745,7 +745,16 @@ async function run() {
     coverReport = null;
     if (window.EDGE_ENGINE && coverSamples.length) {
       coverSamples.sort((a, b) => String(a.d).localeCompare(String(b.d)));
-      coverReport = EDGE_ENGINE.fitCoverModel(coverSamples);
+      coverReport = EDGE_ENGINE.fitCoverModel(coverSamples, sport);
+      if (coverReport.skipped) {
+        const t = EDGE_GOVERNOR.readCalibrationTable() || {};
+        if (t.cover_model && t.cover_model[sport]) {
+          delete t.cover_model[sport];
+          EDGE_GOVERNOR.saveCalibrationTable(t);
+          try { await pushCalibrationTable(); } catch {}
+          log(`  removed the ${sport} learned game model saved by an earlier run`);
+        }
+      }
       if (coverReport.beats) {
         const t = EDGE_GOVERNOR.readCalibrationTable() || {};
         t.cover_model = t.cover_model || {};
@@ -754,6 +763,13 @@ async function run() {
         try { await pushCalibrationTable(); } catch {}
       }
       log(`  learned game model: ${coverReport.n} games · ${coverReport.test ? `held-out cover log loss ${coverReport.test.logloss_model} vs ${coverReport.test.logloss_naive} no-edge · ` : ''}${coverReport.beats ? 'SAVED — live picks and the background monitor use it' : 'not saved — ' + coverReport.reason}`);
+    }
+    {
+      const op = evalRows.filter(r => r && r.open && r.open.picked);
+      if (op.length) {
+        const a = openerTally(op, 'at_open'), c = openerTally(op, 'at_close');
+        log(`  at the opener: ${op.length} picks · ${a.w}-${a.l}-${a.p} at the opener vs ${c.w}-${c.l}-${c.p} at the close`);
+      }
     }
 
     // ── Fit the ranking model on this run ──
@@ -1223,6 +1239,37 @@ async function loadH2HForSport(sport, url, key) {
 // GRADE ONE GAME
 // ============================================================
 
+// ── At the opening line ──
+// The decision made with the opener as the market: the same predicted
+// margin, the chance moved by the points between the opener and the close,
+// and the line-move spots left out (nobody knows the move at the open).
+// Graded at the opener, and the same side at the close for comparison.
+const OPEN_SIGMA = { NFL: 13.5, NCAAF: 16, NBA: 12, WNBA: 11, NCAAB: 11 };
+function gradeAtOpener(g, prior, families, sport, govOpts) {
+  const Lo = Number(g.open_spread), Lc = Number(g.spread);
+  const pc = prior && prior.cover && isFinite(prior.cover.home_cover) ? prior.cover.home_cover : null;
+  if (pc == null) return null;
+  const sigma = Number(prior.cover.sigma) || OPEN_SIGMA[sport] || 12;
+  const k = 1.702;                                   // logistic stand-in for the normal curve
+  const p = Math.min(0.999, Math.max(0.001, pc));
+  const ph = 1 / (1 + Math.exp(-(Math.log(p / (1 - p)) + k * (Lo - Lc) / sigma)));
+  const priorO = {
+    ...prior, spread: Lo,
+    market_spread: prior.market_spread != null ? Lo : prior.market_spread,
+    market: { ...(prior.market || {}), current_spread: Lo, open_spread: Lo },
+    cover: { ...prior.cover, home_cover: ph, away_cover: 1 - ph, push: 0 },
+    spots: (prior.spots || []).filter(s => !/^line_moved|steam|reverse_line/i.test(String(s.id || ''))),
+  };
+  const govO = EDGE_GOVERNOR.run(families, priorO, govOpts);
+  const physO = EDGE_PHYSICS.decide(govO, priorO, {});
+  const margin = g.home_score - g.away_score;
+  const side = govO.direction === 'away' ? 'away' : 'home';
+  const res = L => { const c = (side === 'home' ? 1 : -1) * (margin + L); return Math.abs(c) < 0.01 ? 'P' : c > 0 ? 'W' : 'L'; };
+  const picked = !!(physO && !['PASS', 'CAPPED', 'VETOED'].includes(physO.decision) && physO.direction && physO.direction !== 'none');
+  return { side, picked, units: picked ? (physO.units || 1) : 0, at_open: res(Lo), at_close: res(Lc),
+           gain: side === 'home' ? Lo - Lc : Lc - Lo };
+}
+
 async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights) {
   const sport = g.sport || 'NFL';
   const homeKey = `${sport}:${g.home}`;
@@ -1385,8 +1432,9 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
 
   // ── Governor: the default blend, never weights learned from these games ──
   let gov;
-  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, { blend: (learnedForRun && learnedForRun.blend) || EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 },
-                                                     noCalibration: !calForRun, calibration: calForRun || undefined }); }
+  const govOpts = { blend: (learnedForRun && learnedForRun.blend) || EDGE_GOVERNOR.DEFAULT_BLEND || { w_strength: 0.6, w_spots: 1 },
+                    noCalibration: !calForRun, calibration: calForRun || undefined };
+  try { gov = EDGE_GOVERNOR.run(allFamilies, prior, govOpts); }
   catch { return null; }
 
   // ── Physics ──
@@ -1436,6 +1484,11 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
       })),
       situations: (sitFamily && sitFamily.subs) ? sitFamily.subs : [],
     };
+  }
+
+  let openEval = null;
+  if (!isMl && g.open_spread != null && isFinite(Number(g.open_spread)) && isFinite(Number(g.spread))) {
+    try { openEval = gradeAtOpener(g, prior, allFamilies, sport, govOpts); } catch { openEval = null; }
   }
 
   const marginAll = g.home_score - g.away_score;
@@ -1490,6 +1543,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     market_home: gov.components ? gov.components.market_home : 0.5,
     spots: (prior.spots || []).map(s => ({ id: s.id, label: s.label, side: s.side, group: s.group })),
     game_id: g.game_id,
+    // The same decision made at the opening line (spreads with an opener).
+    open: openEval,
     // Did the line move toward the model's side between open and close?
     line_move: (g.open_spread != null && g.spread != null && g.open_spread !== g.spread)
       ? ((govSide === 'home') === (g.spread < g.open_spread) ? 'toward' : 'away')
@@ -2425,6 +2480,38 @@ function renderCoverReport() {
   return html;
 }
 
+// ── At the opening line: the same decisions made and paid at the opener ──
+function openerTally(rows, key) {
+  const t = { w: 0, l: 0, p: 0 };
+  rows.forEach(r => { const v = r.open[key]; if (v === 'W') t.w++; else if (v === 'L') t.l++; else t.p++; });
+  return t;
+}
+function renderOpener() {
+  const rows = evalRows.filter(r => r && r.open);
+  if (!rows.length) return '';
+  const pnl = t => t.w * 100 / 1.1 - t.l * 100;                 // $100 a bet at -110
+  const money = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(0);
+  const rate = t => (t.w + t.l) ? (t.w / (t.w + t.l) * 100).toFixed(1) + '%' : '—';
+  const picks = rows.filter(r => r.open.picked);
+  const pO = openerTally(picks, 'at_open'), pC = openerTally(picks, 'at_close');
+  const aO = openerTally(rows, 'at_open'), aC = openerTally(rows, 'at_close');
+  const gains = picks.map(r => r.open.gain);
+  const avgGain = gains.length ? gains.reduce((s, v) => s + v, 0) / gains.length : 0;
+  const better = gains.filter(v => v > 0).length, worse = gains.filter(v => v < 0).length;
+  const row = (label, t) => `<div class="row"><span class="name">${label}</span><span class="num neu">${t.w}-${t.l}-${t.p}</span>`
+    + `<span class="num neu">${rate(t)}</span><span class="num ${pnl(t) >= 0 ? 'pos' : 'neg'}">${money(pnl(t))}</span></div>`;
+  const n = pO.w + pO.l;
+  const range = n ? ` (95% range ${(wilsonLow(pO.w, n) * 100).toFixed(1)}–${(wilsonHigh(pO.w, n) * 100).toFixed(1)}%)` : '';
+  return `<div class="section"><div class="sec-title">AT THE <em>OPENING LINE</em></div>`
+    + `<div class="row head"><span>${rows.length} games with an opener</span><span>W-L-P</span><span>Rate</span><span>$100 a bet</span></div>`
+    + row('Picks made at the opener', pO) + row('Same picks at the close', pC)
+    + row('Model side, every game, opener', aO) + row('Same sides at the close', aC)
+    + `<div class="note">${picks.length} picks at the opener${range}. On average the opener was ${avgGain >= 0 ? '+' : ''}${avgGain.toFixed(2)} points `
+    + `${avgGain >= 0 ? 'better' : 'worse'} than the close for the side picked (better ${better} times, worse ${worse}, the same ${picks.length - better - worse}). `
+    + `Each pick is decided with the opener as the market — the same ratings, the chance moved for the points between opener and close, and the line-move spots left out since nobody knows the move at the open — and paid at -110. `
+    + `If the opener record beats the closing one, betting early is where the edge is.</div></div>`;
+}
+
 // ── Data coverage: weeks inside the window with no stored games ──
 let coverageReport = null;
 function buildCoverage(sport, fromDate, toDate, games) {
@@ -2546,7 +2633,7 @@ function renderProfit() {
 }
 
 function renderAccuracyAndCalibration() {
-  let html = renderCoverage() + renderProfit() + renderSpotsAndBlend() + renderTotals() + renderCoverReport() + renderFitReport();
+  let html = renderCoverage() + renderProfit() + renderOpener() + renderSpotsAndBlend() + renderTotals() + renderCoverReport() + renderFitReport();
   if (evalRows.length && evalRows.every(x => x.bet_type === 'ML')) {
     const sc = probabilityScores(evalRows);
     if (sc) html += `<div class="section"><div class="sec-title">SKILL <em>VS THE MONEYLINE</em></div><div class="note">`
