@@ -58,7 +58,7 @@
 
 const EDGE_POWER = (() => {
 
-  const BUILD = 'pe-20261014-01';
+  const BUILD = 'pe-20261102-01';
 
   // A starting quarterback listed out or doubtful moves the ranking's
   // spread this many points against his team. An estimate — there is
@@ -303,7 +303,13 @@ const EDGE_POWER = (() => {
     try {
       const t = JSON.parse(localStorage.getItem('edge_governor_calibration') || 'null');
       const f = t?.rating_fit?.[sport];
-      return (f && Array.isArray(f.coef) && f.coef.length === 4 && isFinite(f.rmse)) ? f : null;
+      if (!(f && Array.isArray(f.coef) && f.coef.length === 4 && isFinite(f.rmse))) return null;
+      // In a Slate Test, only a fit from dates that don't overlap the test,
+      // and only when the test is set to use what earlier tests learned —
+      // never a fit made from the games being tested.
+      const gate = typeof window !== 'undefined' ? window.EDGE_TEST_GATE : null;
+      if (gate && !gate.allows(f.window)) return null;
+      return f;
     } catch { return null; }
   }
 
