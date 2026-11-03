@@ -538,6 +538,21 @@ async function run() {
     log('Loading games with scores…');
     const useLearned = !!document.getElementById('useLearned')?.checked;
     runInfo = { sport, from: fromDate, to: toDate, useLearned };
+    // The ranking checks this while a test runs: a saved fitted model is
+    // used only where this test may use it (the learned game model is
+    // checked here directly, below).
+    window.EDGE_TEST_GATE = { allows: learnedAllowed };
+    {
+      const why = useLearned ? 'it was made from dates that overlap this test' : '"Use what earlier tests learned" is off';
+      const cm = window.EDGE_ENGINE && EDGE_ENGINE.coverModelFor ? EDGE_ENGINE.coverModelFor(sport) : null;
+      runInfo.coverModelOk = !!cm && learnedAllowed(cm.window);
+      if (cm) log(runInfo.coverModelOk ? `  learned game model: using the one trained on ${String(cm.window).replace('|', ' → ')}`
+                                       : `  learned game model: not used in this test — ${why}`);
+      let rf = null;
+      try { rf = (EDGE_GOVERNOR.readCalibrationTable() || {}).rating_fit?.[sport] || null; } catch {}
+      if (rf) log(learnedAllowed(rf.window) ? `  fitted ranking model: using the one fit on ${String(rf.window).replace('|', ' → ')}`
+                                            : `  fitted ranking model: not used in this test — ${why}`);
+    }
     learnedForRun = useLearned ? learnedFromOtherWindows(sport, `${fromDate}|${toDate}`) : null;
     // Calibration: none at all unless "Use what earlier tests learned" is
     // ticked, and then only from tests of date ranges that don't overlap
@@ -864,6 +879,8 @@ async function run() {
     log('ERROR: ' + e.message);
     out('<div class="empty">Test failed: ' + e.message + '</div>');
     console.error(e);
+  } finally {
+    try { delete window.EDGE_TEST_GATE; } catch {}
   }
 
   btn.disabled = false; stopButton(false);
@@ -1240,24 +1257,38 @@ async function loadH2HForSport(sport, url, key) {
 // ============================================================
 
 // ── At the opening line ──
-// The decision made with the opener as the market: the same predicted
-// margin, the chance moved by the points between the opener and the close,
-// and the line-move spots left out (nobody knows the move at the open).
-// Graded at the opener, and the same side at the close for comparison.
+// The decision made with only what was known at the open: the ranking's
+// own chance at the opening line, or — when this test may use it — the
+// learned game model given the opening line. The closing line never
+// enters, and the line-move spots are left out (nobody knows the move at
+// the open). Graded at the opener, and the same side at the close.
 const OPEN_SIGMA = { NFL: 13.5, NCAAF: 16, NBA: 12, WNBA: 11, NCAAB: 11 };
-function gradeAtOpener(g, prior, families, sport, govOpts) {
-  const Lo = Number(g.open_spread), Lc = Number(g.spread);
-  const pc = prior && prior.cover && isFinite(prior.cover.home_cover) ? prior.cover.home_cover : null;
-  if (pc == null) return null;
-  const sigma = Number(prior.cover.sigma) || OPEN_SIGMA[sport] || 12;
+// The ranking's chance depends on the line only through the points between
+// its margin and the line, so it moves point for point from one line to another.
+function rankingChanceAt(rankingCover, fromLine, toLine, sport, modelSpread) {
+  if (!rankingCover || !isFinite(rankingCover.home_cover)) return null;
+  // Exactly the ranking's own math at the other line: its margin and its own
+  // spread of outcomes, with only the line changed.
+  const core = window.EDGE_RATING;
+  const m = -Number(modelSpread), sg = Number(rankingCover.sigma);
+  if (core && core.coverProbability && isFinite(m) && isFinite(sg) && sg > 0) {
+    const c = core.coverProbability(m, toLine, sg, { sport });
+    if (c && isFinite(c.home_cover)) return { ...rankingCover, home_cover: c.home_cover, away_cover: c.away_cover, push: c.push || 0 };
+  }
+  const sigma = Number(rankingCover.sigma) || OPEN_SIGMA[sport] || 12;
   const k = 1.702;                                   // logistic stand-in for the normal curve
-  const p = Math.min(0.999, Math.max(0.001, pc));
-  const ph = 1 / (1 + Math.exp(-(Math.log(p / (1 - p)) + k * (Lo - Lc) / sigma)));
+  const p = Math.min(0.999, Math.max(0.001, rankingCover.home_cover));
+  const ph = 1 / (1 + Math.exp(-(Math.log(p / (1 - p)) + k * (toLine - fromLine) / sigma)));
+  return { ...rankingCover, home_cover: ph, away_cover: 1 - ph, push: 0 };
+}
+function gradeAtOpener(g, prior, families, sport, govOpts, openCover) {
+  const Lo = Number(g.open_spread), Lc = Number(g.spread);
+  if (!openCover || !isFinite(openCover.home_cover)) return null;
   const priorO = {
     ...prior, spread: Lo,
     market_spread: prior.market_spread != null ? Lo : prior.market_spread,
     market: { ...(prior.market || {}), current_spread: Lo, open_spread: Lo },
-    cover: { ...prior.cover, home_cover: ph, away_cover: 1 - ph, push: 0 },
+    cover: { ...openCover }, cover_model: null,
     spots: (prior.spots || []).filter(s => !/^line_moved|steam|reverse_line/i.test(String(s.id || ''))),
   };
   const govO = EDGE_GOVERNOR.run(families, priorO, govOpts);
@@ -1331,6 +1362,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
 
   // ── Families ──
   let families;
+  // The ranking's own chance to cover, kept before a learned model replaces it.
+  const rankingCover = prior && prior.cover ? { ...prior.cover } : null;
   // The learned game model (edge-engine.js): every game becomes a training
   // sample (inputs from earlier games, result against the closing line);
   // the saved model, if any, is applied as it is live.
@@ -1339,7 +1372,8 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
     const rd = ctx.rest && ctx.rest.home_rest_days != null ? { home: ctx.rest.home_rest_days, away: ctx.rest.away_rest_days } : prior.rest_days;
     const fc = EDGE_ENGINE.coverFeatures(sport, g.home, g.away, g.game_date, L, prior.model_spread, rd, ctx.coverIdx);
     if (fc.n >= 2) coverSamples.push({ x: fc.x, y: (g.home_score - g.away_score) + L, d: g.game_date });
-    EDGE_ENGINE.applyCoverModel(prior, game, ctx.coverIdx);
+    // A saved model is applied only where this test may use it.
+    if (runInfo && runInfo.coverModelOk) EDGE_ENGINE.applyCoverModel(prior, game, ctx.coverIdx);
   }
   try { families = await EDGE_ALGOS.runAll(prior, gameContext); }
   catch { families = []; }
@@ -1488,7 +1522,18 @@ async function gradeOneGame(g, power, atsIndex, h2hIndex, ctx, situationWeights)
 
   let openEval = null;
   if (!isMl && g.open_spread != null && isFinite(Number(g.open_spread)) && isFinite(Number(g.spread))) {
-    try { openEval = gradeAtOpener(g, prior, allFamilies, sport, govOpts); } catch { openEval = null; }
+    try {
+      const Lo = Number(g.open_spread), Lc = Number(g.spread);
+      let openCover = null;
+      if (runInfo && runInfo.coverModelOk && window.EDGE_ENGINE && ctx && ctx.coverIdx) {
+        // The learned game model given the opening line, never the close.
+        const po = { ...prior, cover: rankingCover ? { ...rankingCover } : null, cover_model: null };
+        EDGE_ENGINE.applyCoverModel(po, { ...game, spread: Lo }, ctx.coverIdx);
+        if (po.cover && po.cover.source === 'cover_model') openCover = po.cover;
+      }
+      if (!openCover) openCover = rankingChanceAt(rankingCover, Lc, Lo, sport, prior.model_spread);
+      openEval = gradeAtOpener(g, prior, allFamilies, sport, govOpts, openCover);
+    } catch { openEval = null; }
   }
 
   const marginAll = g.home_score - g.away_score;
@@ -1820,7 +1865,8 @@ async function renderReport(sport) {
   html += `<div class="footer-note">
     <b>How this test is kept honest.</b> Ratings, ATS and head-to-head records, and every situation
     are rebuilt at each step from games already played, so nothing is scored with results from after it.
-    With "Use what earlier tests learned" ticked, only date ranges that don't overlap this one are used.
+    With "Use what earlier tests learned" ticked, only date ranges that don't overlap this one are used — that includes a saved
+    fitted ranking model and the learned game model, which are left out otherwise.
     Coaching is rebuilt from close games before each step too. Starting pitchers, goalies, college SP+ and NFL
     efficiency are live-only (their past values aren't stored as of each game). Weather, injuries and travel aren't in the
     backtest yet, so rules that need them are reported untestable.
@@ -2013,6 +2059,14 @@ function fitRatingModel(sport, fromDate, toDate, rows) {
 
 let learnedForRun = null;
 let calForRun = null;
+// What a test may use that earlier tests learned: only with "Use what
+// earlier tests learned" ticked, and only from date ranges that don't
+// overlap this one — so no test is scored with what it already saw.
+function learnedAllowed(windowStr) {
+  if (!runInfo || !runInfo.useLearned || !windowStr) return false;
+  const [a, b] = String(windowStr).split('|');
+  return !!(a && b) && (b < runInfo.from || a > runInfo.to);
+}
 function calibrationFromOtherWindows(sport, windowKey) {
   const [from, to] = String(windowKey).split('|');
   const overlaps = (w) => { const [a, b] = String(w).split('|'); return !(b < from || a > to); };
@@ -2379,7 +2433,7 @@ function renderSpotsAndBlend() {
       ? `How much of the ranking's disagreement with the market turned out real: ${blendReport.w} (default ${blendReport.default}). `
         + `Held-out log loss ${blendReport.test_logloss_fit.toFixed(4)} fitted vs ${blendReport.test_logloss_default.toFixed(4)} default. `
       : '';
-    html += blendReport.saved ? 'Saved — live picks use it for this sport.' : `Not saved: ${blendReport.reason}. The default stays.`;
+    html += blendReport.saved ? 'Saved — live picks use it when "Use learned" is on in Today\'s Picks; otherwise every sport uses the default.' : `Not saved: ${blendReport.reason}. The default stays.`;
     html += `</div></div>`;
   }
   if (spotReport && spotReport.count) {
@@ -2508,7 +2562,7 @@ function renderOpener() {
     + row('Model side, every game, opener', aO) + row('Same sides at the close', aC)
     + `<div class="note">${picks.length} picks at the opener${range}. On average the opener was ${avgGain >= 0 ? '+' : ''}${avgGain.toFixed(2)} points `
     + `${avgGain >= 0 ? 'better' : 'worse'} than the close for the side picked (better ${better} times, worse ${worse}, the same ${picks.length - better - worse}). `
-    + `Each pick is decided with the opener as the market — the same ratings, the chance moved for the points between opener and close, and the line-move spots left out since nobody knows the move at the open — and paid at -110. `
+    + `Each pick is decided with only what was known at the open — the ranking's chance at the opening line (or the learned game model given the opening line, when this test may use it), with the line-move spots left out — and paid at -110. `
     + `If the opener record beats the closing one, betting early is where the edge is.</div></div>`;
 }
 
