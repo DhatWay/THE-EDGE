@@ -404,46 +404,106 @@ const EDGE_MATCHUP = (() => {
     log(`  ${rows.length} picks${skipText ? ' · skipped ' + skipText : ''}${unrated ? ` · ${unrated} game(s) without ratings yet` : ''}`);
     let db = { ok: false, n: 0 };
     try { db = await dbUpsert(rows); } catch (e) { log('  matchup mode: database copy failed — ' + e.message); }
-    if (localStorage.getItem(DB_FLAG) === 'missing') log('  matchup mode: record kept on this phone (run matchup-picks.sql to keep a copy in the database)');
-    return { rated: rows.length, skipped, unrated, saved_to_db: db.n };
+    if (localStorage.getItem(DB_FLAG) === 'missing') log('  matchup mode: picks kept on this phone (run matchup-picks.sql to keep a copy in the database)');
+    let bets = { placed: 0, changed: 0, removed: 0 };
+    try { bets = await placeBets(rows, log); } catch (e) { log('  matchup bets failed: ' + e.message); }
+    return { rated: rows.length, skipped, unrated, saved_to_db: db.n, bets };
   }
 
-  // ── Grading: one sport at a time, from ESPN finals ──
-  async function grade(sport, onProgress) {
-    const say = onProgress || (() => {});
-    if (!sport || sport === 'ALL') return { ok: false, error: 'Pick a sport to grade' };
-    const finder = window.EDGE_SHADOW_GRADER && EDGE_SHADOW_GRADER.findFinal;
-    if (!finder) return { ok: false, error: 'Grader not loaded on this page' };
-    const store = readStore();
-    const due = Object.values(store).filter(r => r.sport === sport && !r.result && r.commence_time &&
-      new Date(r.commence_time).getTime() < Date.now() - 3 * 3600000);
-    let graded = 0, waiting = 0;
-    const changed = [];
-    for (let i = 0; i < due.length; i++) {
-      const r = due[i];
-      say(`Grading ${sport} · ${i + 1} of ${due.length}`);
-      let f = null;
-      try { f = await finder({ sport: r.sport, commence_time: r.commence_time, home_team: r.home_team, away_team: r.away_team }); } catch {}
-      if (!f) { waiting++; continue; }
-      if (f.void) { Object.assign(r, { result: 'V', pnl: 0, graded_at: new Date().toISOString() }); changed.push(r); graded++; continue; }
-      if (!f.completed || !isFinite(f.home_score) || !isFinite(f.away_score)) { waiting++; continue; }
-      const homeMargin = f.home_score - f.away_score;
-      const cover = r.pick_side === 'home' ? homeMargin + r.line : -homeMargin - r.line;
-      const result = Math.abs(cover) < 0.01 ? 'P' : cover > 0 ? 'W' : 'L';
-      Object.assign(r, { result, home_score: f.home_score, away_score: f.away_score,
-        pnl: result === 'W' ? round(50 * 100 / 110, 2) : result === 'L' ? -50 : 0, graded_at: new Date().toISOString() });
-      changed.push(r); graded++;
+  // ── Bets: every pick placed in Matchup mode's own portfolio ──
+  // bet_log rows with mode 'matchup', at your flat stake and -110, the
+  // line stored the home team's way (the sim grader's convention). The
+  // sim grader settles them after each run with your other bets. A game
+  // that hasn't started is checked again every run: if the pick changed,
+  // its open bet changes with it.
+  const BET_MODE = 'matchup';
+  function stakeAmount() { const v = parseFloat(localStorage.getItem('edge_flat_bet')); return isFinite(v) && v > 0 ? v : 50; }
+  function localDay() {
+    try { if (window.EDGE_TIME && EDGE_TIME.localDay) return EDGE_TIME.localDay(); } catch {}
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  const matchupText = r => `${r.away_team} vs ${r.home_team}`;
+  const reasonText = r => `Matchup mode: ${r.pick_team} ${r.pick_line > 0 ? '+' : ''}${r.pick_line}, ${r.chance}% to cover`;
+  function betRow(r) {
+    return {
+      mode: BET_MODE, date: localDay(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      sport: r.sport, matchup: matchupText(r), pick_label: r.pick_team, pick_type: 'ATS', line: String(r.line),
+      odds: -110, confidence: r.chance, edge: null, units: 1, amount: stakeAmount(), status: 'pending',
+      game_id: r.game_id, reason: reasonText(r),
+    };
+  }
+  async function openBets(url, headers, sports) {
+    const out = [];
+    for (let off = 0; off < 10000; off += 1000) {
+      const res = await fetch(`${url}/rest/v1/bet_log?select=id,game_id,sport,matchup,pick_label,line,amount,created_at` +
+        `&mode=eq.${BET_MODE}&status=eq.pending&sport=in.(${sports.join(',')})&order=created_at.asc&limit=1000&offset=${off}`, { headers });
+      if (!res.ok) throw new Error(`bet log unavailable (${res.status})`);
+      const page = await res.json();
+      out.push(...page);
+      if (page.length < 1000) break;
     }
-    writeStore(store);
-    try { await dbUpsert(changed); } catch {}
-    return { ok: true, graded, waiting, due: due.length };
+    return out;
+  }
+  async function placeBets(rows, log) {
+    const say = log || (() => {});
+    const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+    if (!url || !key || !rows.length) return { placed: 0, changed: 0, removed: 0 };
+    const headers = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+    const sports = Array.from(new Set(rows.map(r => r.sport)));
+    const open = await openBets(url, headers, sports);
+    // One open bet per game, found by game id or by the same matchup.
+    const byId = new Map(), byMatch = new Map(), extras = [];
+    open.forEach(b => {
+      const mk = `${b.sport}|${b.matchup}`;
+      const dupe = (b.game_id && byId.has(b.game_id)) || byMatch.has(mk);
+      if (dupe) { extras.push(b.id); return; }
+      if (b.game_id) byId.set(b.game_id, b);
+      byMatch.set(mk, b);
+    });
+    const fresh = [], changes = [];
+    rows.forEach(r => {
+      const b = (r.game_id && byId.get(r.game_id)) || byMatch.get(`${r.sport}|${matchupText(r)}`);
+      if (!b) { fresh.push(betRow(r)); return; }
+      if (String(b.pick_label) !== String(r.pick_team) || Number(b.line) !== Number(r.line)) {
+        changes.push({ id: b.id, body: { pick_label: r.pick_team, line: String(r.line), confidence: r.chance, reason: reasonText(r), game_id: r.game_id } });
+      }
+    });
+    let placed = 0, changed = 0, removed = 0;
+    for (let i = 0; i < fresh.length; i += 100) {
+      const res = await fetch(`${url}/rest/v1/bet_log`, { method: 'POST', headers: { ...headers, Prefer: 'return=minimal' },
+        body: JSON.stringify(fresh.slice(i, i + 100)) });
+      if (!res.ok) { say(`  matchup bets: couldn't place (${res.status})`); break; }
+      placed += Math.min(100, fresh.length - i);
+    }
+    for (const c of changes) {
+      const res = await fetch(`${url}/rest/v1/bet_log?id=eq.${c.id}&status=eq.pending`, { method: 'PATCH',
+        headers: { ...headers, Prefer: 'return=minimal' }, body: JSON.stringify(c.body) });
+      if (res.ok) changed++;
+    }
+    for (let i = 0; i < extras.length; i += 100) {
+      const res = await fetch(`${url}/rest/v1/bet_log?id=in.(${extras.slice(i, i + 100).join(',')})&mode=eq.${BET_MODE}&status=eq.pending`,
+        { method: 'DELETE', headers: { ...headers, Prefer: 'return=minimal' } });
+      if (res.ok) removed += Math.min(100, extras.length - i);
+    }
+    say(`  matchup bets: ${placed} placed · ${changed} changed with the pick${removed ? ` · ${removed} duplicate${removed === 1 ? '' : 's'} removed` : ''} · $${stakeAmount()} each`);
+    return { placed, changed, removed };
   }
 
-  function record(sport) {
-    const rows = Object.values(readStore()).filter(r => (!sport || sport === 'ALL' || r.sport === sport) && r.result && r.result !== 'V');
-    const w = rows.filter(r => r.result === 'W').length, l = rows.filter(r => r.result === 'L').length, p = rows.filter(r => r.result === 'P').length;
-    const pnl = rows.reduce((s, r) => s + (num(r.pnl) || 0), 0);
-    return { w, l, p, n: rows.length, rate: (w + l) ? w / (w + l) : null, pnl: round(pnl, 2) };
+  // Matchup mode's bets, for its tab.
+  async function loadBets() {
+    const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+    if (!url || !key) return [];
+    try {
+      const res = await fetch(`${url}/rest/v1/bet_log?select=id,game_id,sport,matchup,pick_label,line,amount,status,result,pnl,created_at` +
+        `&mode=eq.${BET_MODE}&order=created_at.desc&limit=2000`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+      return res.ok ? await res.json() : [];
+    } catch { return []; }
+  }
+  function recordOf(bets) {
+    const done = bets.filter(b => b.result && b.result !== 'V' && b.result !== 'void');
+    const w = done.filter(b => b.result === 'W').length, l = done.filter(b => b.result === 'L').length, p = done.filter(b => b.result === 'P').length;
+    return { w, l, p, n: done.length, rate: (w + l) ? w / (w + l) : null, pnl: round(done.reduce((s, b) => s + (num(b.pnl) || 0), 0), 2) };
   }
 
   // ── Today's Picks › Matchup ──
@@ -485,51 +545,76 @@ const EDGE_MATCHUP = (() => {
       } catch {}
       store = readStore();
     }
+    const bets = await loadBets();
+    let balance = null;
+    try { if (window.EDGE_BANKROLL) balance = (await EDGE_BANKROLL.compute()).matchup || null; } catch {}
+
     const all = Object.values(store);
-    const sports = Array.from(new Set(all.map(r => r.sport))).sort();
+    const sports = Array.from(new Set([...all.map(r => r.sport), ...bets.map(b => b.sport)].filter(Boolean))).sort();
     if (viewSport !== 'ALL' && !sports.includes(viewSport)) viewSport = 'ALL';
-    const inSport = all.filter(r => viewSport === 'ALL' || r.sport === viewSport);
-    const upcoming = inSport.filter(r => !started(r)).sort((a, b) => b.chance - a.chance);
-    const done = inSport.filter(r => started(r)).sort((a, b) => new Date(b.commence_time) - new Date(a.commence_time)).slice(0, 40);
-    const rec = record(viewSport);
+    const inSport = x => viewSport === 'ALL' || x.sport === viewSport;
+    const upcoming = all.filter(r => inSport(r) && !started(r)).sort((a, b) => b.chance - a.chance);
+    const sportBets = bets.filter(inSport);
+    const openByGame = new Map(sportBets.filter(b => b.status === 'pending').map(b => [b.game_id, b]));
+    const settled = sportBets.filter(b => b.result).slice(0, 40);
+    const rec = recordOf(sportBets);
+    const money = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(2)}`;
+
     const chips = ['ALL', ...sports].map(s => `<button class="mm-chip${s === viewSport ? ' on' : ''}" data-mm-sport="${s}">${s === 'ALL' ? 'All' : s}</button>`).join('');
     const recLine = rec.n
-      ? `<b>${rec.w}-${rec.l}-${rec.p}</b> · ${rec.rate != null ? (rec.rate * 100).toFixed(1) + '%' : '—'} · ${rec.pnl >= 0 ? '+' : '−'}$${Math.abs(rec.pnl).toFixed(2)} at $50 a pick`
-      : 'No graded picks yet';
+      ? `<b>${rec.w}-${rec.l}-${rec.p}</b> · ${rec.rate != null ? (rec.rate * 100).toFixed(1) + '%' : '—'} · ${money(rec.pnl)}`
+      : 'No settled bets yet';
+    const balLine = balance && balance.bets
+      ? `<br><span class="mm-sub">Matchup portfolio (all sports): balance $${balance.balance.toFixed(2)} · riding $${balance.riding.toFixed(2)} · started at $${balance.start.toFixed(0)}</span>`
+      : '';
     const card = r => {
       const when = r.commence_time ? new Date(r.commence_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
-      const res = r.result ? ` · <span class="mm-res mm-${r.result}">${r.result === 'V' ? 'NO ACTION' : r.result}${r.home_score != null ? ` (${r.away_score}-${r.home_score})` : ''}</span>` : '';
+      const b = openByGame.get(r.game_id);
+      const betTag = b && String(b.pick_label) === String(r.pick_team) ? ` · <b>$${Number(b.amount || 0).toFixed(0)} bet open</b>` : '';
       const steps = (r.steps || []).map(s => `<div class="mm-step"><span>${s.n}. ${esc(s.label)}</span><span>${s.pts == null ? '' : sgnTxt(s.pts)}${s.mult ? ' ×' + s.mult : ''}</span></div>`).join('');
       const pickWins = r.pick_side === 'home' ? r.model_margin : -r.model_margin;
       return `<div class="mm-card">
-        <div class="mm-meta">${esc(r.sport)} · ${esc(when)}${res}</div>
+        <div class="mm-meta">${esc(r.sport)} · ${esc(when)}${betTag}</div>
         <div class="mm-game">${esc(r.away_team)} @ ${esc(r.home_team)}</div>
         <div class="mm-pick">${esc(r.pick_team)} ${sgnTxt(r.pick_line)} · ${r.chance}% to cover</div>
         <div class="mm-sub">Model: ${esc(r.pick_team)} ${pickWins >= 0 ? 'by ' + Math.abs(pickWins).toFixed(1) : 'loses by ' + Math.abs(pickWins).toFixed(1)} · covers by ${(pickWins + r.pick_line).toFixed(1)}</div>
         <details class="mm-steps"><summary>How it got there</summary>${steps}</details>
       </div>`;
     };
+    const settledRow = b => {
+      const res = String(b.result || '').toUpperCase();
+      const cls = res === 'W' ? 'W' : res === 'L' ? 'L' : 'P';
+      const parts = String(b.matchup || '').split(/\s+vs\s+/i);
+      const isAway = parts.length === 2 && String(b.pick_label || '').toLowerCase() === parts[0].trim().toLowerCase();
+      const ln = num(b.line), shown = isFinite(ln) ? (isAway ? -ln : ln) : null;
+      return `<div class="mm-card">
+        <div class="mm-meta">${esc(b.sport)} · ${esc(b.matchup)} · <span class="mm-res mm-${cls}">${esc(res === 'V' || res === 'VOID' ? 'NO ACTION' : res)}</span>${b.pnl != null ? ' · ' + money(num(b.pnl) || 0) : ''}</div>
+        <div class="mm-sub">${esc(b.pick_label)}${shown != null ? ' ' + sgnTxt(shown) : ''} · $${Number(b.amount || 0).toFixed(0)}</div>
+      </div>`;
+    };
     container.innerHTML = `
       <div class="mm-bar">${chips}</div>
-      <div class="mm-rec">MATCHUP MODE · ${viewSport === 'ALL' ? 'all sports' : viewSport}: ${recLine}<br>
-        <span class="mm-sub">Every game rated from the team comparison alone · its own record, separate from your regular picks.${note ? ' ' + esc(note) : ''}</span><br>
-        <button class="mm-btn" id="mmGrade"${busy ? ' disabled' : ''}>${viewSport === 'ALL' ? 'Pick a sport to grade' : `Grade finished ${viewSport} games`}</button>
+      <div class="mm-rec">MATCHUP MODE · ${viewSport === 'ALL' ? 'all sports' : viewSport}: ${recLine}${balLine}<br>
+        <span class="mm-sub">Every game rated from the team comparison alone and bet at $${stakeAmount()} in its own portfolio · settled with your other bets after each run.${note ? ' ' + esc(note) : ''}</span><br>
+        <button class="mm-btn" id="mmGrade"${busy ? ' disabled' : ''}>${viewSport === 'ALL' ? 'Pick a sport to grade' : `Grade finished ${viewSport} bets`}</button>
       </div>
       ${upcoming.length ? upcoming.map(card).join('') : '<div class="mm-card mm-sub">No upcoming games rated yet — run the pipeline.</div>'}
-      ${done.length ? `<div class="mm-meta" style="margin:12px 0 6px">STARTED OR FINISHED</div>${done.map(card).join('')}` : ''}`;
+      ${settled.length ? `<div class="mm-meta" style="margin:12px 0 6px">SETTLED</div>${settled.map(settledRow).join('')}` : ''}`;
     container.querySelectorAll('[data-mm-sport]').forEach(b => b.onclick = () => { viewSport = b.dataset.mmSport; note = ''; render(container); });
     const g = container.querySelector('#mmGrade');
     if (g) g.onclick = async () => {
       if (viewSport === 'ALL' || busy) return;
+      if (!window.EDGE_SIM_GRADER || !EDGE_SIM_GRADER.run) { note = 'The grader didn\'t load — refresh the page.'; render(container); return; }
       busy = true; note = '';
-      const r = await grade(viewSport, t => { g.textContent = t; });
+      let r = null;
+      try { r = await EDGE_SIM_GRADER.run({ mode: BET_MODE, sports: [viewSport], onProgress: t => { g.textContent = String(t).slice(0, 60); } }); } catch (e) { r = { ok: false, error: e.message }; }
       busy = false;
-      note = r.ok ? `Graded ${r.graded}${r.waiting ? ` · ${r.waiting} waiting on a final score` : ''}.` : r.error;
+      note = r && r.ok ? `Graded ${r.graded || 0}.` : `Grading failed${r && r.error ? ': ' + r.error : ''}.`;
       render(container);
     };
   }
 
-  return { VERSION, runAll, rateGame, grade, record, render, pickKey, seasonStart };
+  return { VERSION, runAll, rateGame, placeBets, render, pickKey, seasonStart };
 })();
 
 if (typeof window !== 'undefined') window.EDGE_MATCHUP = EDGE_MATCHUP;
