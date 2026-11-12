@@ -334,6 +334,7 @@
       <button class="view-tab" data-view="totals" onclick="setHistView('totals')">Totals</button>
       <button class="view-tab" data-view="lines" onclick="setHistView('lines')">My Picks</button>
       <button class="view-tab" data-view="bets" onclick="setHistView('bets')">My Bets</button>
+      <button class="view-tab" data-view="matchup" onclick="setHistView('matchup')">Matchup</button>
     </div>
     <div class="grade-row">
       <button class="grade-btn" onclick="gradeNow()">↻ Grade finished games</button>
@@ -529,7 +530,9 @@
     // History holds finished, graded results only — pending picks and bets
     // live on Today's Picks (Picks and Pending tabs).
     function rowsForView(modeTest) {
-      if (currentView === 'bets') return allBets.filter(b => !!b.result);
+      if (currentView === 'bets') return allBets.filter(b => !!b.result && b._bet?.mode !== 'matchup');
+      // Matchup mode's bets: its own record, apart from yours.
+      if (currentView === 'matchup') return allBets.filter(b => !!b.result && b._bet?.mode === 'matchup');
       // My Picks: your own picks (★ My Pick, ⇄ Flip) and lines (＋ Line).
       if (currentView === 'lines') return allPicks.filter(p => (String(p.decision || '').startsWith('LINE_') || p.decision === 'MINE') && !!p.result);
       // Model Picks and the rest: the model's own picks only, so the record
@@ -671,7 +674,7 @@
           home_team: p.home_team || '', away_team: p.away_team || '',
           side_team: b.pick_label || p.side_team || '',
           direction: p.direction,
-          decision: (b.mode || 'sim') === 'real' ? 'REAL BET' : 'SIM BET',
+          decision: b.mode === 'real' ? 'REAL BET' : b.mode === 'matchup' ? 'MATCHUP BET' : 'SIM BET',
           decision_mode: p.decision_mode || 'bet',
           confidence: b.confidence ?? p.confidence,
           units: Number(b.units) || (stake && p.units) || 0,
@@ -689,7 +692,7 @@
     async function renderMoney() {
       const box = document.getElementById('moneyBox');
       if (!box) return;
-      if (currentView !== 'bets') { box.hidden = true; return; }
+      if (currentView !== 'bets' && currentView !== 'matchup') { box.hidden = true; return; }
       if (!window.EDGE_BANKROLL) { box.hidden = true; return; }
       const m = await EDGE_BANKROLL.compute();
       const $ = EDGE_BANKROLL.money;
@@ -699,7 +702,8 @@
           <span>Still riding <b>${$(p.riding)}</b></span>
           <span>Balance <b>${$(p.balance)}</b></span>
           <span class="dim">starting ${$(p.start)}</span></div>`;
-      box.innerHTML = (part(m.real, 'Real') + part(m.sim, 'Sim')) || '<div class="money-row">No bets logged yet.</div>';
+      box.innerHTML = (currentView === 'matchup' ? part(m.matchup || {}, 'Matchup mode') : part(m.real, 'Real') + part(m.sim, 'Sim'))
+        || '<div class="money-row">No bets logged yet.</div>';
       box.hidden = false;
     }
 
