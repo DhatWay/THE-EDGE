@@ -6,11 +6,12 @@
 //   balance = starting bankroll (Settings)
 //           + profit on bets that have settled
 //           − stakes on bets still open
-// Each portfolio (real, sim) is computed on its own.
+// Each portfolio (real, sim, matchup) is computed on its own. Matchup
+// mode starts from the same amount as the sim portfolio.
 // ============================================================
 
 const EDGE_BANKROLL = (function () {
-  const BUILD = 'bankroll-20261005-01';
+  const BUILD = 'bankroll-20261112-01';
 
   function starts() {
     return {
@@ -25,6 +26,7 @@ const EDGE_BANKROLL = (function () {
     const out = {
       real: { start: s.real, wagered: 0, profit: 0, riding: 0, balance: s.real, bets: 0 },
       sim: { start: s.sim, wagered: 0, profit: 0, riding: 0, balance: s.sim, bets: 0 },
+      matchup: { start: s.sim, wagered: 0, profit: 0, riding: 0, balance: s.sim, bets: 0 },
       ok: false,
     };
     const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
@@ -36,7 +38,7 @@ const EDGE_BANKROLL = (function () {
         if (!res.ok) return out;
         const rows = await res.json();
         rows.forEach(b => {
-          const p = (b.mode || 'sim') === 'real' ? out.real : out.sim;
+          const p = b.mode === 'real' ? out.real : b.mode === 'matchup' ? out.matchup : out.sim;
           const amt = Number(b.amount) || 0;
           const settled = !!b.result || b.status === 'graded';
           p.bets++;
@@ -46,7 +48,7 @@ const EDGE_BANKROLL = (function () {
         });
         if (rows.length < 1000) break;
       }
-      ['real', 'sim'].forEach(k => { const p = out[k]; p.balance = p.start + p.profit - p.riding; });
+      ['real', 'sim', 'matchup'].forEach(k => { const p = out[k]; p.balance = p.start + p.profit - p.riding; });
       out.ok = true;
     } catch {}
     return out;
