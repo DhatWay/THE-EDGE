@@ -29,7 +29,7 @@
 //     network failure cannot become a permanent poisoned cache.
 // ============================================================
 
-const VERSION = 'edge-v75';
+const VERSION = 'edge-v76';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -101,6 +101,7 @@ const SHELL_FILES = [
 
   // Orchestration
   './orchestrator.js',
+  './matchup-mode.js',
   './learning.js',
   './auth.js',
 
