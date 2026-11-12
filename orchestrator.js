@@ -699,7 +699,7 @@ const EDGE_ORCHESTRATOR = (() => {
           // Placed bets too, unless switched off in Settings.
           if (window.EDGE_SIM_GRADER && localStorage.getItem('edge_sim_auto_grade') !== 'false') {
             summary.bets_graded = 0;
-            for (const m of ['sim', 'real']) {
+            for (const m of ['sim', 'real', 'matchup']) {
               const b = await window.EDGE_SIM_GRADER.run({ mode: m, onProgress: log, sports: runSports.length ? runSports : null });
               if (b && b.ok) summary.bets_graded += b.graded || 0;
             }
