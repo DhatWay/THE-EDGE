@@ -26,6 +26,7 @@
   <script src="qb-ratings.js"></script>
   <script src="my-picks.js"></script>
   <script src="orchestrator.js"></script>
+  <script src="matchup-mode.js"></script>
   <script src="learning.js"></script>
   <script src="rating-core.js"></script>
   <script src="sport-profiles.js"></script>
@@ -435,6 +436,7 @@
       <button class="view-tab" data-view="pending" onclick="setView('pending')">Pending</button>
       <button class="view-tab" data-view="slate" onclick="setView('slate')">Full Slate</button>
       <button class="view-tab" data-view="totals" onclick="setView('totals')">Totals</button>
+      <button class="view-tab" data-view="matchup" onclick="setView('matchup')">Matchup</button>
     </div>
     <label class="leans-toggle" id="leansToggle"><input type="checkbox" id="showLeans" onchange="toggleLeans(this.checked)" /> Show leans with picks</label>
     <label class="leans-toggle" id="learnedToggle"><input type="checkbox" id="useLearned" onchange="localStorage.setItem('edge_use_learned', this.checked ? 'true' : 'false')" /> Use strength weights learned by Slate Tests (off = every sport uses the same 0.6; applies on the next run)</label>
@@ -1455,6 +1457,11 @@
       const note = document.getElementById('bankrollNote');
       if (note) note.hidden = parseFloat(localStorage.getItem('edge_bankroll') || '0') > 0;
       const list = document.getElementById('picksList');
+      if (currentView === 'matchup') {
+        if (window.EDGE_MATCHUP) EDGE_MATCHUP.render(list);
+        else list.innerHTML = '<div class="empty-state">Matchup mode didn\'t load — refresh the page.</div>';
+        return;
+      }
       if (currentView === 'pending') { renderEarlier(); renderPending(); return; }
       const filtered = applyFilter(allPicks);
       updateSummary(filtered);
