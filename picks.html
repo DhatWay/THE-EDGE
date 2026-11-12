@@ -983,13 +983,19 @@
               <div class="pr-meta">${p.sport || ''} · ${nmA(p).replace(/[<>&]/g, '')} · ${new Date(p.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div></div>
               <div class="pr-right pr-meta">waiting for the final</div></div>`).join('') + `</div>`
         : '';
-      if (!pendingBets.length) {
-        list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · 0</div><div class="empty-sub" style="padding:8px 0 14px">No open bets.</div>` + awaitingHtml;
+      // Matchup mode's own bets are listed in its tab; here they're one line.
+      const shownBets = pendingBets.filter(b => b.mode !== 'matchup');
+      const mmOpen = pendingBets.filter(b => b.mode === 'matchup');
+      const mmLine = mmOpen.length
+        ? `<div class="pending-head">MATCHUP MODE · ${mmOpen.length} OPEN · $${mmOpen.reduce((s, b) => s + (Number(b.amount) || 0), 0).toFixed(0)} RIDING · IN THE MATCHUP TAB</div>`
+        : '';
+      if (!shownBets.length) {
+        list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · 0</div><div class="empty-sub" style="padding:8px 0 14px">No open bets.</div>` + mmLine + awaitingHtml;
         return;
       }
       const $ = v => '$' + Number(v || 0).toFixed(2);
       const win = (amt, odds) => { const o = Number(odds) || -110; return o > 0 ? amt * o / 100 : amt * 100 / Math.abs(o); };
-      list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · ${pendingBets.length}</div><div class="pending-list">` + pendingBets.map(b => {
+      list.innerHTML = gradeBar + `<div class="pending-head">PENDING BETS · ${shownBets.length}</div><div class="pending-list">` + shownBets.map(b => {
         const pk = allPicks.find(p => p.game_id === b.game_id);
         const when = pk?.commence_time ? new Date(pk.commence_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
         const label = String(b.pick_label || '');
@@ -1009,7 +1015,7 @@
           <div class="pr-right"><div class="pr-amt">${$(amt)}</div><div class="pr-meta">to win ${$(win(amt, b.odds))}</div>
             <button class="pr-undo" onclick="undoPendingBet('${b.id}')">Remove</button></div>
         </div>`;
-      }).join('') + `</div>` + awaitingHtml;
+      }).join('') + `</div>` + mmLine + awaitingHtml;
     }
 
     async function loadPicks() {
