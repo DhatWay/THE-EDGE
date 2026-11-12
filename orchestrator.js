@@ -710,6 +710,19 @@ const EDGE_ORCHESTRATOR = (() => {
         }
       }
 
+      // ── Matchup mode: every game rated from the team comparison alone ──
+      // Runs beside the picks above and keeps its own record (Today's
+      // Picks › Matchup). Nothing above reads it, so it can't change them.
+      if (window.EDGE_MATCHUP) {
+        try {
+          summary.matchup = await window.EDGE_MATCHUP.runAll(priors, gameList, builtContext,
+            { log, url: SUPABASE_URL(), key: SUPABASE_KEY() });
+        } catch (e) {
+          log('Matchup mode failed: ' + e.message);
+          logEdgeError('orch.matchup', e);
+        }
+      }
+
       summary.completed_at = new Date().toISOString();
       summary.duration_ms = Date.now() - startedAt;
 
