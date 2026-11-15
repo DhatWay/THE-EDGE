@@ -35,7 +35,7 @@
 
 const EDGE_SHADOW_GRADER = (() => {
 
-  const BUILD = 'shadowgrade-20261007-01';
+  const BUILD = 'shadowgrade-20261115-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -613,7 +613,7 @@ const EDGE_SHADOW_GRADER = (() => {
       const combined = Number(score.home_score) + Number(score.away_score);
       const diff = direction === 'over' ? combined - line : line - combined;
       const units = Number(pick.units) || 0;
-      const price = isFinite(Number(gs.price)) && Number(gs.price) !== 0 ? Number(gs.price) : DEFAULT_JUICE;
+      const price = isFinite(Number(gs.price)) && Math.abs(Number(gs.price)) >= 100 ? Number(gs.price) : DEFAULT_JUICE;
       const win = price > 0 ? price / 100 : 100 / Math.abs(price);
       if (Math.abs(diff) < 0.01) return { result: 'P', pnl: 0, actual_margin: combined };
       return diff > 0
@@ -638,7 +638,7 @@ const EDGE_SHADOW_GRADER = (() => {
 
     // Paid at the pick's own price when it has one, else -110.
     const units = Number(pick.units) || 0;
-    const price = isFinite(Number(gs.price)) && Number(gs.price) !== 0 ? Number(gs.price) : DEFAULT_JUICE;
+    const price = isFinite(Number(gs.price)) && Math.abs(Number(gs.price)) >= 100 ? Number(gs.price) : DEFAULT_JUICE;
     const winMultiplier = price > 0 ? price / 100 : 100 / Math.abs(price);
 
     let result, pnl;
