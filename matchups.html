@@ -25,7 +25,6 @@
   <script src="qb-ratings.js"></script>
   <script src="my-picks.js"></script>
   <script src="orchestrator.js"></script>
-  <script src="matchup-mode.js"></script>
   <script src="prop-logic.js"></script>
   <script src="prop-engine.js"></script>
   <script src="learning.js"></script>
@@ -719,10 +718,20 @@
         out.push({
           name,
           point: points.length ? median(points) : null,
-          price: prices.length ? Math.round(median(prices)) : null,
+          // The middle payout among the books, turned back into American
+          // odds. American odds can't be averaged directly: around even
+          // money, -105 and +101 averaged to -2.
+          price: prices.length ? medianAmerican(prices) : null,
         });
       });
       return out;
+    }
+
+    function medianAmerican(list) {
+      const dec = list.filter(a => isFinite(a) && Math.abs(a) >= 100).map(a => a > 0 ? 1 + a / 100 : 1 + 100 / -a);
+      const d = median(dec);
+      if (d == null || !(d > 1)) return null;
+      return d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1));
     }
 
     function median(arr) {
