@@ -804,7 +804,7 @@
     // own sizes are kept and can be switched back on.
     const FLAT = () => localStorage.getItem('edge_hist_flat') !== 'false';
     function applyStakeMode(list) {
-      const dec = p => { const pr = Number(p) || -110; return pr > 0 ? 1 + pr / 100 : 1 + 100 / -pr; };
+      const dec = p => { const pr = Math.abs(Number(p)) >= 100 ? Number(p) : -110; return pr > 0 ? 1 + pr / 100 : 1 + 100 / -pr; };
       (list || []).forEach(p => {
         if (p.units_model === undefined) { p.units_model = p.units; p.pnl_model = p.pnl; }
         if (FLAT()) {
