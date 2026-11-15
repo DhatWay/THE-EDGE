@@ -53,7 +53,7 @@
 
 const EDGE_GOVERNOR = (() => {
 
-  const BUILD = 'gov-20261101-01';
+  const BUILD = 'gov-20261115-01';
 
   // Bets are decided on expected value at the real price, so a side
   // at -120 needs a bigger edge than one at -105, and a moneyline
@@ -342,8 +342,8 @@ const EDGE_GOVERNOR = (() => {
     const mu = marketTotal + shift;
     const prob = core.totalProbability(mu, marketTotal, sd);
     if (!prob) return null;
-    const op = isFinite(overPrice) && overPrice !== 0 ? overPrice : -110;
-    const up = isFinite(underPrice) && underPrice !== 0 ? underPrice : -110;
+    const op = isFinite(overPrice) && Math.abs(overPrice) >= 100 ? overPrice : -110;
+    const up = isFinite(underPrice) && Math.abs(underPrice) >= 100 ? underPrice : -110;
     const evOver = prob.over * (americanToDecimal(op) - 1) - prob.under;
     const evUnder = prob.under * (americanToDecimal(up) - 1) - prob.over;
     const side = evOver >= evUnder ? 'over' : 'under';
@@ -478,7 +478,8 @@ const EDGE_GOVERNOR = (() => {
       const v = betType === 'ML'
         ? (side === 'home' ? m.home_ml : m.away_ml)
         : (side === 'home' ? m.home_spread_price : m.away_spread_price);
-      return isFinite(Number(v)) && Number(v) !== 0 ? Number(v) : (betType === 'ML' ? null : -110);
+      // A real American price is -100 or below, or +100 or above.
+      return isFinite(Number(v)) && Math.abs(Number(v)) >= 100 ? Number(v) : (betType === 'ML' ? null : -110);
     };
     const homePrice = priceFor('home'), awayPrice = priceFor('away');
     const evAt = (p, price) => price == null ? -1 : p * (americanToDecimal(price) - 1) - (1 - p);
@@ -722,7 +723,7 @@ const EDGE_GOVERNOR = (() => {
       // number (vig removed), moved for the half-points between its
       // line and this one at about 3% a point.
       const m = prior.market;
-      if (isFinite(m.pin_home_spread) && m.pin_home_price && m.pin_away_price) {
+      if (isFinite(m.pin_home_spread) && Math.abs(Number(m.pin_home_price)) >= 100 && Math.abs(Number(m.pin_away_price)) >= 100) {
         const ih = americanToImplied(m.pin_home_price), ia = americanToImplied(m.pin_away_price);
         const atPin = ih / (ih + ia);
         const shift = (m.current_spread - m.pin_home_spread) * 0.03;
@@ -731,13 +732,13 @@ const EDGE_GOVERNOR = (() => {
       // Both prices for this line known: the market's own chance, vig
       // removed. 50% at -110/-110; far from it on puck and run lines
       // (e.g. -1.5 at +150 vs +1.5 at -180 is about 38%/62%).
-      if (m.home_spread_price && m.away_spread_price) {
+      if (Math.abs(Number(m.home_spread_price)) >= 100 && Math.abs(Number(m.away_spread_price)) >= 100) {
         const ih = americanToImplied(m.home_spread_price), ia = americanToImplied(m.away_spread_price);
         if (ih > 0 && ia > 0) return { prob: clamp(ih / (ih + ia), 0.05, 0.95), source: 'spread prices' };
       }
       return { prob: 0.5, source: 'spread' };
     }
-    if (prior?.market?.home_ml) {
+    if (Math.abs(Number(prior?.market?.home_ml)) >= 100) {
       return { prob: americanToImplied(prior.market.home_ml), source: 'moneyline' };
     }
     return { prob: homeBaseline, source: 'baseline' };
