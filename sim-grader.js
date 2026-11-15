@@ -26,7 +26,7 @@
 
 const EDGE_SIM_GRADER = (() => {
 
-  const BUILD = 'simgrade-20261022-01';
+  const BUILD = 'simgrade-20261115-01';
 
   const SUPABASE_URL = () => localStorage.getItem('edge_supabase_url');
   const SUPABASE_KEY = () => localStorage.getItem('edge_supabase_key');
@@ -178,7 +178,7 @@ const EDGE_SIM_GRADER = (() => {
       propBets.forEach(bet => {
         const res = resultOf[String(bet.reason).slice(5).split(/[\s|]/)[0]];
         if (!res || !['W', 'L', 'P'].includes(res)) return;
-        const odds = Number(bet.odds) || -110, stake = Number(bet.amount) || 0;
+        const odds = Math.abs(Number(bet.odds)) >= 100 ? Number(bet.odds) : -110, stake = Number(bet.amount) || 0;
         const win = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
         const pnl = res === 'W' ? Math.round(stake * win * 100) / 100 : res === 'L' ? -stake : 0;
         propUpdates.push({ id: bet.id, result: res, pnl, graded_at: new Date().toISOString(), status: 'graded' });
@@ -492,7 +492,7 @@ const EDGE_SIM_GRADER = (() => {
       const ou = /over/i.test(label) ? 'over' : /under/i.test(label) ? 'under' : null;
       if (!isFinite(line) || !ou) return null;
       const combined0 = homeScore + awayScore;
-      const odds0 = Number(bet.odds) || DEFAULT_SPREAD_PRICE;
+      const odds0 = Math.abs(Number(bet.odds)) >= 100 ? Number(bet.odds) : DEFAULT_SPREAD_PRICE;
       const win0 = odds0 > 0 ? (odds0 / 100) : (100 / Math.abs(odds0));
       const stake0 = Number(bet.amount) || 0;
       if (Math.abs(combined0 - line) < 0.01) return { result: 'P', pnl: 0 };
@@ -525,7 +525,7 @@ const EDGE_SIM_GRADER = (() => {
     // of a spread bet; those settle at the standard spread price.
     const odds = (type === 'HOME' || type === 'AWAY')
       ? DEFAULT_SPREAD_PRICE
-      : (Number(bet.odds) || DEFAULT_SPREAD_PRICE);
+      : (Math.abs(Number(bet.odds)) >= 100 ? Number(bet.odds) : DEFAULT_SPREAD_PRICE);
     const winMultiplier = odds > 0 ? (odds / 100) : (100 / Math.abs(odds));
     const stake = Number(bet.amount) || 0;
 
