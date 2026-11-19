@@ -16,6 +16,12 @@
   <script src="edge-time.js"></script>
   <script src="team-aliases.js"></script>
   <script src="shadow-grader.js"></script>
+  <script src="rating-core.js"></script>
+  <script src="sport-profiles.js"></script>
+  <script src="power-engine.js"></script>
+  <script src="governor.js"></script>
+  <script src="prop-logic.js"></script>
+  <script src="prop-engine.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -386,7 +392,7 @@
       <div class="fld"><input id="gameSearch" placeholder="Search teams" /></div>
       <div id="gameList"></div>
       <details style="margin-top:8px">
-        <summary class="mini" style="cursor:pointer">Add a player prop leg</summary>
+        <summary class="mini" style="cursor:pointer">Type in a prop leg (any player, any sport)</summary>
         <div class="row2">
           <div class="fld"><label>Prop</label><input id="pDesc" placeholder="e.g. J. Allen passing yards" /></div>
           <div class="fld"><label>Line</label><input id="pLine" type="number" inputmode="decimal" step="any" /></div>
@@ -396,7 +402,7 @@
           <div class="fld"><label>Price (sportsbook)</label><input id="pPrice" type="number" inputmode="decimal" step="any" value="-110" /></div>
         </div>
         <button class="btn-line" id="addProp" style="margin-top:8px">Add prop leg</button>
-        <div class="note">Prop legs are graded by you: tap W, L or P on the leg once it's decided.</div>
+        <div class="note">Typed-in props are graded by you: tap W, L or P once it's decided. Key players' props from a game (open the game) grade themselves from box scores.</div>
       </details>
     </div>
 
@@ -670,7 +676,8 @@
       $('preview').textContent = payoutText(draft);
     }
     function addLeg(leg) {
-      if (leg.game_id && draft.legs.some(l => l.game_id === leg.game_id && l.market === leg.market)) {
+      if (leg.market === 'prop' ? draft.legs.some(l => l.market === 'prop' && l.player_id && l.player_id === leg.player_id && l.stat === leg.stat)
+          : (leg.game_id && draft.legs.some(l => l.game_id === leg.game_id && l.market === leg.market))) {
         $('saveNote').textContent = 'That game already has a leg of that kind on this ticket.'; return;
       }
       draft.legs.push({ id: uid(), result: null, ...leg });
@@ -707,15 +714,124 @@
                             opt('Total', `Under ${tot} (${pr(g.under_price)})`, { market: 'total', side: 'under', line: tot, price: validAm(num(g.under_price)) ? num(g.under_price) : -110 }) : ''}
           ${validAm(num(g.away_ml)) && validAm(num(g.home_ml ?? g.ml)) ? opt('Moneyline', `${g.away_team} (${fmtAm(num(g.away_ml))})`, { market: 'ml', side: 'away', team: g.away_team, line: null, price: num(g.away_ml) }) +
                             opt('Moneyline', `${g.home_team} (${fmtAm(num(g.home_ml ?? g.ml))})`, { market: 'ml', side: 'home', team: g.home_team, line: null, price: num(g.home_ml ?? g.ml) }) : ''}
-        </div>` : '';
+          ${KEY_STATS[sp] ? `<button data-props="1" style="grid-column:1 / -1"><span class="k">Player props</span>Key players</button>` : ''}
+        </div>${propGame === g.id ? propPanelHtml(g) : ''}` : '';
         return `<div class="game"><div class="gh" data-g="${esc(g.id)}"><span>${esc(g.away_team)} @ ${esc(g.home_team)}</span><span class="gm">${esc(sp)} · ${esc(when)}</span></div>${opts}</div>`;
       }).join('') || '<div class="note">No games match.</div>';
       $('gameList').querySelectorAll('[data-g]').forEach(el => el.onclick = () => { openGame = openGame === el.dataset.g ? null : el.dataset.g; renderGames(); });
+      $('gameList').querySelectorAll('[data-props]').forEach(btn => btn.onclick = () => openProps(games.find(x => x.id === openGame)));
+      bindPropPanel();
       $('gameList').querySelectorAll('[data-add]').forEach(btn => btn.onclick = () => {
         const g = games.find(x => x.id === openGame); if (!g) return;
         const d = JSON.parse(btn.dataset.add);
         addLeg({ ...d, sport: g.sport || g._sport, game_id: g.id, home_team: g.home_team, away_team: g.away_team, commence_time: g.commence_time });
       });
+    }
+
+    // ── Player props: key players only, each sport's own stats ──
+    // Key players are the roster's starters at the positions props are
+    // written for; each position gets the stats that fit it. Rated by the
+    // app's prop engine (the math only), graded from box scores.
+    const BB = ['points', 'rebounds', 'assists', 'three_made', 'pts_reb_ast', 'pts_reb', 'pts_ast', 'reb_ast', 'steals', 'blocks', 'stocks', 'turnovers'];
+    const HIT = ['hits', 'home_runs', 'rbis', 'runs', 'strikeouts', 'walks'];
+    const SKATE = ['goals', 'assists', 'points', 'shots'];
+    const FB = {
+      QB: ['passing_yards', 'passing_tds', 'pass_completions', 'pass_attempts', 'interceptions', 'rushing_yards'],
+      RB: ['rushing_yards', 'rush_attempts', 'rushing_tds', 'receptions', 'receiving_yards', 'rush_rec_yards'],
+      WR: ['receptions', 'receiving_yards', 'receiving_tds', 'targets'],
+      TE: ['receptions', 'receiving_yards', 'receiving_tds', 'targets'],
+    };
+    const KEY_STATS = {
+      NFL: FB, NCAAF: FB,
+      NBA: { GUARD: BB, WING: BB, BIG: BB }, WNBA: { GUARD: BB, WING: BB, BIG: BB }, NCAAB: { GUARD: BB, WING: BB, BIG: BB },
+      MLB: { PITCHER_START: ['pitching_strikeouts', 'earned_runs', 'hits_allowed', 'walks_allowed'], CATCHER: HIT, INFIELD: HIT, OUTFIELD: HIT, DH: HIT },
+      NHL: { FORWARD: SKATE, DEFENSE: SKATE, GOALIE: ['saves'] },
+    };
+    let propGame = null, propRoster = null, propPick = null, propRating = null, propMsg = '';
+    const statInfo = (sport, key) => ((window.EDGE_PROPS && EDGE_PROPS.statsFor(sport)) || []).find(s => s.key === key) || null;
+    async function openProps(g) {
+      if (!g) return;
+      if (propGame === g.id) { propGame = null; renderGames(); return; }
+      propGame = g.id; propRoster = null; propPick = null; propRating = null; propMsg = 'Loading players…';
+      renderGames();
+      if (!window.EDGE_PROPS) { propMsg = 'The prop engine didn\'t load — refresh the page.'; renderGames(); return; }
+      try {
+        const r = await EDGE_PROPS.loadRoster(g);
+        const groups = KEY_STATS[g.sport || g._sport] || {};
+        const keep = p => p && p.is_starter && groups[p.position_group];
+        propRoster = { away: (r.away || []).filter(keep), home: (r.home || []).filter(keep) };
+        propMsg = propRoster.away.length + propRoster.home.length ? '' : 'No starters on file for these teams yet — run the roster build in Admin.';
+      } catch (e) { propMsg = 'Couldn\'t load players: ' + e.message; }
+      renderGames();
+    }
+    function propPanelHtml(g) {
+      const sp = g.sport || g._sport;
+      let h = `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px">`;
+      if (propMsg) h += `<div class="note">${esc(propMsg)}</div>`;
+      if (propRoster) {
+        const chip = p => `<button class="chip${propPick && String(propPick.player.player_id) === String(p.player_id) ? ' on' : ''}" data-pp="${esc(String(p.player_id))}">${esc(p.name)} <span class="mini">${esc(p.position || '')}</span></button>`;
+        h += `<div class="mini">${esc(g.away_team)}</div><div class="seg">${propRoster.away.map(chip).join('')}</div>`;
+        h += `<div class="mini">${esc(g.home_team)}</div><div class="seg">${propRoster.home.map(chip).join('')}</div>`;
+      }
+      if (propPick) {
+        const keys = (KEY_STATS[sp] || {})[propPick.player.position_group] || [];
+        h += `<div class="row2"><div class="fld"><label>Stat</label><select id="ppStat">${keys.map(k => { const st = statInfo(sp, k); return st ? `<option value="${k}"${propPick.stat === k ? ' selected' : ''}>${esc(st.label)}</option>` : ''; }).join('')}</select></div>
+          <div class="fld"><label>Line</label><input id="ppLine" type="number" inputmode="decimal" step="any" value="${propPick.line ?? ''}" /></div></div>
+          <div class="row2"><div class="fld"><label>Side</label><select id="ppSide"><option value="more"${propPick.side === 'more' ? ' selected' : ''}>More / Over</option><option value="less"${propPick.side === 'less' ? ' selected' : ''}>Less / Under</option></select></div>
+          <div class="fld"><label>Price (sportsbook)</label><input id="ppPrice" type="number" inputmode="decimal" step="any" value="${propPick.price ?? -110}" /></div></div>
+          <div class="note" id="ppNote">${propRating ? esc(propRating) : 'Rate it to see the prop engine\'s chance.'}</div>
+          <div class="row2"><button class="btn-line" id="ppRate" style="margin-top:6px">Rate it</button><button class="btn-line" id="ppAdd" style="margin-top:6px">Add leg</button></div>`;
+      }
+      return h + '</div>';
+    }
+    function readPropForm() {
+      if (!propPick) return;
+      const st = $('ppStat'), ln = $('ppLine'), sd = $('ppSide'), pr = $('ppPrice');
+      if (st) propPick.stat = st.value;
+      if (ln) propPick.line = ln.value === '' ? null : num(ln.value);
+      if (sd) propPick.side = sd.value;
+      if (pr) propPick.price = validAm(num(pr.value)) ? num(pr.value) : -110;
+    }
+    async function rateProp() {
+      readPropForm();
+      const g = games.find(x => x.id === propGame);
+      if (!g || !propPick || !isFinite(propPick.line)) { propRating = 'Enter a line first.'; renderGames(); return null; }
+      propRating = 'Rating…'; renderGames();
+      try {
+        const r = await EDGE_PROPS.evaluate({ game: g, player: propPick.player, stat: propPick.stat, line: propPick.line,
+          side: propPick.side === 'less' ? 'under' : 'over', price: propPick.price });
+        const over = num(r.prob_over);
+        if (!isFinite(over)) { propRating = 'Not enough box scores for this player to rate it.'; renderGames(); return { chance: null }; }
+        const chance = Math.round((propPick.side === 'less' ? 1 - over : over) * 1000) / 10;
+        propRating = `Prop engine: ${chance}% ${propPick.side === 'less' ? 'less' : 'more'} · projects ${r.projection != null ? r.projection : '—'}`;
+        renderGames();
+        return { chance, projection: r.projection };
+      } catch (e) { propRating = 'Couldn\'t rate it: ' + e.message; renderGames(); return { chance: null }; }
+    }
+    function bindPropPanel() {
+      document.querySelectorAll('[data-pp]').forEach(b => b.onclick = () => {
+        const all = [...(propRoster?.away || []), ...(propRoster?.home || [])];
+        const p = all.find(x => String(x.player_id) === b.dataset.pp); if (!p) return;
+        const g = games.find(x => x.id === propGame);
+        const keys = (KEY_STATS[g.sport || g._sport] || {})[p.position_group] || [];
+        propPick = { player: p, stat: keys[0], line: null, side: 'more', price: -110 }; propRating = null;
+        renderGames();
+      });
+      ['ppStat', 'ppSide'].forEach(id => { const el = $(id); if (el) el.onchange = () => { readPropForm(); propRating = null; renderGames(); }; });
+      const ln = $('ppLine'); if (ln) ln.onchange = () => { readPropForm(); propRating = null; };
+      const pr = $('ppPrice'); if (pr) pr.onchange = () => readPropForm();
+      const rb = $('ppRate'); if (rb) rb.onclick = rateProp;
+      const ab = $('ppAdd'); if (ab) ab.onclick = async () => {
+        readPropForm();
+        const g = games.find(x => x.id === propGame);
+        if (!g || !propPick || !isFinite(propPick.line)) { propRating = 'Enter a line first.'; renderGames(); return; }
+        const rated = await rateProp();
+        const st = statInfo(g.sport || g._sport, propPick.stat);
+        addLeg({ market: 'prop', sport: g.sport || g._sport, game_id: g.id, home_team: g.home_team, away_team: g.away_team, commence_time: g.commence_time,
+          player_id: String(propPick.player.player_id), team: propPick.player.team_name, stat: propPick.stat, cols: st ? st.cols : [propPick.stat],
+          label: `${propPick.player.name} ${st ? st.label.toLowerCase() : propPick.stat}`, side: propPick.side, line: propPick.line,
+          price: propPick.price, chance: rated && rated.chance != null ? rated.chance : null });
+      };
     }
 
     // ── Grading: game legs from final scores, one sport at a time ──
@@ -740,13 +856,19 @@
       if (!finder) { $('gradeNote').textContent = 'The score lookup didn\'t load — refresh the page.'; return; }
       const due = [];
       tickets.filter(t => t.status !== 'settled').forEach(t => (t.legs || []).forEach(l => {
-        if (!l.result && l.market !== 'prop' && l.sport === gradeSport && l.commence_time && new Date(l.commence_time).getTime() < Date.now() - 3 * 3600000) due.push([t, l]);
+        const auto = l.market !== 'prop' || (l.player_id && Array.isArray(l.cols) && l.cols.length);
+        if (!l.result && auto && l.sport === gradeSport && l.commence_time && new Date(l.commence_time).getTime() < Date.now() - 3 * 3600000) due.push([t, l]);
       }));
       let done = 0, waiting = 0;
       const cache = new Map();
       for (let i = 0; i < due.length; i++) {
         const [t, l] = due[i];
         $('gradeNote').textContent = `Grading ${gradeSport} · ${i + 1} of ${due.length}`;
+        if (l.market === 'prop') {
+          const r = await gradePropLeg(l);
+          if (r) { l.result = r.result; l.score = `${r.actual}`; done++; } else waiting++;
+          continue;
+        }
         const k = `${l.sport}|${l.commence_time}|${l.home_team}|${l.away_team}`;
         let f = cache.get(k);
         if (f === undefined) { try { f = await finder({ sport: l.sport, commence_time: l.commence_time, home_team: l.home_team, away_team: l.away_team }); } catch { f = null; } cache.set(k, f); }
@@ -759,6 +881,23 @@
       for (const t of touched) { Object.assign(t, evaluate(t)); if (t.status === 'settled' && !t.settled_at) t.settled_at = new Date().toISOString(); await saveTicket(t, true); }
       $('gradeNote').textContent = due.length ? `Graded ${done} leg${done === 1 ? '' : 's'}${waiting ? ` · ${waiting} waiting on a final score` : ''}.` : `No finished ${gradeSport} legs to grade.`;
       renderAll();
+    }
+    // A key-player prop from the box score nearest the game (main database).
+    async function gradePropLeg(l) {
+      const url = localStorage.getItem('edge_supabase_url'), key = localStorage.getItem('edge_supabase_key');
+      if (!url || !key) return null;
+      const t = new Date(l.commence_time).getTime();
+      const from = new Date(t - 36 * 3600000).toISOString(), to = new Date(t + 36 * 3600000).toISOString();
+      try {
+        const res = await fetch(`${url}/rest/v1/player_game_stats?sport=eq.${l.sport}&player_id=eq.${encodeURIComponent(l.player_id)}` +
+          `&game_date=gte.${encodeURIComponent(from)}&game_date=lte.${encodeURIComponent(to)}&select=game_date,${l.cols.join(',')}&limit=5`, { headers: keyH(key) });
+        if (!res.ok) return null;
+        const row = (await res.json()).filter(r => l.cols.some(c => r[c] != null))
+          .sort((a, b) => Math.abs(new Date(a.game_date) - t) - Math.abs(new Date(b.game_date) - t))[0];
+        if (!row) return null;
+        const actual = l.cols.reduce((s, c) => s + (Number(row[c]) || 0), 0), line = Number(l.line);
+        return { actual, result: actual === line ? 'P' : (l.side === 'more' ? actual > line : actual < line) ? 'W' : 'L' };
+      } catch { return null; }
     }
     async function setLegResult(tid, lid, res) {
       const t = tickets.find(x => x.id === tid); if (!t) return;
@@ -893,7 +1032,7 @@
     let settledOpen = localStorage.getItem('edge_doover_settled_open') === 'true';
     function renderTickets() {
       const open = tickets.filter(t => t.status !== 'settled');
-      const sports = Array.from(new Set(open.flatMap(t => (t.legs || []).filter(l => l.market !== 'prop' && !l.result).map(l => l.sport)).filter(Boolean))).sort();
+      const sports = Array.from(new Set(open.flatMap(t => (t.legs || []).filter(l => !l.result && (l.market !== 'prop' || l.player_id)).map(l => l.sport)).filter(Boolean))).sort();
       if (gradeSport && !sports.includes(gradeSport)) gradeSport = null;
       $('gradeSeg').innerHTML = sports.map(s => `<button class="chip${s === gradeSport ? ' on' : ''}" data-gs="${s}">${s}</button>`).join('') || '<span class="mini">No game legs waiting.</span>';
       $('gradeSeg').querySelectorAll('[data-gs]').forEach(b => b.onclick = () => { gradeSport = b.dataset.gs; renderTickets(); });
